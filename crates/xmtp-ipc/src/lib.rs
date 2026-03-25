@@ -21,6 +21,24 @@ pub struct ConversationItem {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConversationUpdatedEvent {
+    pub conversation_id: String,
+    pub name: Option<String>,
+    pub member_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApiErrorBody {
+    pub error: ApiErrorDetail,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApiErrorDetail {
+    pub code: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupMembersResponse {
     pub items: Vec<GroupMemberItem>,
@@ -167,6 +185,7 @@ pub struct DaemonEventEnvelope {
 pub enum DaemonEventData {
     Status(StatusResponse),
     ConversationList(ConversationListResponse),
+    ConversationUpdated(ConversationUpdatedEvent),
     HistoryItem {
         conversation_id: String,
         item: HistoryItem,

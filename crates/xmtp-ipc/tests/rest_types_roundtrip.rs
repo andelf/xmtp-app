@@ -1,7 +1,8 @@
 use xmtp_core::{ConnectionState, DaemonState};
 use xmtp_ipc::{
-    DaemonEventData, DaemonEventEnvelope, EmojiRequest, GroupCreateRequest, HistoryItem,
-    LoginRequest, RecipientMessageRequest, RecipientRequest, SendMessageRequest, StatusResponse,
+    ApiErrorBody, ApiErrorDetail, ConversationUpdatedEvent, DaemonEventData, DaemonEventEnvelope,
+    EmojiRequest, GroupCreateRequest, HistoryItem, LoginRequest, RecipientMessageRequest,
+    RecipientRequest, SendMessageRequest, StatusResponse,
 };
 
 #[test]
@@ -136,4 +137,48 @@ fn history_event_roundtrips_as_json() {
         }
         _ => panic!("unexpected history payload"),
     }
+}
+
+#[test]
+fn conversation_updated_event_roundtrips_as_json() {
+    let event = DaemonEventEnvelope {
+        event_id: "evt-3".to_owned(),
+        payload: DaemonEventData::ConversationUpdated(ConversationUpdatedEvent {
+            conversation_id: "conv-1".to_owned(),
+            name: Some("renamed".to_owned()),
+            member_count: 3,
+        }),
+    };
+
+    let json = serde_json::to_string(&event).expect("serialize conversation updated event");
+    let decoded: DaemonEventEnvelope =
+        serde_json::from_str(&json).expect("deserialize conversation updated event");
+
+    match decoded.payload {
+        DaemonEventData::ConversationUpdated(update) => {
+            assert_eq!(update.conversation_id, "conv-1");
+            assert_eq!(update.name.as_deref(), Some("renamed"));
+            assert_eq!(update.member_count, 3);
+        }
+        _ => panic!("unexpected conversation updated payload"),
+    }
+}
+
+#[test]
+fn api_error_body_roundtrips_as_json() {
+    let body = ApiErrorBody {
+        error: ApiErrorDetail {
+            code: "unsupported_operation".to_owned(),
+            message: "Leave group is not supported in this version".to_owned(),
+        },
+    };
+
+    let json = serde_json::to_string(&body).expect("serialize api error body");
+    let decoded: ApiErrorBody = serde_json::from_str(&json).expect("deserialize api error body");
+
+    assert_eq!(decoded.error.code, "unsupported_operation");
+    assert_eq!(
+        decoded.error.message,
+        "Leave group is not supported in this version"
+    );
 }

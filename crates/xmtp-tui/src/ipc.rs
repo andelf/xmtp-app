@@ -6,13 +6,14 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
+use reqwest::Response;
 use tokio::task::JoinHandle;
 use xmtp_daemon::addr_path;
 use xmtp_ipc::{
-    ActionResponse, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
-    GroupCreateRequest, GroupInfoResponse, GroupMembersResponse, GroupMembersUpdateRequest,
-    HistoryResponse, RecipientMessageRequest, RecipientRequest, RenameGroupRequest,
-    SendMessageRequest,
+    ActionResponse, ApiErrorBody, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope,
+    EmojiRequest, GroupCreateRequest, GroupInfoResponse, GroupMembersResponse,
+    GroupMembersUpdateRequest, HistoryResponse, RecipientMessageRequest, RecipientRequest,
+    RenameGroupRequest, SendMessageRequest,
 };
 
 use crate::event::{ActionOutcome, AppEvent, Effect};
@@ -392,9 +393,16 @@ async fn watch_history(
             .send()
             .await
             .context("open history sse stream")
-            .and_then(|response| response.error_for_status().context("history sse status"))
         {
-            Ok(response) => response,
+            Ok(response) => match ensure_success(response, "history sse status").await {
+                Ok(response) => response,
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                    tokio::time::sleep(retry_delay).await;
+                    retry_delay = next_retry_delay(retry_delay);
+                    continue;
+                }
+            },
             Err(err) => {
                 let _ = tx.send(AppEvent::Error(err.to_string()));
                 tokio::time::sleep(retry_delay).await;
@@ -430,7 +438,9 @@ async fn watch_history(
                 DaemonEventData::DaemonError { message } => {
                     let _ = tx.send(AppEvent::Error(message));
                 }
-                DaemonEventData::Status(_) | DaemonEventData::ConversationList(_) => {}
+                DaemonEventData::Status(_)
+                | DaemonEventData::ConversationList(_)
+                | DaemonEventData::ConversationUpdated(_) => {}
             }
         }
         tokio::time::sleep(retry_delay).await;
@@ -480,9 +490,16 @@ async fn watch_app_events(
             .send()
             .await
             .context("open app event stream")
-            .and_then(|response| response.error_for_status().context("app event stream status"))
         {
-            Ok(response) => response,
+            Ok(response) => match ensure_success(response, "app event stream status").await {
+                Ok(response) => response,
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                    tokio::time::sleep(retry_delay).await;
+                    retry_delay = next_retry_delay(retry_delay);
+                    continue;
+                }
+            },
             Err(err) => {
                 let _ = tx.send(AppEvent::Error(err.to_string()));
                 tokio::time::sleep(retry_delay).await;
@@ -514,6 +531,9 @@ async fn watch_app_events(
                 }
                 DaemonEventData::ConversationList(response) => {
                     let _ = tx.send(AppEvent::ConversationsLoaded(response.items));
+                }
+                DaemonEventData::ConversationUpdated(update) => {
+                    let _ = tx.send(AppEvent::ConversationUpdated(update));
                 }
                 DaemonEventData::DaemonError { message } => {
                     let _ = tx.send(AppEvent::Error(message));
@@ -620,16 +640,13 @@ where
 {
     ensure_daemon(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
-    http_client()
+    let response = http_client()
         .get(format!("{base_url}{path}"))
         .send()
         .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?
-        .json()
-        .await
-        .context("decode daemon http response")
+        .context("send daemon http request")?;
+    let response = ensure_success(response, "daemon http status").await?;
+    decode_json(response, "decode daemon http response").await
 }
 
 async fn http_post<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
@@ -639,17 +656,14 @@ where
 {
     ensure_daemon(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
-    http_client()
+    let response = http_client()
         .post(format!("{base_url}{path}"))
         .json(body)
         .send()
         .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?
-        .json()
-        .await
-        .context("decode daemon http response")
+        .context("send daemon http request")?;
+    let response = ensure_success(response, "daemon http status").await?;
+    decode_json(response, "decode daemon http response").await
 }
 
 async fn http_patch<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
@@ -659,17 +673,14 @@ where
 {
     ensure_daemon(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
-    http_client()
+    let response = http_client()
         .patch(format!("{base_url}{path}"))
         .json(body)
         .send()
         .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?
-        .json()
-        .await
-        .context("decode daemon http response")
+        .context("send daemon http request")?;
+    let response = ensure_success(response, "daemon http status").await?;
+    decode_json(response, "decode daemon http response").await
 }
 
 async fn http_delete<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
@@ -679,20 +690,42 @@ where
 {
     ensure_daemon(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
-    http_client()
+    let response = http_client()
         .delete(format!("{base_url}{path}"))
         .json(body)
         .send()
         .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?
-        .json()
-        .await
-        .context("decode daemon http response")
+        .context("send daemon http request")?;
+    let response = ensure_success(response, "daemon http status").await?;
+    decode_json(response, "decode daemon http response").await
 }
 
 fn next_retry_delay(current: Duration) -> Duration {
     let next_ms = (current.as_millis() as u64).saturating_mul(2).min(5_000);
     Duration::from_millis(next_ms.max(100))
+}
+
+async fn decode_json<T>(response: Response, context_message: &str) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    response
+        .json()
+        .await
+        .with_context(|| context_message.to_owned())
+}
+
+async fn ensure_success(response: Response, context_message: &str) -> anyhow::Result<Response> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+    let body = response.text().await.unwrap_or_default();
+    if let Ok(parsed) = serde_json::from_str::<ApiErrorBody>(&body) {
+        anyhow::bail!("{}: {}", parsed.error.code, parsed.error.message);
+    }
+    if body.trim().is_empty() {
+        anyhow::bail!("{context_message}: {}", status);
+    }
+    anyhow::bail!("{context_message}: {}", body.trim());
 }

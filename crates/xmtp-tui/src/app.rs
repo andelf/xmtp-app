@@ -191,6 +191,10 @@ impl App {
                 Vec::new()
             }
             AppEvent::ConversationsLoaded(items) => self.update_conversations(items),
+            AppEvent::ConversationUpdated(update) => {
+                self.apply_conversation_updated(update);
+                Vec::new()
+            }
             AppEvent::ConversationInfoLoaded(info) => {
                 self.active_info = Some(info);
                 Vec::new()
@@ -321,6 +325,36 @@ impl App {
                 ]
             }
             ActionOutcome::Sent | ActionOutcome::Reacted => Vec::new(),
+        }
+    }
+
+    fn apply_conversation_updated(&mut self, update: xmtp_ipc::ConversationUpdatedEvent) {
+        if let Some(conversation) = self
+            .conversations
+            .iter_mut()
+            .find(|conversation| conversation.id == update.conversation_id)
+        {
+            conversation.name = update.name.clone();
+        }
+
+        if let Some(active) = self.active_conversation.as_mut() {
+            if active.id == update.conversation_id {
+                active.name = update.name.clone();
+            }
+        }
+
+        if let Some(info) = self.active_info.as_mut() {
+            if info.conversation_id == update.conversation_id {
+                info.name = update.name.clone();
+                info.member_count = update.member_count;
+            }
+        }
+
+        if let Some(info) = self.group_management.info.as_mut() {
+            if info.conversation_id == update.conversation_id {
+                info.name = update.name;
+                info.member_count = update.member_count;
+            }
         }
     }
 
@@ -1253,6 +1287,33 @@ mod tests {
         });
 
         assert_eq!(app.selected_message, 0);
+    }
+
+    #[test]
+    fn conversation_updated_event_updates_list_and_active_name() {
+        let (mut app, _) = App::new();
+        app.conversations = vec![xmtp_ipc::ConversationItem {
+            id: "group-1".into(),
+            kind: "group".into(),
+            name: Some("old-name".into()),
+        }];
+        app.active_conversation = Some(app.conversations[0].clone());
+        app.active_conversation_id = Some("group-1".into());
+
+        let effects = app.handle_event(crate::event::AppEvent::ConversationUpdated(
+            xmtp_ipc::ConversationUpdatedEvent {
+                conversation_id: "group-1".into(),
+                name: Some("new-name".into()),
+                member_count: 4,
+            },
+        ));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.conversations[0].name.as_deref(), Some("new-name"));
+        assert_eq!(
+            app.active_conversation.as_ref().and_then(|item| item.name.as_deref()),
+            Some("new-name")
+        );
     }
 
     #[test]

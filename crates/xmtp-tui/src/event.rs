@@ -1,7 +1,7 @@
 use crossterm::event::Event as TerminalEvent;
 use xmtp_ipc::{
-    ActionResponse, ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem,
-    HistoryItem, StatusResponse,
+    ActionResponse, ConversationInfoResponse, ConversationItem, ConversationUpdatedEvent,
+    GroupInfoResponse, GroupMemberItem, HistoryItem, StatusResponse,
 };
 
 #[derive(Debug, Clone)]
@@ -9,6 +9,7 @@ pub enum AppEvent {
     Terminal(TerminalEvent),
     StatusLoaded(StatusResponse),
     ConversationsLoaded(Vec<ConversationItem>),
+    ConversationUpdated(ConversationUpdatedEvent),
     ConversationInfoLoaded(ConversationInfoResponse),
     GroupInfoLoaded(GroupInfoResponse),
     GroupMembersLoaded(Vec<GroupMemberItem>),

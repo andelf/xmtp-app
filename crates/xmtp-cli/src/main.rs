@@ -513,7 +513,9 @@ async fn watch_history(
             DaemonEventData::DaemonError { message } => {
                 eprintln!("{message}");
             }
-            DaemonEventData::Status(_) | DaemonEventData::ConversationList(_) => {}
+            DaemonEventData::Status(_)
+            | DaemonEventData::ConversationList(_)
+            | DaemonEventData::ConversationUpdated(_) => {}
         }
     }
     Ok(())
@@ -730,6 +732,20 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                 println!(
                     "{}",
                     render_event_row("conversations", &format!("count={}", items.len()))
+                );
+            }
+            DaemonEventData::ConversationUpdated(update) => {
+                println!(
+                    "{}",
+                    render_event_row(
+                        "conversation_updated",
+                        &format!(
+                            "{} name={} members={}",
+                            short_id(&update.conversation_id),
+                            update.name.unwrap_or_else(|| "-".to_owned()),
+                            update.member_count
+                        ),
+                    )
                 );
             }
             DaemonEventData::DaemonError { message } => {

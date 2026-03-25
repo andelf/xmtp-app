@@ -23,11 +23,12 @@ use xmtp::{AlloySigner, Client, CreateGroupOptions, Env, Recipient};
 use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_core::{ConnectionState, DaemonState};
 use xmtp_ipc::{
-    ActionResponse, ConversationInfoResponse, ConversationItem, ConversationListResponse,
-    DaemonEventData, DaemonEventEnvelope, EmojiRequest, GroupCreateRequest, GroupInfoResponse,
-    GroupMemberItem, GroupMembersResponse, GroupMembersUpdateRequest, HistoryItem,
-    HistoryResponse, LoginRequest, MessageInfoResponse, ReactionDetail, RecipientMessageRequest,
-    RecipientRequest, RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
+    ActionResponse, ApiErrorBody, ApiErrorDetail, ConversationInfoResponse, ConversationItem,
+    ConversationListResponse, ConversationUpdatedEvent, DaemonEventData, DaemonEventEnvelope,
+    EmojiRequest, GroupCreateRequest, GroupInfoResponse, GroupMemberItem, GroupMembersResponse,
+    GroupMembersUpdateRequest, HistoryItem, HistoryResponse, LoginRequest, MessageInfoResponse,
+    ReactionDetail, RecipientMessageRequest, RecipientRequest, RenameGroupRequest, SendDmResponse,
+    SendMessageRequest, StatusResponse,
 };
 use xmtp_logging::append_daemon_event;
 use xmtp_store::{load_state, save_state};
@@ -1030,6 +1031,8 @@ struct HttpState {
     events_tx: broadcast::Sender<DaemonEventEnvelope>,
 }
 
+type ApiErrorResponse = (StatusCode, Json<ApiErrorBody>);
+
 #[derive(Debug, Clone, serde::Deserialize)]
 struct ConversationsQuery {
     kind: Option<String>,
@@ -1348,6 +1351,25 @@ fn publish_conversation_snapshot_now(state: &HttpState) {
     }
 }
 
+fn publish_conversation_updated_now(state: &HttpState, conversation_id: &str) {
+    let payload = {
+        let mut guard = state.app.lock().expect("lock daemon app");
+        guard
+            .group_info(conversation_id.to_owned())
+            .ok()
+            .map(|info| {
+                DaemonEventData::ConversationUpdated(ConversationUpdatedEvent {
+                    conversation_id: info.conversation_id,
+                    name: info.name,
+                    member_count: info.member_count,
+                })
+            })
+    };
+    if let Some(payload) = payload {
+        send_event(&state.events_tx, payload);
+    }
+}
+
 async fn run_app<T>(
     state: &HttpState,
     request_summary: String,
@@ -1400,7 +1422,7 @@ where
 async fn login_handler(
     State(state): State<HttpState>,
     Json(request): Json<LoginRequest>,
-) -> Result<Json<StatusResponse>, (StatusCode, String)> {
+) -> Result<Json<StatusResponse>, ApiErrorResponse> {
     let status = run_app(
         &state,
         format!("login env={}", request.env),
@@ -1423,7 +1445,7 @@ async fn shutdown_handler(
 
 async fn status_handler(
     State(state): State<HttpState>,
-) -> Result<Json<StatusResponse>, (StatusCode, String)> {
+) -> Result<Json<StatusResponse>, ApiErrorResponse> {
     let status = run_app(&state, "get status".to_owned(), false, false, |app| app.status())
         .await
         .map_err(internal_error)?;
@@ -1433,7 +1455,7 @@ async fn status_handler(
 async fn conversations_handler(
     State(state): State<HttpState>,
     Query(query): Query<ConversationsQuery>,
-) -> Result<Json<ConversationListResponse>, (StatusCode, String)> {
+) -> Result<Json<ConversationListResponse>, ApiErrorResponse> {
     let conversations = run_app(
         &state,
         format!("list conversations kind={:?}", query.kind),
@@ -1449,7 +1471,7 @@ async fn conversations_handler(
 async fn conversation_info_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
-) -> Result<Json<ConversationInfoResponse>, (StatusCode, String)> {
+) -> Result<Json<ConversationInfoResponse>, ApiErrorResponse> {
     let info = run_app(
         &state,
         format!("conversation info id={conversation_id}"),
@@ -1465,7 +1487,7 @@ async fn conversation_info_handler(
 async fn conversation_history_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
-) -> Result<Json<HistoryResponse>, (StatusCode, String)> {
+) -> Result<Json<HistoryResponse>, ApiErrorResponse> {
     let history = run_app(
         &state,
         format!("history id={conversation_id}"),
@@ -1481,7 +1503,7 @@ async fn conversation_history_handler(
 async fn open_dm_handler(
     State(state): State<HttpState>,
     Json(request): Json<RecipientRequest>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
     let result = run_app(
         &state,
         format!("open dm recipient={}", request.recipient),
@@ -1498,7 +1520,7 @@ async fn open_dm_handler(
 async fn send_dm_handler(
     State(state): State<HttpState>,
     Json(request): Json<RecipientMessageRequest>,
-) -> Result<Json<SendDmResponse>, (StatusCode, String)> {
+) -> Result<Json<SendDmResponse>, ApiErrorResponse> {
     let result = run_app(
         &state,
         format!("send dm recipient={}", request.recipient),
@@ -1515,7 +1537,7 @@ async fn send_dm_handler(
 async fn create_group_handler(
     State(state): State<HttpState>,
     Json(request): Json<GroupCreateRequest>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
     let result = run_app(
         &state,
         format!("create group name={:?}", request.name),
@@ -1533,7 +1555,7 @@ async fn send_group_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
     Json(request): Json<SendMessageRequest>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
     let result = run_app(
         &state,
         format!("send group id={conversation_id}"),
@@ -1551,7 +1573,7 @@ async fn reply_handler(
     State(state): State<HttpState>,
     AxumPath(message_id): AxumPath<String>,
     Json(request): Json<SendMessageRequest>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
     let result = run_app(
         &state,
         format!("reply message_id={message_id}"),
@@ -1568,7 +1590,7 @@ async fn react_handler(
     State(state): State<HttpState>,
     AxumPath(message_id): AxumPath<String>,
     Json(request): Json<EmojiRequest>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
     let result = run_app(
         &state,
         format!("react message_id={message_id}"),
@@ -1585,7 +1607,7 @@ async fn unreact_handler(
     State(state): State<HttpState>,
     AxumPath(message_id): AxumPath<String>,
     Json(request): Json<EmojiRequest>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
     let result = run_app(
         &state,
         format!("unreact message_id={message_id}"),
@@ -1601,7 +1623,7 @@ async fn unreact_handler(
 async fn group_members_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
-) -> Result<Json<GroupMembersResponse>, (StatusCode, String)> {
+) -> Result<Json<GroupMembersResponse>, ApiErrorResponse> {
     let members = run_app(
         &state,
         format!("group members id={conversation_id}"),
@@ -1617,7 +1639,7 @@ async fn group_members_handler(
 async fn group_info_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
-) -> Result<Json<GroupInfoResponse>, (StatusCode, String)> {
+) -> Result<Json<GroupInfoResponse>, ApiErrorResponse> {
     let info = run_app(
         &state,
         format!("group info id={conversation_id}"),
@@ -1634,7 +1656,8 @@ async fn rename_group_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
     Json(request): Json<RenameGroupRequest>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
+    let event_conversation_id = conversation_id.clone();
     let result = run_app(
         &state,
         format!("rename group id={conversation_id}"),
@@ -1644,6 +1667,7 @@ async fn rename_group_handler(
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_updated_now(&state, &event_conversation_id);
     publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
@@ -1652,7 +1676,8 @@ async fn add_group_members_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
     Json(request): Json<GroupMembersUpdateRequest>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
+    let event_conversation_id = conversation_id.clone();
     let result = run_app(
         &state,
         format!("add group members id={conversation_id}"),
@@ -1662,6 +1687,7 @@ async fn add_group_members_handler(
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_updated_now(&state, &event_conversation_id);
     publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
@@ -1670,7 +1696,8 @@ async fn remove_group_members_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
     Json(request): Json<GroupMembersUpdateRequest>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
+    let event_conversation_id = conversation_id.clone();
     let result = run_app(
         &state,
         format!("remove group members id={conversation_id}"),
@@ -1680,6 +1707,7 @@ async fn remove_group_members_handler(
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_updated_now(&state, &event_conversation_id);
     publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
@@ -1687,7 +1715,7 @@ async fn remove_group_members_handler(
 async fn leave_conversation_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
-) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
     let result = run_app(
         &state,
         format!("leave conversation id={conversation_id}"),
@@ -1703,7 +1731,7 @@ async fn leave_conversation_handler(
 async fn message_info_handler(
     State(state): State<HttpState>,
     AxumPath(message_id): AxumPath<String>,
-) -> Result<Json<MessageInfoResponse>, (StatusCode, String)> {
+) -> Result<Json<MessageInfoResponse>, ApiErrorResponse> {
     let info = run_app(
         &state,
         format!("message info id={message_id}"),
@@ -1716,8 +1744,40 @@ async fn message_info_handler(
     Ok(Json(info))
 }
 
-fn internal_error(err: anyhow::Error) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}"))
+fn internal_error(err: anyhow::Error) -> ApiErrorResponse {
+    let message = format!("{err:#}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiErrorBody {
+            error: ApiErrorDetail {
+                code: classify_error_code(&message).to_owned(),
+                message,
+            },
+        }),
+    )
+}
+
+fn classify_error_code(message: &str) -> &'static str {
+    let lowered = message.to_ascii_lowercase();
+    if lowered.contains("not found") {
+        "not_found"
+    } else if lowered.contains("ambiguous") {
+        "ambiguous_resource"
+    } else if lowered.contains("temporarily disabled")
+        || lowered.contains("not supported")
+        || lowered.contains("unstable")
+    {
+        "unsupported_operation"
+    } else if lowered.contains("invalid")
+        || lowered.contains("missing")
+        || lowered.contains("unavailable")
+    {
+        "invalid_request"
+    } else if lowered.contains("rate limit") || lowered.contains("resource has been exhausted") {
+        "rate_limited"
+    } else {
+        "internal_error"
+    }
 }
 
 fn sse_event_from_envelope(envelope: &DaemonEventEnvelope) -> Event {
