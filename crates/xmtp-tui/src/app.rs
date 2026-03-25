@@ -712,6 +712,7 @@ impl App {
                     match ch {
                         'a' | 'A' => self.cursor = 0,
                         'e' | 'E' => self.cursor = self.input_char_len(),
+                        'k' | 'K' => self.delete_to_end_of_line(),
                         'u' | 'U' => self.delete_to_start_of_line(),
                         'w' | 'W' => self.delete_previous_word(),
                         _ => {}
@@ -1112,6 +1113,11 @@ impl App {
         let end = self.input_byte_index(self.cursor);
         self.input.replace_range(0..end, "");
         self.cursor = 0;
+    }
+
+    fn delete_to_end_of_line(&mut self) {
+        let start = self.input_byte_index(self.cursor);
+        self.input.truncate(start);
     }
 
     fn delete_previous_word(&mut self) {

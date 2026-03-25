@@ -322,17 +322,34 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .map(|conversation| conversation.kind.as_str())
         .unwrap_or("-");
     let current_detail = format!("current {} | {} | {}", current_kind, current_name, current_id);
-    let mut runtime_detail = format!(
-        "me {} | {} | daemon {} | msg {}",
-        me, online, daemon, selected_message_id
-    );
+    let connection_style = if online == "connected" {
+        Style::default().fg(Color::Green)
+    } else if online == "disconnected" || online.contains("error") {
+        Style::default().fg(Color::Red)
+    } else {
+        Style::default().fg(Color::Yellow)
+    };
+    let daemon_style = if daemon == "running" {
+        Style::default().fg(Color::Green)
+    } else if daemon == "stopped" {
+        Style::default().fg(Color::Red)
+    } else {
+        Style::default().fg(Color::Yellow)
+    };
+    let mut runtime_spans = vec![
+        Span::raw(format!("me {} | ", me)),
+        Span::styled(online.clone(), connection_style),
+        Span::raw(" | daemon "),
+        Span::styled(daemon.clone(), daemon_style),
+        Span::raw(format!(" | msg {}", selected_message_id)),
+    ];
     if let Some(error) = &app.last_error {
-        runtime_detail.push_str(" | ");
-        runtime_detail.push_str(&truncate(error, 48));
+        runtime_spans.push(Span::raw(" | "));
+        runtime_spans.push(Span::raw(truncate(error, 48)));
     }
     let lines = vec![
         Line::from(current_detail),
-        Line::from(runtime_detail),
+        Line::from(runtime_spans),
     ];
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Left), area);
 }
@@ -372,6 +389,7 @@ fn render_help(frame: &mut Frame<'_>) {
         Line::from("Enter on group group management"),
         Line::from("Left/Right     move cursor"),
         Line::from("Ctrl+A/E       line start/end"),
+        Line::from("Ctrl+K         delete to end"),
         Line::from("Ctrl+W         delete word"),
         Line::from("Ctrl+U         delete to start"),
         Line::from("Alt+Enter      newline"),
