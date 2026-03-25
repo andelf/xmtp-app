@@ -172,6 +172,27 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 )));
             }
 
+            if let Some(reply_target_id) = item.reply_target_message_id.as_deref() {
+                let reply_line = if let Some(target) = app
+                    .messages
+                    .iter()
+                    .find(|candidate| candidate.message_id == reply_target_id)
+                {
+                    let preview = truncate(&target.content.replace('\n', " "), 20);
+                    format!(
+                        "  ↩ [{}]: {}",
+                        short_display_id(&target.sender_inbox_id),
+                        preview
+                    )
+                } else {
+                    format!("  ↩ [{}]", short_display_id(reply_target_id))
+                };
+                lines.push(Line::from(Span::styled(
+                    reply_line,
+                    Style::default().dark_gray(),
+                )));
+            }
+
             let content = item.content.replace('\n', " ");
             let message_line = format!(
                 "{} [{}] {}",
