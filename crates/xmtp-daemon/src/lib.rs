@@ -1855,15 +1855,6 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
                 .post(add_group_members_handler)
                 .delete(remove_group_members_handler),
         )
-        .route("/v1/groups/{conversation_id}/rename", post(rename_group_handler))
-        .route(
-            "/v1/groups/{conversation_id}/members/add",
-            post(add_group_members_handler),
-        )
-        .route(
-            "/v1/groups/{conversation_id}/members/remove",
-            post(remove_group_members_handler),
-        )
         .route("/v1/groups/{conversation_id}/send", post(send_group_handler))
         .route("/v1/conversations/{conversation_id}/leave", post(leave_conversation_handler))
         .route("/v1/messages/{message_id}", get(message_info_handler))

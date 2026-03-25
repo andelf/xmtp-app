@@ -825,9 +825,9 @@ async fn daemon_group_rename(
     conversation_id: &str,
     name: &str,
 ) -> anyhow::Result<ActionResponse> {
-    http_post(
+    http_patch(
         data_dir,
-        &format!("/v1/groups/{conversation_id}/rename"),
+        &format!("/v1/groups/{conversation_id}"),
         &RenameGroupRequest {
             name: name.to_owned(),
         },
@@ -842,7 +842,7 @@ async fn daemon_group_add(
 ) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
-        &format!("/v1/groups/{conversation_id}/members/add"),
+        &format!("/v1/groups/{conversation_id}/members"),
         &GroupMembersUpdateRequest { members },
     )
     .await
@@ -853,9 +853,9 @@ async fn daemon_group_remove(
     conversation_id: &str,
     members: Vec<String>,
 ) -> anyhow::Result<ActionResponse> {
-    http_post(
+    http_delete(
         data_dir,
-        &format!("/v1/groups/{conversation_id}/members/remove"),
+        &format!("/v1/groups/{conversation_id}/members"),
         &GroupMembersUpdateRequest { members },
     )
     .await
@@ -984,6 +984,52 @@ where
     let base_url = daemon_base_url(data_dir)?;
     client
         .post(format!("{base_url}{path}"))
+        .json(body)
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?
+        .json()
+        .await
+        .context("decode daemon http response")
+}
+
+async fn http_patch<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+    B: serde::Serialize + ?Sized,
+{
+    if !addr_path(data_dir).exists() {
+        daemon_start(data_dir.clone()).await?;
+    }
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .patch(format!("{base_url}{path}"))
+        .json(body)
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?
+        .json()
+        .await
+        .context("decode daemon http response")
+}
+
+async fn http_delete<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+    B: serde::Serialize + ?Sized,
+{
+    if !addr_path(data_dir).exists() {
+        daemon_start(data_dir.clone()).await?;
+    }
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .delete(format!("{base_url}{path}"))
         .json(body)
         .send()
         .await
