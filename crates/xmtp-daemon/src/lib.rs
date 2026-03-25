@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -399,7 +400,12 @@ fn list_conversations_with_client(
                 .and_then(|message| message.map(|message| message.sent_at_ns)),
         });
     }
+    sort_conversation_summaries(&mut summaries);
     Ok(summaries)
+}
+
+fn sort_conversation_summaries(items: &mut [ConversationSummary]) {
+    items.sort_by_key(|item| Reverse(item.last_message_ns.unwrap_or_default()));
 }
 
 fn send_dm_with_client(
@@ -2109,8 +2115,8 @@ impl Drop for DaemonFilesGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConversationLookup, resolve_conversation_lookup_id, resolve_message_id,
-        summarize_decoded_content,
+        ConversationLookup, ConversationSummary, resolve_conversation_lookup_id, resolve_message_id,
+        sort_conversation_summaries, summarize_decoded_content,
     };
     use xmtp::content::{Content, Reaction, ReactionAction, ReactionSchema, Reply, EncodedContent};
 
@@ -2193,6 +2199,39 @@ mod tests {
         let error = resolve_conversation_lookup_id(&ids, "dup", None).expect_err("ambiguous name");
 
         assert!(error.to_string().contains("conversation name dup is ambiguous"));
+    }
+
+    #[test]
+    fn conversation_summaries_are_sorted_by_last_message_desc() {
+        let mut items = vec![
+            ConversationSummary {
+                id: "conv-1".into(),
+                kind: "dm".into(),
+                name: None,
+                dm_peer_inbox_id: Some("peer-1".into()),
+                last_message_ns: Some(10),
+            },
+            ConversationSummary {
+                id: "conv-2".into(),
+                kind: "group".into(),
+                name: Some("group".into()),
+                dm_peer_inbox_id: None,
+                last_message_ns: None,
+            },
+            ConversationSummary {
+                id: "conv-3".into(),
+                kind: "dm".into(),
+                name: None,
+                dm_peer_inbox_id: Some("peer-3".into()),
+                last_message_ns: Some(30),
+            },
+        ];
+
+        sort_conversation_summaries(&mut items);
+
+        assert_eq!(items[0].id, "conv-3");
+        assert_eq!(items[1].id, "conv-1");
+        assert_eq!(items[2].id, "conv-2");
     }
 
     #[test]
