@@ -704,6 +704,8 @@ impl App {
                     match ch {
                         'a' | 'A' => self.cursor = 0,
                         'e' | 'E' => self.cursor = self.input_char_len(),
+                        'u' | 'U' => self.delete_to_start_of_line(),
+                        'w' | 'W' => self.delete_previous_word(),
                         _ => {}
                     }
                 } else {
@@ -976,7 +978,15 @@ impl App {
                 }
             }
             KeyCode::Char(ch) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    match ch {
+                        'u' | 'U' => self.group_management.rename_input.clear(),
+                        'w' | 'W' => {
+                            delete_previous_word_from_end(&mut self.group_management.rename_input);
+                        }
+                        _ => {}
+                    }
+                } else {
                     self.group_management.rename_input.push(ch);
                 }
             }
@@ -1089,6 +1099,44 @@ impl App {
         let end = self.input_byte_index(self.cursor + 1);
         self.input.replace_range(start..end, "");
     }
+
+    fn delete_to_start_of_line(&mut self) {
+        let end = self.input_byte_index(self.cursor);
+        self.input.replace_range(0..end, "");
+        self.cursor = 0;
+    }
+
+    fn delete_previous_word(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut start = self.cursor;
+
+        while start > 0 && chars[start - 1].is_whitespace() {
+            start -= 1;
+        }
+        while start > 0 && !chars[start - 1].is_whitespace() {
+            start -= 1;
+        }
+
+        let byte_start = self.input_byte_index(start);
+        let byte_end = self.input_byte_index(self.cursor);
+        self.input.replace_range(byte_start..byte_end, "");
+        self.cursor = start;
+    }
+}
+
+fn delete_previous_word_from_end(value: &mut String) {
+    let mut chars: Vec<char> = value.chars().collect();
+    while chars.last().is_some_and(|ch| ch.is_whitespace()) {
+        chars.pop();
+    }
+    while chars.last().is_some_and(|ch| !ch.is_whitespace()) {
+        chars.pop();
+    }
+    *value = chars.into_iter().collect();
 }
 
 pub fn reaction_choices() -> [&'static str; 5] {
@@ -1210,6 +1258,38 @@ mod tests {
 
         assert_eq!(app.input, "hello");
         assert_eq!(app.cursor, 3);
+    }
+
+    #[test]
+    fn input_ctrl_w_deletes_previous_word() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Input;
+        app.input = "hello brave new".into();
+        app.cursor = app.input.chars().count();
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('w'),
+            KeyModifiers::CONTROL,
+        ))));
+
+        assert_eq!(app.input, "hello brave ");
+        assert_eq!(app.cursor, "hello brave ".chars().count());
+    }
+
+    #[test]
+    fn input_ctrl_u_deletes_to_start() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Input;
+        app.input = "hello brave new".into();
+        app.cursor = "hello brave".chars().count();
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL,
+        ))));
+
+        assert_eq!(app.input, " new");
+        assert_eq!(app.cursor, 0);
     }
 
     #[test]
@@ -1347,6 +1427,25 @@ mod tests {
 
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::GroupRename);
+        assert!(app.group_management.rename_input.is_empty());
+    }
+
+    #[test]
+    fn rename_group_supports_ctrl_u_and_ctrl_w() {
+        let (mut app, _) = App::new();
+        app.modal = Modal::GroupRename;
+        app.group_management.rename_input = "old team name".into();
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('w'),
+            KeyModifiers::CONTROL,
+        ))));
+        assert_eq!(app.group_management.rename_input, "old team ");
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL,
+        ))));
         assert!(app.group_management.rename_input.is_empty());
     }
 
