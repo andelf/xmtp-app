@@ -1,122 +1,7 @@
 use serde::{Deserialize, Serialize};
 use xmtp_core::{ConnectionState, DaemonState};
 
-pub type RequestId = String;
-pub type ProtocolVersion = u32;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpcEnvelope<T> {
-    pub version: ProtocolVersion,
-    pub request_id: RequestId,
-    pub payload: T,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum DaemonRequest {
-    GetStatus,
-    Shutdown,
-    Reply {
-        message_id: String,
-        message: String,
-    },
-    React {
-        message_id: String,
-        emoji: String,
-    },
-    Unreact {
-        message_id: String,
-        emoji: String,
-    },
-    Login {
-        env: String,
-        api_url: Option<String>,
-    },
-    ListConversations {
-        kind: Option<String>,
-    },
-    OpenDm {
-        recipient: String,
-    },
-    SendDm {
-        recipient: String,
-        message: String,
-    },
-    CreateGroup {
-        name: Option<String>,
-        members: Vec<String>,
-    },
-    SendGroup {
-        conversation_id: String,
-        message: String,
-    },
-    RenameGroup {
-        conversation_id: String,
-        name: String,
-    },
-    AddGroupMembers {
-        conversation_id: String,
-        members: Vec<String>,
-    },
-    RemoveGroupMembers {
-        conversation_id: String,
-        members: Vec<String>,
-    },
-    LeaveConversation {
-        conversation_id: String,
-    },
-    GroupMembers {
-        conversation_id: String,
-    },
-    GroupInfo {
-        conversation_id: String,
-    },
-    ConversationInfo {
-        conversation_id: String,
-    },
-    MessageInfo {
-        message_id: String,
-    },
-    WatchHistory {
-        conversation_id: String,
-    },
-    History {
-        conversation_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DaemonResponse {
-    pub ok: bool,
-    pub result: Option<DaemonResponseData>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum DaemonResponseData {
-    Status(StatusResponse),
-    ConversationList(ConversationListResponse),
-    GroupMembers(GroupMembersResponse),
-    OpenDm(ActionResponse),
-    SendDm(SendDmResponse),
-    CreateGroup(ActionResponse),
-    SendGroup(ActionResponse),
-    RenameGroup(ActionResponse),
-    AddGroupMembers(ActionResponse),
-    RemoveGroupMembers(ActionResponse),
-    LeaveConversation(ActionResponse),
-    GroupInfo(GroupInfoResponse),
-    Reply(ActionResponse),
-    React(ActionResponse),
-    Unreact(ActionResponse),
-    ConversationInfo(ConversationInfoResponse),
-    MessageInfo(MessageInfoResponse),
-    History(HistoryResponse),
-    HistoryEvent(HistoryEventResponse),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StatusResponse {
     pub daemon_state: DaemonState,
     pub connection_state: ConnectionState,
@@ -124,12 +9,12 @@ pub struct StatusResponse {
     pub installation_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConversationListResponse {
     pub items: Vec<ConversationItem>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConversationItem {
     pub id: String,
     pub kind: String,
@@ -199,17 +84,12 @@ pub struct ActionResponse {
     pub message_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HistoryResponse {
     pub items: Vec<HistoryItem>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryEventResponse {
-    pub item: HistoryItem,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HistoryItem {
     pub message_id: String,
     pub sender_inbox_id: String,
@@ -226,9 +106,72 @@ pub struct HistoryItem {
     pub attached_reactions: Vec<ReactionDetail>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReactionDetail {
     pub sender_inbox_id: String,
     pub emoji: String,
     pub action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LoginRequest {
+    pub env: String,
+    pub api_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecipientRequest {
+    pub recipient: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SendMessageRequest {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecipientMessageRequest {
+    pub recipient: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupCreateRequest {
+    pub name: Option<String>,
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RenameGroupRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupMembersUpdateRequest {
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmojiRequest {
+    pub emoji: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DaemonEventEnvelope {
+    pub event_id: String,
+    pub payload: DaemonEventData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DaemonEventData {
+    Status(StatusResponse),
+    ConversationList(ConversationListResponse),
+    HistoryItem {
+        conversation_id: String,
+        item: HistoryItem,
+    },
+    DaemonError {
+        message: String,
+    },
 }

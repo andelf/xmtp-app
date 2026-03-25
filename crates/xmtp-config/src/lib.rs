@@ -10,7 +10,8 @@ pub struct AppConfig {
     pub profile: String,
     pub xmtp_env: String,
     pub data_dir: String,
-    pub ipc_socket_path: String,
+    #[serde(alias = "ipc_socket_path")]
+    pub daemon_addr_path: String,
     pub log_level: String,
     pub api_url: Option<String>,
 }
@@ -22,7 +23,7 @@ impl AppConfig {
             profile: "default".to_owned(),
             xmtp_env: "dev".to_owned(),
             data_dir: data_dir.display().to_string(),
-            ipc_socket_path: data_dir.join("daemon.sock").display().to_string(),
+            daemon_addr_path: data_dir.join("daemon.addr").display().to_string(),
             log_level: "info".to_owned(),
             api_url: None,
         }

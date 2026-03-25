@@ -68,6 +68,18 @@ fn render_conversations(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    if app.messages.is_empty() && app.active_conversation.is_none() {
+        let message = app
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "No conversations loaded.".to_owned());
+        let paragraph = Paragraph::new(message)
+            .block(titled_block("Messages", app.focus == Focus::Messages))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
     if app.active_history_loading && app.messages.is_empty() {
         let title = app
             .active_conversation

@@ -6,7 +6,6 @@ mod ui;
 
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
@@ -57,20 +56,16 @@ async fn run_app(
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let (mut app, initial_effects) = App::new();
     let mut runtime = Runtime::new(data_dir, tx.clone());
-    runtime.ensure_ready().await?;
-    runtime.apply_effects(initial_effects).await;
-
-    tokio::spawn({
-        let tx = tx.clone();
-        async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                if tx.send(AppEvent::Tick).is_err() {
-                    break;
-                }
-            }
+    let daemon_ready = match runtime.ensure_ready().await {
+        Ok(()) => true,
+        Err(err) => {
+        let _ = tx.send(AppEvent::Error(format!("daemon unavailable: {}", err)));
+            false
         }
-    });
+    };
+    if daemon_ready {
+        runtime.apply_effects(initial_effects).await;
+    }
 
     let mut terminal_events = EventStream::new();
     loop {

@@ -3,14 +3,13 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
+use eventsource_stream::Eventsource;
+use futures_util::StreamExt;
 use tokio::task::JoinHandle;
-use xmtp_daemon::socket_path;
+use xmtp_daemon::addr_path;
 use xmtp_ipc::{
-    ActionResponse, ConversationInfoResponse, ConversationListResponse, DaemonRequest, DaemonResponse,
-    DaemonResponseData, HistoryEventResponse, HistoryResponse, IpcEnvelope,
-    StatusResponse,
+    ActionResponse, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope, GroupCreateRequest,
+    HistoryResponse, RecipientMessageRequest, RecipientRequest, SendMessageRequest, EmojiRequest,
 };
 
 use crate::event::{ActionOutcome, AppEvent, Effect};
@@ -19,6 +18,7 @@ use crate::event::{ActionOutcome, AppEvent, Effect};
 pub struct Runtime {
     data_dir: PathBuf,
     tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
+    app_events_handle: Option<JoinHandle<()>>,
     watch_handle: Option<JoinHandle<()>>,
 }
 
@@ -27,6 +27,7 @@ impl Runtime {
         Self {
             data_dir,
             tx,
+            app_events_handle: None,
             watch_handle: None,
         }
     }
@@ -38,8 +39,7 @@ impl Runtime {
     pub async fn apply_effects(&mut self, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
-                Effect::RefreshStatus => self.spawn_status(),
-                Effect::RefreshConversations => self.spawn_conversations(),
+                Effect::SubscribeAppEvents => self.subscribe_app_events(),
                 Effect::SwitchConversation { conversation_id } => {
                     self.spawn_conversation_info(conversation_id.clone());
                     self.spawn_history(conversation_id.clone());
@@ -59,34 +59,17 @@ impl Runtime {
         }
     }
 
-    fn spawn_status(&self) {
+    fn subscribe_app_events(&mut self) {
+        if self.app_events_handle.is_some() {
+            return;
+        }
         let tx = self.tx.clone();
         let data_dir = self.data_dir.clone();
-        tokio::spawn(async move {
-            match get_status(&data_dir).await {
-                Ok(status) => {
-                    let _ = tx.send(AppEvent::StatusLoaded(status));
-                }
-                Err(err) => {
-                    let _ = tx.send(AppEvent::Error(err.to_string()));
-                }
+        self.app_events_handle = Some(tokio::spawn(async move {
+            if let Err(err) = watch_app_events(&data_dir, tx.clone()).await {
+                let _ = tx.send(AppEvent::Error(err.to_string()));
             }
-        });
-    }
-
-    fn spawn_conversations(&self) {
-        let tx = self.tx.clone();
-        let data_dir = self.data_dir.clone();
-        tokio::spawn(async move {
-            match list_conversations(&data_dir).await {
-                Ok(items) => {
-                    let _ = tx.send(AppEvent::ConversationsLoaded(items));
-                }
-                Err(err) => {
-                    let _ = tx.send(AppEvent::Error(err.to_string()));
-                }
-            }
-        });
+        }));
     }
 
     fn spawn_conversation_info(&self, conversation_id: String) {
@@ -225,8 +208,8 @@ impl Runtime {
 }
 
 async fn ensure_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
-    let socket = socket_path(data_dir);
-    if socket.exists() {
+    let addr = addr_path(data_dir);
+    if addr.exists() {
         return Ok(());
     }
     let current_exe = std::env::current_exe().context("resolve current exe")?;
@@ -250,92 +233,22 @@ async fn ensure_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
 
     let deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < deadline {
-        if socket.exists() {
+        if addr.exists() {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    anyhow::bail!("daemon socket not ready")
-}
-
-async fn send_request(data_dir: &PathBuf, request: DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    let socket = socket_path(data_dir);
-    let mut stream = UnixStream::connect(&socket)
-        .await
-        .with_context(|| format!("connect daemon socket at {}", socket.display()))?;
-    let envelope = IpcEnvelope {
-        version: 1,
-        request_id: "tui-req".to_owned(),
-        payload: request,
-    };
-    let json = serde_json::to_string(&envelope).context("encode daemon request")?;
-    stream.write_all(json.as_bytes()).await.context("write request")?;
-    stream.write_all(b"\n").await.context("write newline")?;
-    stream.flush().await.context("flush request")?;
-
-    let mut reader = tokio::io::BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line).await.context("read daemon response")?;
-    let envelope: IpcEnvelope<DaemonResponse> =
-        serde_json::from_str(&line).context("decode daemon response")?;
-    if envelope.payload.ok {
-        Ok(envelope.payload)
-    } else {
-        anyhow::bail!(
-            "{}",
-            envelope
-                .payload
-                .error
-                .unwrap_or_else(|| "daemon request failed".to_owned())
-        )
-    }
-}
-
-async fn get_status(data_dir: &PathBuf) -> anyhow::Result<StatusResponse> {
-    match send_request(data_dir, DaemonRequest::GetStatus).await?.result {
-        Some(DaemonResponseData::Status(status)) => Ok(status),
-        _ => anyhow::bail!("unexpected daemon status response"),
-    }
-}
-
-async fn list_conversations(data_dir: &PathBuf) -> anyhow::Result<Vec<xmtp_ipc::ConversationItem>> {
-    match send_request(data_dir, DaemonRequest::ListConversations { kind: None })
-        .await?
-        .result
-    {
-        Some(DaemonResponseData::ConversationList(ConversationListResponse { items })) => Ok(items),
-        _ => anyhow::bail!("unexpected conversation list response"),
-    }
+    anyhow::bail!("daemon addr not ready")
 }
 
 async fn conversation_info(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<ConversationInfoResponse> {
-    match send_request(
-        data_dir,
-        DaemonRequest::ConversationInfo {
-            conversation_id: conversation_id.to_owned(),
-        },
-    )
-    .await?
-    .result
-    {
-        Some(DaemonResponseData::ConversationInfo(info)) => Ok(info),
-        _ => anyhow::bail!("unexpected conversation info response"),
-    }
+    http_get(data_dir, &format!("/v1/conversations/{conversation_id}")).await
 }
 
 async fn load_history(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<Vec<xmtp_ipc::HistoryItem>> {
-    match send_request(
-        data_dir,
-        DaemonRequest::History {
-            conversation_id: conversation_id.to_owned(),
-        },
-    )
-    .await?
-    .result
-    {
-        Some(DaemonResponseData::History(HistoryResponse { items })) => Ok(items),
-        _ => anyhow::bail!("unexpected history response"),
-    }
+    let response: HistoryResponse =
+        http_get(data_dir, &format!("/v1/conversations/{conversation_id}/history")).await?;
+    Ok(response.items)
 }
 
 async fn watch_history(
@@ -343,141 +256,179 @@ async fn watch_history(
     conversation_id: &str,
     tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 ) -> anyhow::Result<()> {
-    ensure_daemon(data_dir).await?;
-    let socket = socket_path(data_dir);
-    let mut stream = UnixStream::connect(&socket)
-        .await
-        .with_context(|| format!("connect daemon socket at {}", socket.display()))?;
-    let envelope = IpcEnvelope {
-        version: 1,
-        request_id: "tui-watch".to_owned(),
-        payload: DaemonRequest::WatchHistory {
-            conversation_id: conversation_id.to_owned(),
-        },
-    };
-    let json = serde_json::to_string(&envelope).context("encode watch request")?;
-    stream.write_all(json.as_bytes()).await.context("write watch request")?;
-    stream.write_all(b"\n").await.context("write watch newline")?;
-    stream.flush().await.context("flush watch request")?;
-
-    let mut reader = tokio::io::BufReader::new(stream);
-    let mut ack = String::new();
-    reader.read_line(&mut ack).await.context("read watch ack")?;
-
     loop {
-        let mut line = String::new();
-        let bytes = reader.read_line(&mut line).await.context("read watch line")?;
-        if bytes == 0 {
-            break;
+        ensure_daemon(data_dir).await?;
+        let client = reqwest::Client::new();
+        let base_url = daemon_base_url(data_dir)?;
+        let response = client
+            .get(format!("{base_url}/v1/events/history/{conversation_id}"))
+            .send()
+            .await
+            .context("open history sse stream")?
+            .error_for_status()
+            .context("history sse status")?;
+        let mut stream = response.bytes_stream().eventsource();
+        while let Some(event) = stream.next().await {
+            let event = event.context("read history sse event")?;
+            let envelope: DaemonEventEnvelope =
+                serde_json::from_str(&event.data).context("decode history event envelope")?;
+            match envelope.payload {
+                DaemonEventData::HistoryItem { conversation_id, item } => {
+                    let _ = tx.send(AppEvent::HistoryEvent {
+                        conversation_id,
+                        item,
+                    });
+                }
+                DaemonEventData::DaemonError { message } => {
+                    let _ = tx.send(AppEvent::Error(message));
+                }
+                DaemonEventData::Status(_) | DaemonEventData::ConversationList(_) => {}
+            }
         }
-        let envelope: IpcEnvelope<DaemonResponse> =
-            serde_json::from_str(&line).context("decode watch event")?;
-        if !envelope.payload.ok {
-            anyhow::bail!(
-                "{}",
-                envelope
-                    .payload
-                    .error
-                    .unwrap_or_else(|| "watch request failed".to_owned())
-            );
-        }
-        if let Some(DaemonResponseData::HistoryEvent(HistoryEventResponse { item })) =
-            envelope.payload.result
-        {
-            let _ = tx.send(AppEvent::HistoryEvent {
-                conversation_id: conversation_id.to_owned(),
-                item,
-            });
-        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    Ok(())
+}
+
+fn daemon_base_url(data_dir: &PathBuf) -> anyhow::Result<String> {
+    let addr = std::fs::read_to_string(addr_path(data_dir)).context("read daemon addr file")?;
+    Ok(format!("http://{}", addr.trim()))
 }
 
 async fn open_dm(data_dir: &PathBuf, recipient: &str) -> anyhow::Result<ActionResponse> {
-    match send_request(
+    http_post(
         data_dir,
-        DaemonRequest::OpenDm {
+        "/v1/direct-message/open",
+        &RecipientRequest {
             recipient: recipient.to_owned(),
         },
     )
-    .await?
-    .result
-    {
-        Some(DaemonResponseData::OpenDm(result)) => Ok(result),
-        _ => anyhow::bail!("unexpected open dm response"),
+    .await
+}
+
+async fn watch_app_events(
+    data_dir: &PathBuf,
+    tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
+) -> anyhow::Result<()> {
+    loop {
+        ensure_daemon(data_dir).await?;
+        let client = reqwest::Client::new();
+        let base_url = daemon_base_url(data_dir)?;
+        let response = client
+            .get(format!("{base_url}/v1/events"))
+            .send()
+            .await
+            .context("open app event stream")?
+            .error_for_status()
+            .context("app event stream status")?;
+        let mut stream = response.bytes_stream().eventsource();
+        while let Some(event) = stream.next().await {
+            let event = event.context("read app event")?;
+            let envelope: DaemonEventEnvelope =
+                serde_json::from_str(&event.data).context("decode app event envelope")?;
+            match envelope.payload {
+                DaemonEventData::Status(status) => {
+                    let _ = tx.send(AppEvent::StatusLoaded(status));
+                }
+                DaemonEventData::ConversationList(response) => {
+                    let _ = tx.send(AppEvent::ConversationsLoaded(response.items));
+                }
+                DaemonEventData::DaemonError { message } => {
+                    let _ = tx.send(AppEvent::Error(message));
+                }
+                // Global /v1/events currently only carries app-level snapshots and errors.
+                // History items come from the dedicated /v1/events/history/:id stream.
+                DaemonEventData::HistoryItem { .. } => {}
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
 async fn send_dm(data_dir: &PathBuf, recipient: &str, message: &str) -> anyhow::Result<xmtp_ipc::SendDmResponse> {
-    match send_request(
+    http_post(
         data_dir,
-        DaemonRequest::SendDm {
+        "/v1/direct-message/send",
+        &RecipientMessageRequest {
             recipient: recipient.to_owned(),
             message: message.to_owned(),
         },
     )
-    .await?
-    .result
-    {
-        Some(DaemonResponseData::SendDm(response)) => Ok(response),
-        _ => anyhow::bail!("unexpected send dm response"),
-    }
+    .await
 }
 
 async fn send_group(data_dir: &PathBuf, conversation_id: &str, message: &str) -> anyhow::Result<ActionResponse> {
-    match send_request(
+    http_post(
         data_dir,
-        DaemonRequest::SendGroup {
-            conversation_id: conversation_id.to_owned(),
+        &format!("/v1/groups/{conversation_id}/send"),
+        &SendMessageRequest {
             message: message.to_owned(),
         },
     )
-    .await?
-    .result
-    {
-        Some(DaemonResponseData::SendGroup(response)) => Ok(response),
-        _ => anyhow::bail!("unexpected send group response"),
-    }
+    .await
 }
 
 async fn create_group(data_dir: &PathBuf, name: Option<String>, members: Vec<String>) -> anyhow::Result<ActionResponse> {
-    match send_request(data_dir, DaemonRequest::CreateGroup { name, members })
-        .await?
-        .result
-    {
-        Some(DaemonResponseData::CreateGroup(response)) => Ok(response),
-        _ => anyhow::bail!("unexpected create group response"),
-    }
+    http_post(data_dir, "/v1/groups", &GroupCreateRequest { name, members }).await
 }
 
 async fn reply(data_dir: &PathBuf, message_id: &str, message: &str) -> anyhow::Result<ActionResponse> {
-    match send_request(
+    http_post(
         data_dir,
-        DaemonRequest::Reply {
-            message_id: message_id.to_owned(),
+        &format!("/v1/messages/{message_id}/reply"),
+        &SendMessageRequest {
             message: message.to_owned(),
         },
     )
-    .await?
-    .result
-    {
-        Some(DaemonResponseData::Reply(response)) => Ok(response),
-        _ => anyhow::bail!("unexpected reply response"),
-    }
+    .await
 }
 
 async fn react(data_dir: &PathBuf, message_id: &str, emoji: &str) -> anyhow::Result<ActionResponse> {
-    match send_request(
+    http_post(
         data_dir,
-        DaemonRequest::React {
-            message_id: message_id.to_owned(),
+        &format!("/v1/messages/{message_id}/react"),
+        &EmojiRequest {
             emoji: emoji.to_owned(),
         },
     )
-    .await?
-    .result
-    {
-        Some(DaemonResponseData::React(response)) => Ok(response),
-        _ => anyhow::bail!("unexpected react response"),
-    }
+    .await
+}
+
+async fn http_get<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    ensure_daemon(data_dir).await?;
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .get(format!("{base_url}{path}"))
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?
+        .json()
+        .await
+        .context("decode daemon http response")
+}
+
+async fn http_post<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+    B: serde::Serialize + ?Sized,
+{
+    ensure_daemon(data_dir).await?;
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .post(format!("{base_url}{path}"))
+        .json(body)
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?
+        .json()
+        .await
+        .context("decode daemon http response")
 }

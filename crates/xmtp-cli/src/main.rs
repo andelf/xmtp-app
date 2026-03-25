@@ -5,19 +5,20 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
+use eventsource_stream::Eventsource;
+use futures_util::StreamExt;
 use xmtp_config::{AppConfig, save_config};
 use xmtp_daemon::{
-    HistoryEntry, history_with_kind as load_history_direct, pid_path, serve, socket_path,
-    watch_history_with_kind as watch_history_stream,
+    HistoryEntry, addr_path, history_with_kind as load_history_direct, pid_path,
+    resolve_conversation_id, serve,
 };
 use xmtp_core::{ConnectionState, DaemonState, StateSnapshot, SyncPhase, SyncState};
 use xmtp_ipc::{
-    ActionResponse, ConversationItem, ConversationListResponse, DaemonRequest, DaemonResponse,
-    DaemonResponseData, ConversationInfoResponse, GroupInfoResponse, GroupMemberItem,
-    GroupMembersResponse, IpcEnvelope, MessageInfoResponse, SendDmResponse,
-    StatusResponse,
+    ActionResponse, ConversationInfoResponse, ConversationItem, ConversationListResponse,
+    DaemonEventData, DaemonEventEnvelope, EmojiRequest, GroupCreateRequest, GroupInfoResponse,
+    GroupMemberItem, GroupMembersResponse, GroupMembersUpdateRequest, LoginRequest,
+    MessageInfoResponse, RecipientMessageRequest, RenameGroupRequest, SendDmResponse,
+    SendMessageRequest, StatusResponse,
 };
 use xmtp_logging::{
     daemon_events_log_path, daemon_stderr_log_path, daemon_stdout_log_path, ensure_logs_dir,
@@ -53,6 +54,10 @@ enum Command {
         kind: String,
         #[arg(long)]
         follow: bool,
+    },
+    Watch {
+        #[command(subcommand)]
+        command: WatchCommand,
     },
     ListConversations {
         #[arg(long, conflicts_with = "dm")]
@@ -106,6 +111,11 @@ enum DaemonCommand {
     Status,
     Stop,
     Run,
+}
+
+#[derive(Debug, Subcommand)]
+enum WatchCommand {
+    App,
 }
 
 #[derive(Debug, Subcommand)]
@@ -177,6 +187,7 @@ async fn run() -> anyhow::Result<()> {
         Command::Status => status(data_dir),
         Command::Daemon { command } => daemon(data_dir, command).await,
         Command::Logs { kind, follow } => logs(data_dir, &kind, follow).await,
+        Command::Watch { command } => watch(data_dir, command).await,
         Command::ListConversations { group, dm } => {
             let kind = if group {
                 Some("group")
@@ -262,7 +273,7 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
     let config_path = data_dir.join("config.json");
     let state_path = data_dir.join("state.json");
     let signer_path = data_dir.join("signer.key");
-    let socket = socket_path(&data_dir);
+    let addr = addr_path(&data_dir);
     let pid = pid_path(&data_dir);
     let events_log = daemon_events_log_path(&data_dir);
     let stdout_log = daemon_stdout_log_path(&data_dir);
@@ -283,7 +294,7 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
     );
     println!(
         "{}",
-        render_status_row("daemon_socket", bool_label(socket.exists()))
+        render_status_row("daemon_addr", bool_label(addr.exists()))
     );
     println!(
         "{}",
@@ -302,9 +313,8 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
         render_status_row("stderr_log", bool_label(stderr_log.exists()))
     );
 
-    match send_daemon_request_without_autostart(&data_dir, DaemonRequest::GetStatus).await {
-        Ok(response) => {
-            let status = expect_status(response)?;
+    match daemon_get_status_without_autostart(&data_dir).await {
+        Ok(status) => {
             println!("{}", render_status_row("daemon_reachable", "yes"));
             println!(
                 "{}",
@@ -327,27 +337,13 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
 }
 
 async fn login(data_dir: PathBuf, env: &str, api_url: Option<&str>) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::Login {
-            env: env.to_owned(),
-            api_url: api_url.map(str::to_owned),
-        },
-    )
-    .await?;
-    print_status_response(expect_status(response)?)?;
+    let status = daemon_login(&data_dir, env, api_url).await?;
+    print_status_response(status)?;
     Ok(())
 }
 
 async fn list(data_dir: PathBuf, kind: Option<&str>) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::ListConversations {
-            kind: kind.map(str::to_owned),
-        },
-    )
-    .await?;
-    let list = expect_conversation_list(response)?;
+    let list = daemon_list_conversations(&data_dir, kind).await?;
     println!("{}", conversation_list_header());
     for conversation in list.items {
         println!("{}", render_conversation_row(&conversation));
@@ -356,15 +352,7 @@ async fn list(data_dir: PathBuf, kind: Option<&str>) -> anyhow::Result<()> {
 }
 
 async fn dm(data_dir: PathBuf, recipient: &str, message: &str) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::SendDm {
-            recipient: recipient.to_owned(),
-            message: message.to_owned(),
-        },
-    )
-    .await?;
-    let result = expect_send_dm(response)?;
+    let result = daemon_send_dm(&data_dir, recipient, message).await?;
     println!("{}", action_result_header());
     println!(
         "{}",
@@ -409,39 +397,19 @@ async fn group(data_dir: PathBuf, command: GroupCommand) -> anyhow::Result<()> {
 }
 
 async fn group_create(data_dir: PathBuf, name: Option<String>, members: Vec<String>) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::CreateGroup { name, members },
-    )
-    .await?;
-    let result = expect_action(response, "create_group")?;
+    let result = daemon_create_group(&data_dir, name, members).await?;
     print_action_result("group-create", &result);
     Ok(())
 }
 
 async fn group_send(data_dir: PathBuf, conversation_id: &str, message: &str) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::SendGroup {
-            conversation_id: conversation_id.to_owned(),
-            message: message.to_owned(),
-        },
-    )
-    .await?;
-    let result = expect_action(response, "send_group")?;
+    let result = daemon_send_group(&data_dir, conversation_id, message).await?;
     print_action_result("group-send", &result);
     Ok(())
 }
 
 async fn group_members(data_dir: PathBuf, conversation_id: &str) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::GroupMembers {
-            conversation_id: conversation_id.to_owned(),
-        },
-    )
-    .await?;
-    let members = expect_group_members(response)?;
+    let members = daemon_group_members(&data_dir, conversation_id).await?;
     println!("{}", group_members_header());
     for member in members.items {
         println!("{}", render_group_member_row(&member));
@@ -450,29 +418,13 @@ async fn group_members(data_dir: PathBuf, conversation_id: &str) -> anyhow::Resu
 }
 
 async fn group_rename(data_dir: PathBuf, conversation_id: &str, name: &str) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::RenameGroup {
-            conversation_id: conversation_id.to_owned(),
-            name: name.to_owned(),
-        },
-    )
-    .await?;
-    let result = expect_action(response, "rename_group")?;
+    let result = daemon_group_rename(&data_dir, conversation_id, name).await?;
     print_action_result("group-rename", &result);
     Ok(())
 }
 
 async fn group_add(data_dir: PathBuf, conversation_id: &str, members: Vec<String>) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::AddGroupMembers {
-            conversation_id: conversation_id.to_owned(),
-            members,
-        },
-    )
-    .await?;
-    let result = expect_action(response, "add_group_members")?;
+    let result = daemon_group_add(&data_dir, conversation_id, members).await?;
     print_action_result("group-add", &result);
     Ok(())
 }
@@ -482,28 +434,13 @@ async fn group_remove(
     conversation_id: &str,
     members: Vec<String>,
 ) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::RemoveGroupMembers {
-            conversation_id: conversation_id.to_owned(),
-            members,
-        },
-    )
-    .await?;
-    let result = expect_action(response, "remove_group_members")?;
+    let result = daemon_group_remove(&data_dir, conversation_id, members).await?;
     print_action_result("group-remove", &result);
     Ok(())
 }
 
 async fn group_info(data_dir: PathBuf, conversation_id: &str) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::GroupInfo {
-            conversation_id: conversation_id.to_owned(),
-        },
-    )
-    .await?;
-    let info = expect_group_info(response)?;
+    let info = daemon_group_info(&data_dir, conversation_id).await?;
     println!("{}", group_info_header());
     println!("{}", render_group_info_row(&info));
     Ok(())
@@ -517,7 +454,7 @@ async fn history(
 ) -> anyhow::Result<()> {
     if watch {
         print_history_direct(&data_dir, conversation_id, kind)?;
-        watch_history(data_dir, conversation_id, kind)?;
+        watch_history(data_dir, conversation_id, kind).await?;
         return Ok(());
     }
     println!("{}", history_header());
@@ -540,63 +477,61 @@ fn print_history_direct(
     Ok(())
 }
 
-fn watch_history(data_dir: PathBuf, conversation_id: &str, kind: Option<&str>) -> anyhow::Result<()> {
-    watch_history_stream(&data_dir, conversation_id, kind, |item| {
-        println!("{}", render_history_line(&item));
-    })
+async fn watch_history(
+    data_dir: PathBuf,
+    conversation_id: &str,
+    kind: Option<&str>,
+) -> anyhow::Result<()> {
+    wait_for_daemon_ready(&data_dir, 4_000).await?;
+    let resolved_conversation_id = resolve_conversation_id(&data_dir, conversation_id, kind)?;
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(&data_dir)?;
+    let url = format!("{base_url}/v1/events/history/{resolved_conversation_id}");
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .context("open history sse stream")?
+        .error_for_status()
+        .context("history sse status")?;
+    let mut stream = response.bytes_stream().eventsource();
+    while let Some(event) = stream.next().await {
+        let event = event.context("read history sse event")?;
+        let envelope: DaemonEventEnvelope =
+            serde_json::from_str(&event.data).context("decode history event envelope")?;
+        match envelope.payload {
+            DaemonEventData::HistoryItem { item, .. } => {
+                println!("{}", render_history_line(&item));
+            }
+            DaemonEventData::DaemonError { message } => {
+                eprintln!("{message}");
+            }
+            DaemonEventData::Status(_) | DaemonEventData::ConversationList(_) => {}
+        }
+    }
+    Ok(())
 }
 
 async fn reply(data_dir: PathBuf, message_id: &str, message: &str) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::Reply {
-            message_id: message_id.to_owned(),
-            message: message.to_owned(),
-        },
-    )
-    .await?;
-    let result = expect_action(response, "reply")?;
+    let result = daemon_reply(&data_dir, message_id, message).await?;
     print_action_result("reply", &result);
     Ok(())
 }
 
 async fn react(data_dir: PathBuf, message_id: &str, emoji: &str) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::React {
-            message_id: message_id.to_owned(),
-            emoji: emoji.to_owned(),
-        },
-    )
-    .await?;
-    let result = expect_action(response, "react")?;
+    let result = daemon_react(&data_dir, message_id, emoji).await?;
     print_action_result("react", &result);
     Ok(())
 }
 
 async fn unreact(data_dir: PathBuf, message_id: &str, emoji: &str) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::Unreact {
-            message_id: message_id.to_owned(),
-            emoji: emoji.to_owned(),
-        },
-    )
-    .await?;
-    let result = expect_action(response, "unreact")?;
+    let result = daemon_unreact(&data_dir, message_id, emoji).await?;
     print_action_result("unreact", &result);
     Ok(())
 }
 
 async fn leave(data_dir: PathBuf, conversation_id: &str) -> anyhow::Result<()> {
-    let response = send_daemon_request(
-        &data_dir,
-        DaemonRequest::LeaveConversation {
-            conversation_id: conversation_id.to_owned(),
-        },
-    )
-    .await?;
-    let result = expect_action(response, "leave_conversation")?;
+    let result = daemon_leave(&data_dir, conversation_id).await?;
     print_action_result("leave", &result);
     Ok(())
 }
@@ -604,19 +539,12 @@ async fn leave(data_dir: PathBuf, conversation_id: &str) -> anyhow::Result<()> {
 async fn info(data_dir: PathBuf, command: InfoCommand) -> anyhow::Result<()> {
     match command {
         InfoCommand::Conversation { conversation_id } => {
-            let response = send_daemon_request(
-                &data_dir,
-                DaemonRequest::ConversationInfo { conversation_id },
-            )
-            .await?;
-            let info = expect_conversation_info(response)?;
+            let info = daemon_conversation_info(&data_dir, &conversation_id).await?;
             print_conversation_info(&info);
             Ok(())
         }
         InfoCommand::Message { message_id } => {
-            let response =
-                send_daemon_request(&data_dir, DaemonRequest::MessageInfo { message_id }).await?;
-            let info = expect_message_info(response)?;
+            let info = daemon_message_info(&data_dir, &message_id).await?;
             print_message_info(&info);
             Ok(())
         }
@@ -637,10 +565,6 @@ async fn daemon_start(data_dir: PathBuf) -> anyhow::Result<()> {
     std::fs::create_dir_all(&data_dir).context("create daemon dir")?;
     ensure_logs_dir(&data_dir)?;
     stop_existing_daemon(&data_dir).await?;
-    let socket = socket_path(&data_dir);
-    if socket.exists() {
-        std::fs::remove_file(&socket).context("remove stale daemon socket")?;
-    }
     let stdout_log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -684,8 +608,8 @@ async fn daemon_restart(data_dir: PathBuf) -> anyhow::Result<()> {
 }
 
 async fn daemon_status(data_dir: PathBuf) -> anyhow::Result<()> {
-    let response = daemon_status_request(&data_dir).await?;
-    print_status_response(expect_status(response)?)?;
+    let status = daemon_status_request(&data_dir).await?;
+    print_status_response(status)?;
     Ok(())
 }
 
@@ -695,18 +619,11 @@ async fn daemon_stop(data_dir: PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn send_daemon_request(data_dir: &PathBuf, request: DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    if !socket_path(data_dir).exists() {
-        daemon_start(data_dir.clone()).await?;
-    }
-    send_daemon_request_without_autostart(data_dir, request).await
-}
-
-async fn daemon_status_request(data_dir: &PathBuf) -> anyhow::Result<DaemonResponse> {
+async fn daemon_status_request(data_dir: &PathBuf) -> anyhow::Result<StatusResponse> {
     let mut last_error = None;
     for _ in 0..20 {
-        match send_daemon_request_without_autostart(data_dir, DaemonRequest::GetStatus).await {
-            Ok(response) => return Ok(response),
+        match daemon_get_status_without_autostart(data_dir).await {
+            Ok(status) => return Ok(status),
             Err(err) => {
                 last_error = Some(err);
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -720,7 +637,7 @@ async fn wait_for_daemon_ready(data_dir: &PathBuf, timeout_ms: u64) -> anyhow::R
     let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
     let mut last_error = None;
     loop {
-        if socket_path(data_dir).exists() && pid_path(data_dir).exists() {
+        if addr_path(data_dir).exists() && pid_path(data_dir).exists() {
             match daemon_status_request(data_dir).await {
                 Ok(_) => return Ok(()),
                 Err(err) => last_error = Some(err),
@@ -731,7 +648,7 @@ async fn wait_for_daemon_ready(data_dir: &PathBuf, timeout_ms: u64) -> anyhow::R
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("daemon socket did not appear")))
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("daemon address did not appear")))
 }
 
 async fn logs(data_dir: PathBuf, kind: &str, follow: bool) -> anyhow::Result<()> {
@@ -761,46 +678,340 @@ async fn logs(data_dir: PathBuf, kind: &str, follow: bool) -> anyhow::Result<()>
     Ok(())
 }
 
-async fn send_daemon_request_without_autostart(
-    data_dir: &PathBuf,
-    request: DaemonRequest,
-) -> anyhow::Result<DaemonResponse> {
-    let socket = socket_path(data_dir);
-    let mut stream = UnixStream::connect(&socket)
-        .await
-        .with_context(|| format!("connect daemon socket at {}", socket.display()))?;
-    let envelope = IpcEnvelope {
-        version: 1,
-        request_id: "req-1".to_owned(),
-        payload: request,
-    };
-    let json = serde_json::to_string(&envelope).context("encode daemon request")?;
-    stream.write_all(json.as_bytes()).await.context("write request")?;
-    stream.write_all(b"\n").await.context("write newline")?;
-    stream.flush().await.context("flush request")?;
-
-    let mut reader = tokio::io::BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line).await.context("read daemon response")?;
-    let envelope: IpcEnvelope<DaemonResponse> =
-        serde_json::from_str(&line).context("decode daemon response")?;
-    if envelope.payload.ok {
-        Ok(envelope.payload)
-    } else {
-        anyhow::bail!(
-            "{}",
-            envelope
-                .payload
-                .error
-                .unwrap_or_else(|| "daemon request failed".to_owned())
-        )
+async fn watch(data_dir: PathBuf, command: WatchCommand) -> anyhow::Result<()> {
+    match command {
+        WatchCommand::App => watch_app_events(data_dir).await,
     }
 }
 
+async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
+    wait_for_daemon_ready(&data_dir, 4_000).await?;
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(&data_dir)?;
+    let response = client
+        .get(format!("{base_url}/v1/events"))
+        .send()
+        .await
+        .context("open app event stream")?
+        .error_for_status()
+        .context("app event stream status")?;
+    let mut stream = response.bytes_stream().eventsource();
+    println!("{}", render_event_row("event", "details"));
+    while let Some(event) = stream.next().await {
+        let event = event.context("read app event")?;
+        let envelope: DaemonEventEnvelope =
+            serde_json::from_str(&event.data).context("decode app event envelope")?;
+        match envelope.payload {
+            DaemonEventData::Status(status) => {
+                println!(
+                    "{}",
+                    render_event_row(
+                        "status",
+                        &format!(
+                            "daemon={} connection={} inbox={}",
+                            status.daemon_state,
+                            status.connection_state,
+                            status
+                                .inbox_id
+                                .as_deref()
+                                .map(short_id)
+                                .unwrap_or_else(|| "-".to_owned())
+                        ),
+                    )
+                );
+            }
+            DaemonEventData::ConversationList(ConversationListResponse { items }) => {
+                println!(
+                    "{}",
+                    render_event_row("conversations", &format!("count={}", items.len()))
+                );
+            }
+            DaemonEventData::DaemonError { message } => {
+                println!("{}", render_event_row("error", &message));
+            }
+            DaemonEventData::HistoryItem { conversation_id, item } => {
+                println!(
+                    "{}",
+                    render_event_row(
+                        "history",
+                        &format!("{} {}", short_id(&conversation_id), short_id(&item.message_id)),
+                    )
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn daemon_get_status_without_autostart(data_dir: &PathBuf) -> anyhow::Result<StatusResponse> {
+    http_get(data_dir, "/v1/status").await
+}
+
+async fn daemon_login(
+    data_dir: &PathBuf,
+    env: &str,
+    api_url: Option<&str>,
+) -> anyhow::Result<StatusResponse> {
+    http_post(
+        data_dir,
+        "/v1/login",
+        &LoginRequest {
+            env: env.to_owned(),
+            api_url: api_url.map(str::to_owned),
+        },
+    )
+    .await
+}
+
+async fn daemon_list_conversations(
+    data_dir: &PathBuf,
+    kind: Option<&str>,
+) -> anyhow::Result<ConversationListResponse> {
+    #[derive(serde::Serialize)]
+    struct KindQuery<'a> {
+        kind: Option<&'a str>,
+    }
+    http_get_with_query(data_dir, "/v1/conversations", &KindQuery { kind }).await
+}
+
+async fn daemon_send_dm(
+    data_dir: &PathBuf,
+    recipient: &str,
+    message: &str,
+) -> anyhow::Result<SendDmResponse> {
+    http_post(
+        data_dir,
+        "/v1/direct-message/send",
+        &RecipientMessageRequest {
+            recipient: recipient.to_owned(),
+            message: message.to_owned(),
+        },
+    )
+    .await
+}
+
+async fn daemon_create_group(
+    data_dir: &PathBuf,
+    name: Option<String>,
+    members: Vec<String>,
+) -> anyhow::Result<ActionResponse> {
+    http_post(data_dir, "/v1/groups", &GroupCreateRequest { name, members }).await
+}
+
+async fn daemon_send_group(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+    message: &str,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/send"),
+        &SendMessageRequest {
+            message: message.to_owned(),
+        },
+    )
+    .await
+}
+
+async fn daemon_group_members(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+) -> anyhow::Result<GroupMembersResponse> {
+    http_get(data_dir, &format!("/v1/groups/{conversation_id}/members")).await
+}
+
+async fn daemon_group_rename(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+    name: &str,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/rename"),
+        &RenameGroupRequest {
+            name: name.to_owned(),
+        },
+    )
+    .await
+}
+
+async fn daemon_group_add(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+    members: Vec<String>,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/members/add"),
+        &GroupMembersUpdateRequest { members },
+    )
+    .await
+}
+
+async fn daemon_group_remove(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+    members: Vec<String>,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/members/remove"),
+        &GroupMembersUpdateRequest { members },
+    )
+    .await
+}
+
+async fn daemon_group_info(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+) -> anyhow::Result<GroupInfoResponse> {
+    http_get(data_dir, &format!("/v1/groups/{conversation_id}")).await
+}
+
+async fn daemon_reply(
+    data_dir: &PathBuf,
+    message_id: &str,
+    message: &str,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/messages/{message_id}/reply"),
+        &SendMessageRequest {
+            message: message.to_owned(),
+        },
+    )
+    .await
+}
+
+async fn daemon_react(
+    data_dir: &PathBuf,
+    message_id: &str,
+    emoji: &str,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/messages/{message_id}/react"),
+        &EmojiRequest {
+            emoji: emoji.to_owned(),
+        },
+    )
+    .await
+}
+
+async fn daemon_unreact(
+    data_dir: &PathBuf,
+    message_id: &str,
+    emoji: &str,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/messages/{message_id}/unreact"),
+        &EmojiRequest {
+            emoji: emoji.to_owned(),
+        },
+    )
+    .await
+}
+
+async fn daemon_leave(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+) -> anyhow::Result<ActionResponse> {
+    http_post(data_dir, &format!("/v1/conversations/{conversation_id}/leave"), &()).await
+}
+
+async fn daemon_conversation_info(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+) -> anyhow::Result<ConversationInfoResponse> {
+    http_get(data_dir, &format!("/v1/conversations/{conversation_id}")).await
+}
+
+async fn daemon_message_info(
+    data_dir: &PathBuf,
+    message_id: &str,
+) -> anyhow::Result<MessageInfoResponse> {
+    http_get(data_dir, &format!("/v1/messages/{message_id}")).await
+}
+
+async fn http_get<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .get(format!("{base_url}{path}"))
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?
+        .json()
+        .await
+        .context("decode daemon http response")
+}
+
+async fn http_get_with_query<T, Q>(data_dir: &PathBuf, path: &str, query: &Q) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+    Q: serde::Serialize + ?Sized,
+{
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .get(format!("{base_url}{path}"))
+        .query(query)
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?
+        .json()
+        .await
+        .context("decode daemon http response")
+}
+
+async fn http_post<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+    B: serde::Serialize + ?Sized,
+{
+    if !addr_path(data_dir).exists() {
+        daemon_start(data_dir.clone()).await?;
+    }
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .post(format!("{base_url}{path}"))
+        .json(body)
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?
+        .json()
+        .await
+        .context("decode daemon http response")
+}
+
+async fn http_post_empty(data_dir: &PathBuf, path: &str) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .post(format!("{base_url}{path}"))
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?;
+    Ok(())
+}
+
 async fn stop_existing_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
-    let socket = socket_path(data_dir);
-    if socket.exists() {
-        let _ = send_daemon_request_without_autostart(data_dir, DaemonRequest::Shutdown).await;
+    let addr = addr_path(data_dir);
+    if addr.exists() {
+        let _ = http_post_empty(data_dir, "/v1/shutdown").await;
     }
 
     if let Some(pid) = read_pid(data_dir)? {
@@ -814,11 +1025,16 @@ async fn stop_existing_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
         }
     }
 
-    if socket.exists() {
-        std::fs::remove_file(&socket).context("remove daemon socket")?;
+    if addr.exists() {
+        std::fs::remove_file(&addr).context("remove daemon addr file")?;
     }
 
     Ok(())
+}
+
+fn daemon_base_url(data_dir: &PathBuf) -> anyhow::Result<String> {
+    let addr = std::fs::read_to_string(addr_path(data_dir)).context("read daemon addr file")?;
+    Ok(format!("http://{}", addr.trim()))
 }
 
 fn read_pid(data_dir: &PathBuf) -> anyhow::Result<Option<i32>> {
@@ -855,74 +1071,6 @@ fn wait_for_process_exit(pid: i32) -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_millis(100));
     }
     anyhow::bail!("daemon process {pid} did not exit")
-}
-
-fn expect_status(response: DaemonResponse) -> anyhow::Result<StatusResponse> {
-    match response.result.context("missing daemon result")? {
-        DaemonResponseData::Status(status) => Ok(status),
-        _ => anyhow::bail!("unexpected daemon response type"),
-    }
-}
-
-fn expect_conversation_list(response: DaemonResponse) -> anyhow::Result<ConversationListResponse> {
-    match response.result.context("missing daemon result")? {
-        DaemonResponseData::ConversationList(list) => Ok(list),
-        _ => anyhow::bail!("unexpected daemon response type"),
-    }
-}
-
-fn expect_group_members(response: DaemonResponse) -> anyhow::Result<GroupMembersResponse> {
-    match response.result.context("missing daemon result")? {
-        DaemonResponseData::GroupMembers(result) => Ok(result),
-        _ => anyhow::bail!("unexpected daemon response type"),
-    }
-}
-
-fn expect_group_info(response: DaemonResponse) -> anyhow::Result<GroupInfoResponse> {
-    match response.result.context("missing daemon result")? {
-        DaemonResponseData::GroupInfo(result) => Ok(result),
-        _ => anyhow::bail!("unexpected daemon response type"),
-    }
-}
-
-fn expect_conversation_info(response: DaemonResponse) -> anyhow::Result<ConversationInfoResponse> {
-    match response.result.context("missing daemon result")? {
-        DaemonResponseData::ConversationInfo(result) => Ok(result),
-        _ => anyhow::bail!("unexpected daemon response type"),
-    }
-}
-
-fn expect_message_info(response: DaemonResponse) -> anyhow::Result<MessageInfoResponse> {
-    match response.result.context("missing daemon result")? {
-        DaemonResponseData::MessageInfo(result) => Ok(result),
-        _ => anyhow::bail!("unexpected daemon response type"),
-    }
-}
-
-fn expect_send_dm(response: DaemonResponse) -> anyhow::Result<SendDmResponse> {
-    match response.result.context("missing daemon result")? {
-        DaemonResponseData::SendDm(result) => Ok(result),
-        _ => anyhow::bail!("unexpected daemon response type"),
-    }
-}
-
-fn expect_action(response: DaemonResponse, action: &str) -> anyhow::Result<ActionResponse> {
-    match response.result.context("missing daemon result")? {
-        DaemonResponseData::Reply(result) if action == "reply" => Ok(result),
-        DaemonResponseData::React(result) if action == "react" => Ok(result),
-        DaemonResponseData::Unreact(result) if action == "unreact" => Ok(result),
-        DaemonResponseData::CreateGroup(result) if action == "create_group" => Ok(result),
-        DaemonResponseData::SendGroup(result) if action == "send_group" => Ok(result),
-        DaemonResponseData::RenameGroup(result) if action == "rename_group" => Ok(result),
-        DaemonResponseData::AddGroupMembers(result) if action == "add_group_members" => Ok(result),
-        DaemonResponseData::RemoveGroupMembers(result) if action == "remove_group_members" => {
-            Ok(result)
-        }
-        DaemonResponseData::LeaveConversation(result) if action == "leave_conversation" => {
-            Ok(result)
-        }
-        _ => anyhow::bail!("unexpected daemon response type"),
-    }
 }
 
 fn print_status_response(status: StatusResponse) -> anyhow::Result<()> {
@@ -1090,6 +1238,10 @@ fn render_action_result(action: &str, result: &ActionResponse) -> String {
 }
 
 fn render_status_row(label: &str, value: &str) -> String {
+    format!("{:<18} {}", label, value)
+}
+
+fn render_event_row(label: &str, value: &str) -> String {
     format!("{:<18} {}", label, value)
 }
 

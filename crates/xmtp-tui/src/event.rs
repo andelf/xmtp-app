@@ -4,7 +4,6 @@ use xmtp_ipc::{ActionResponse, ConversationInfoResponse, ConversationItem, Histo
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     Terminal(TerminalEvent),
-    Tick,
     StatusLoaded(StatusResponse),
     ConversationsLoaded(Vec<ConversationItem>),
     ConversationInfoLoaded(ConversationInfoResponse),
@@ -30,8 +29,7 @@ pub enum ActionOutcome {
 
 #[derive(Debug, Clone)]
 pub enum Effect {
-    RefreshStatus,
-    RefreshConversations,
+    SubscribeAppEvents,
     SwitchConversation { conversation_id: String },
     OpenDm { recipient: String },
     CreateGroup { name: Option<String>, members: Vec<String> },

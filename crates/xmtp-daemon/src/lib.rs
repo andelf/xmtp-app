@@ -1,13 +1,22 @@
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::StatusCode;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::Json;
+use axum::routing::{get, post};
+use axum::Router;
+use futures_util::stream::Stream;
+use tokio::net::TcpListener;
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, error, info, warn};
 use xmtp::content::{Content, ReactionAction};
 use xmtp::{AlloySigner, Client, CreateGroupOptions, Env, Recipient};
@@ -15,14 +24,16 @@ use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_core::{ConnectionState, DaemonState};
 use xmtp_ipc::{
     ActionResponse, ConversationInfoResponse, ConversationItem, ConversationListResponse,
-    DaemonRequest, DaemonResponse, DaemonResponseData, GroupInfoResponse, GroupMemberItem,
-    GroupMembersResponse, HistoryItem, HistoryResponse, MessageInfoResponse, ReactionDetail,
-    SendDmResponse, StatusResponse,
+    DaemonEventData, DaemonEventEnvelope, EmojiRequest, GroupCreateRequest, GroupInfoResponse,
+    GroupMemberItem, GroupMembersResponse, GroupMembersUpdateRequest, HistoryItem,
+    HistoryResponse, LoginRequest, MessageInfoResponse, ReactionDetail, RecipientMessageRequest,
+    RecipientRequest, RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
 };
 use xmtp_logging::append_daemon_event;
 use xmtp_store::{load_state, save_state};
 
 static TRACING_INIT: OnceLock<()> = OnceLock::new();
+static EVENT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn init_tracing() {
     TRACING_INIT.get_or_init(|| {
@@ -95,8 +106,8 @@ fn signer_key_path(data_dir: &Path) -> PathBuf {
     data_dir.join("signer.key")
 }
 
-pub fn socket_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("daemon.sock")
+pub fn addr_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("daemon.addr")
 }
 
 pub fn pid_path(data_dir: &Path) -> PathBuf {
@@ -206,6 +217,16 @@ pub fn history_with_kind(
 ) -> anyhow::Result<Vec<HistoryEntry>> {
     let client = open_existing_client(data_dir)?;
     history_with_client(&client, conversation_id, kind)
+}
+
+pub fn resolve_conversation_id(
+    data_dir: &Path,
+    conversation_id: &str,
+    kind: Option<&str>,
+) -> anyhow::Result<String> {
+    let client = open_existing_client(data_dir)?;
+    let conversation = find_conversation_by_id_with_kind(&client, conversation_id, kind)?;
+    Ok(conversation.id())
 }
 
 pub fn watch_history<F>(
@@ -422,14 +443,7 @@ fn send_group_with_client(
     conversation_id: &str,
     text: &str,
 ) -> anyhow::Result<SendMessageResult> {
-    client.sync_welcomes().context("sync welcomes")?;
-    client.sync_all(&[]).context("sync conversations")?;
-    let conversations = client.conversations().context("list conversations")?;
-    let resolved_id = resolve_conversation_query(&conversations, conversation_id, Some("group"))?;
-    let conversation = conversations
-        .into_iter()
-        .find(|conversation| conversation.id() == resolved_id)
-        .context("conversation not found")?;
+    let conversation = find_conversation_by_id(client, conversation_id)?;
     let message_id = conversation.send_text(text).context("send group text")?;
     Ok(SendMessageResult {
         conversation_id: conversation.id(),
@@ -785,14 +799,53 @@ fn find_conversation_by_id_with_kind(
     conversation_id: &str,
     kind: Option<&str>,
 ) -> anyhow::Result<xmtp::conversation::Conversation> {
-    client.sync_welcomes().context("sync welcomes")?;
-    client.sync_all(&[]).context("sync conversations")?;
+    if looks_like_full_conversation_id(conversation_id) {
+        match client.conversation(conversation_id) {
+            Ok(Some(conversation)) => {
+                let actual_kind = conversation
+                    .conversation_type()
+                    .map(|value| format!("{value:?}").to_lowercase())
+                    .unwrap_or_else(|| "unknown".to_owned());
+                if kind.is_none_or(|expected| expected == actual_kind) {
+                    return Ok(conversation);
+                }
+            }
+            Ok(None) => {}
+            Err(_) => {}
+        }
+    }
+    let need_sync = !looks_like_full_conversation_id(conversation_id)
+        || client
+            .conversation(conversation_id)
+            .ok()
+            .flatten()
+            .is_none();
+    if need_sync {
+        client.sync_welcomes().context("sync welcomes")?;
+        client.sync_all(&[]).context("sync conversations")?;
+    } else if let Some(conversation) = client
+        .conversation(conversation_id)
+        .ok()
+        .flatten()
+    {
+        let actual_kind = conversation
+            .conversation_type()
+            .map(|value| format!("{value:?}").to_lowercase())
+            .unwrap_or_else(|| "unknown".to_owned());
+        if kind.is_none_or(|expected| expected == actual_kind) {
+            return Ok(conversation);
+        }
+    }
     let conversations = client.conversations().context("list conversations")?;
     let resolved_id = resolve_conversation_query(&conversations, conversation_id, kind)?;
     conversations
         .into_iter()
         .find(|conversation| conversation.id() == resolved_id)
         .context("conversation not found")
+}
+
+fn looks_like_full_conversation_id(value: &str) -> bool {
+    value.len() >= 32 && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn resolve_conversation_query(
@@ -812,7 +865,7 @@ fn resolve_conversation_query(
             ConversationLookup { id, name, kind }
         })
         .collect();
-    resolve_conversation_id(&lookups, query, kind)
+    resolve_conversation_lookup_id(&lookups, query, kind)
 }
 
 struct ConversationLookup {
@@ -821,7 +874,7 @@ struct ConversationLookup {
     kind: String,
 }
 
-fn resolve_conversation_id(
+fn resolve_conversation_lookup_id(
     conversations: &[ConversationLookup],
     query: &str,
     kind: Option<&str>,
@@ -955,6 +1008,20 @@ fn find_message_conversation(client: &Client, message_id: &str) -> anyhow::Resul
 struct DaemonApp {
     data_dir: PathBuf,
     client: Option<Client>,
+    last_status_event: Option<StatusResponse>,
+    last_conversation_event: Option<ConversationListResponse>,
+}
+
+#[derive(Clone)]
+struct HttpState {
+    app: Arc<Mutex<DaemonApp>>,
+    shutdown_tx: mpsc::UnboundedSender<()>,
+    events_tx: broadcast::Sender<DaemonEventEnvelope>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ConversationsQuery {
+    kind: Option<String>,
 }
 
 impl DaemonApp {
@@ -962,6 +1029,8 @@ impl DaemonApp {
         Self {
             data_dir,
             client: None,
+            last_status_event: None,
+            last_conversation_event: None,
         }
     }
 
@@ -973,6 +1042,18 @@ impl DaemonApp {
             inbox_id: state.inbox_id,
             installation_id: state.installation_id,
         })
+    }
+
+    fn conversation_list(&mut self) -> anyhow::Result<ConversationListResponse> {
+        let items = list_conversations_with_client(self.ensure_client()?, None)?
+            .into_iter()
+            .map(|item| ConversationItem {
+                id: item.id,
+                kind: item.kind,
+                name: item.name,
+            })
+            .collect();
+        Ok(ConversationListResponse { items })
     }
 
     fn ensure_client(&mut self) -> anyhow::Result<&Client> {
@@ -990,200 +1071,699 @@ impl DaemonApp {
             .context("daemon client is not initialized")
     }
 
-    fn handle(&mut self, request: DaemonRequest) -> anyhow::Result<(DaemonResponse, bool)> {
-        let mut should_continue = true;
-        let result = match request {
-            DaemonRequest::GetStatus => {
-                DaemonResponseData::Status(self.status()?)
-            }
-            DaemonRequest::Shutdown => {
-                should_continue = false;
-                return Ok((
-                    DaemonResponse {
-                        ok: true,
-                        result: None,
-                        error: None,
-                    },
-                    should_continue,
-                ));
-            }
-            DaemonRequest::Reply { message_id, message } => {
-                let result = reply_with_client(self.ensure_client()?, &message_id, &message)?;
-                DaemonResponseData::Reply(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::React { message_id, emoji } => {
-                let result = react_with_client(self.ensure_client()?, &message_id, &emoji)?;
-                DaemonResponseData::React(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::Unreact { message_id, emoji } => {
-                let result = unreact_with_client(self.ensure_client()?, &message_id, &emoji)?;
-                DaemonResponseData::Unreact(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::CreateGroup { name, members } => {
-                let result = create_group_with_client(self.ensure_client()?, name, &members)?;
-                DaemonResponseData::CreateGroup(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::SendGroup {
-                conversation_id,
-                message,
-            } => {
-                let result =
-                    send_group_with_client(self.ensure_client()?, &conversation_id, &message)?;
-                DaemonResponseData::SendGroup(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::Login { env, api_url } => {
-                configure_runtime(&self.data_dir, &env, api_url.as_deref())?;
-                let client = open_client_with_login(&self.data_dir, &env)?;
-                let runtime = RuntimeInfo {
-                    inbox_id: client.inbox_id().context("get inbox id")?,
-                    installation_id: client.installation_id().context("get installation id")?,
-                };
-                let mut state = load_state(&self.data_dir.join("state.json"))?;
-                state.daemon_state = DaemonState::Running;
-                state.connection_state = ConnectionState::Connected;
-                state.inbox_id = Some(runtime.inbox_id.clone());
-                state.installation_id = Some(runtime.installation_id.clone());
-                save_state(&self.data_dir.join("state.json"), &state)?;
-                self.client = Some(client);
-                DaemonResponseData::Status(self.status()?)
-            }
-            DaemonRequest::ListConversations { kind } => {
-                let items = list_conversations_with_client(self.ensure_client()?, kind.as_deref())?
-                    .into_iter()
-                    .map(|item| ConversationItem {
-                        id: item.id,
-                        kind: item.kind,
-                        name: item.name,
-                    })
-                    .collect();
-                DaemonResponseData::ConversationList(ConversationListResponse { items })
-            }
-            DaemonRequest::GroupMembers { conversation_id } => {
-                let items = group_members_with_client(self.ensure_client()?, &conversation_id)?;
-                DaemonResponseData::GroupMembers(GroupMembersResponse { items })
-            }
-            DaemonRequest::RenameGroup {
-                conversation_id,
-                name,
-            } => {
-                let result =
-                    rename_group_with_client(self.ensure_client()?, &conversation_id, &name)?;
-                DaemonResponseData::RenameGroup(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::AddGroupMembers {
-                conversation_id,
-                members,
-            } => {
-                let result = add_group_members_with_client(
-                    self.ensure_client()?,
-                    &conversation_id,
-                    &members,
-                )?;
-                DaemonResponseData::AddGroupMembers(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::RemoveGroupMembers {
-                conversation_id,
-                members,
-            } => {
-                let result = remove_group_members_with_client(
-                    self.ensure_client()?,
-                    &conversation_id,
-                    &members,
-                )?;
-                DaemonResponseData::RemoveGroupMembers(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::LeaveConversation { conversation_id } => {
-                let result =
-                    leave_conversation_with_client(self.ensure_client()?, &conversation_id)?;
-                DaemonResponseData::LeaveConversation(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::GroupInfo { conversation_id } => {
-                let info = group_info_with_client(self.ensure_client()?, &conversation_id)?;
-                DaemonResponseData::GroupInfo(info)
-            }
-            DaemonRequest::ConversationInfo { conversation_id } => {
-                let info = conversation_info_with_client(self.ensure_client()?, &conversation_id)?;
-                DaemonResponseData::ConversationInfo(info)
-            }
-            DaemonRequest::MessageInfo { message_id } => {
-                let info = message_info_with_client(self.ensure_client()?, &message_id)?;
-                DaemonResponseData::MessageInfo(info)
-            }
-            DaemonRequest::WatchHistory { .. } => {
-                anyhow::bail!("watch history must be handled by the streaming path")
-            }
-            DaemonRequest::SendDm { recipient, message } => {
-                let result = send_dm_with_client(self.ensure_client()?, &recipient, &message)?;
-                DaemonResponseData::SendDm(SendDmResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::OpenDm { recipient } => {
-                let result = open_dm_with_client(self.ensure_client()?, &recipient)?;
-                DaemonResponseData::OpenDm(ActionResponse {
-                    conversation_id: result.conversation_id,
-                    message_id: result.message_id,
-                })
-            }
-            DaemonRequest::History { conversation_id } => {
-                let items = history_with_client(self.ensure_client()?, &conversation_id, None)?
-                    .into_iter()
-                    .map(|item| HistoryItem {
-                        message_id: item.message_id,
-                        sender_inbox_id: item.sender_inbox_id,
-                        sent_at_ns: item.sent_at_ns,
-                        content_kind: item.content_kind,
-                        content: item.content,
-                        reply_count: item.reply_count,
-                        reaction_count: item.reaction_count,
-                        reply_target_message_id: item.reply_target_message_id,
-                        reaction_target_message_id: item.reaction_target_message_id,
-                        reaction_emoji: item.reaction_emoji,
-                        reaction_action: item.reaction_action,
-                        attached_reactions: Vec::new(),
-                    })
-                    .collect();
-                DaemonResponseData::History(HistoryResponse { items })
-            }
-        };
-
-        Ok((
-            DaemonResponse {
-                ok: true,
-                result: Some(result),
-                error: None,
-            },
-            should_continue,
-        ))
+    fn next_status_event(&mut self) -> Option<DaemonEventData> {
+        let status = self.status().ok()?;
+        if self.last_status_event.as_ref() == Some(&status) {
+            return None;
+        }
+        self.last_status_event = Some(status.clone());
+        Some(DaemonEventData::Status(status))
     }
+
+    fn next_conversation_list_event(&mut self) -> Option<DaemonEventData> {
+        let conversations = self.conversation_list().ok()?;
+        if self.last_conversation_event.as_ref() == Some(&conversations) {
+            return None;
+        }
+        self.last_conversation_event = Some(conversations.clone());
+        Some(DaemonEventData::ConversationList(conversations))
+    }
+
+    fn login(&mut self, env: String, api_url: Option<String>) -> anyhow::Result<StatusResponse> {
+        configure_runtime(&self.data_dir, &env, api_url.as_deref())?;
+        let client = open_client_with_login(&self.data_dir, &env)?;
+        let runtime = RuntimeInfo {
+            inbox_id: client.inbox_id().context("get inbox id")?,
+            installation_id: client.installation_id().context("get installation id")?,
+        };
+        let mut state = load_state(&self.data_dir.join("state.json"))?;
+        state.daemon_state = DaemonState::Running;
+        state.connection_state = ConnectionState::Connected;
+        state.inbox_id = Some(runtime.inbox_id);
+        state.installation_id = Some(runtime.installation_id);
+        save_state(&self.data_dir.join("state.json"), &state)?;
+        self.client = Some(client);
+        self.status()
+    }
+
+    fn list_conversations(&mut self, kind: Option<String>) -> anyhow::Result<ConversationListResponse> {
+        let items = list_conversations_with_client(self.ensure_client()?, kind.as_deref())?
+            .into_iter()
+            .map(|item| ConversationItem {
+                id: item.id,
+                kind: item.kind,
+                name: item.name,
+            })
+            .collect();
+        Ok(ConversationListResponse { items })
+    }
+
+    fn conversation_info(&mut self, conversation_id: String) -> anyhow::Result<ConversationInfoResponse> {
+        conversation_info_with_client(self.ensure_client()?, &conversation_id)
+    }
+
+    fn history_snapshot(&mut self, conversation_id: String) -> anyhow::Result<HistoryResponse> {
+        let items = history_with_client(self.ensure_client()?, &conversation_id, None)?
+            .into_iter()
+            .map(|item| HistoryItem {
+                message_id: item.message_id,
+                sender_inbox_id: item.sender_inbox_id,
+                sent_at_ns: item.sent_at_ns,
+                content_kind: item.content_kind,
+                content: item.content,
+                reply_count: item.reply_count,
+                reaction_count: item.reaction_count,
+                reply_target_message_id: item.reply_target_message_id,
+                reaction_target_message_id: item.reaction_target_message_id,
+                reaction_emoji: item.reaction_emoji,
+                reaction_action: item.reaction_action,
+                attached_reactions: Vec::new(),
+            })
+            .collect();
+        Ok(HistoryResponse { items })
+    }
+
+    fn open_dm(&mut self, recipient: String) -> anyhow::Result<ActionResponse> {
+        let result = open_dm_with_client(self.ensure_client()?, &recipient)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn send_dm(&mut self, recipient: String, message: String) -> anyhow::Result<SendDmResponse> {
+        let result = send_dm_with_client(self.ensure_client()?, &recipient, &message)?;
+        Ok(SendDmResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn create_group(&mut self, name: Option<String>, members: Vec<String>) -> anyhow::Result<ActionResponse> {
+        let result = create_group_with_client(self.ensure_client()?, name, &members)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn send_group(&mut self, conversation_id: String, message: String) -> anyhow::Result<ActionResponse> {
+        let result = send_group_with_client(self.ensure_client()?, &conversation_id, &message)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn reply(&mut self, message_id: String, message: String) -> anyhow::Result<ActionResponse> {
+        let result = reply_with_client(self.ensure_client()?, &message_id, &message)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn react(&mut self, message_id: String, emoji: String) -> anyhow::Result<ActionResponse> {
+        let result = react_with_client(self.ensure_client()?, &message_id, &emoji)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn unreact(&mut self, message_id: String, emoji: String) -> anyhow::Result<ActionResponse> {
+        let result = unreact_with_client(self.ensure_client()?, &message_id, &emoji)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn group_members(&mut self, conversation_id: String) -> anyhow::Result<GroupMembersResponse> {
+        let items = group_members_with_client(self.ensure_client()?, &conversation_id)?;
+        Ok(GroupMembersResponse { items })
+    }
+
+    fn group_info(&mut self, conversation_id: String) -> anyhow::Result<GroupInfoResponse> {
+        group_info_with_client(self.ensure_client()?, &conversation_id)
+    }
+
+    fn rename_group(&mut self, conversation_id: String, name: String) -> anyhow::Result<ActionResponse> {
+        let result = rename_group_with_client(self.ensure_client()?, &conversation_id, &name)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn add_group_members(
+        &mut self,
+        conversation_id: String,
+        members: Vec<String>,
+    ) -> anyhow::Result<ActionResponse> {
+        let result = add_group_members_with_client(self.ensure_client()?, &conversation_id, &members)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn remove_group_members(
+        &mut self,
+        conversation_id: String,
+        members: Vec<String>,
+    ) -> anyhow::Result<ActionResponse> {
+        let result =
+            remove_group_members_with_client(self.ensure_client()?, &conversation_id, &members)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn leave_conversation(&mut self, conversation_id: String) -> anyhow::Result<ActionResponse> {
+        let result = leave_conversation_with_client(self.ensure_client()?, &conversation_id)?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
+    fn message_info(&mut self, message_id: String) -> anyhow::Result<MessageInfoResponse> {
+        message_info_with_client(self.ensure_client()?, &message_id)
+    }
+}
+
+fn next_event_id() -> String {
+    format!("evt-{}", EVENT_COUNTER.fetch_add(1, Ordering::Relaxed))
+}
+
+fn send_event(events_tx: &broadcast::Sender<DaemonEventEnvelope>, payload: DaemonEventData) {
+    let _ = events_tx.send(DaemonEventEnvelope {
+        event_id: next_event_id(),
+        payload,
+    });
+}
+
+fn publish_snapshot_events(state: &HttpState, status: bool, conversations: bool) {
+    let mut guard = state.app.lock().expect("lock daemon app");
+    if status {
+        if let Some(payload) = guard.next_status_event() {
+            send_event(&state.events_tx, payload);
+        }
+    }
+    if conversations {
+        if let Some(payload) = guard.next_conversation_list_event() {
+            send_event(&state.events_tx, payload);
+        }
+    }
+}
+
+async fn run_app<T>(
+    state: &HttpState,
+    request_summary: String,
+    status_refresh: bool,
+    conversations_refresh: bool,
+    task: impl FnOnce(&mut DaemonApp) -> anyhow::Result<T> + Send + 'static,
+) -> anyhow::Result<T>
+where
+    T: Send + 'static,
+{
+    let data_dir = {
+        let guard = state.app.lock().expect("lock daemon app");
+        guard.data_dir.clone()
+    };
+    let started = Instant::now();
+    daemon_log(
+        &data_dir,
+        "debug",
+        format!("request payload={request_summary}"),
+    );
+
+    let result = tokio::task::block_in_place(|| {
+        let mut guard = state.app.lock().expect("lock daemon app");
+        task(&mut guard)
+    });
+
+    match result {
+        Ok(value) => {
+            daemon_log(
+                &data_dir,
+                "debug",
+                format!("request ok elapsed_ms={}", started.elapsed().as_millis()),
+            );
+            if status_refresh || conversations_refresh {
+                publish_snapshot_events(state, status_refresh, conversations_refresh);
+            }
+            Ok(value)
+        }
+        Err(err) => {
+            daemon_log(
+                &data_dir,
+                "error",
+                format!("request failed payload={} error={err:#}", request_summary),
+            );
+            Err(err)
+        }
+    }
+}
+
+async fn login_handler(
+    State(state): State<HttpState>,
+    Json(request): Json<LoginRequest>,
+) -> Result<Json<StatusResponse>, (StatusCode, String)> {
+    let status = run_app(
+        &state,
+        format!("login env={}", request.env),
+        true,
+        true,
+        move |app| app.login(request.env, request.api_url),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(status))
+}
+
+async fn shutdown_handler(
+    State(state): State<HttpState>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    daemon_log(&state.app.lock().expect("lock daemon app").data_dir, "info", "shutdown requested by client");
+    let _ = state.shutdown_tx.send(());
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn status_handler(
+    State(state): State<HttpState>,
+) -> Result<Json<StatusResponse>, (StatusCode, String)> {
+    let status = run_app(&state, "get status".to_owned(), false, false, |app| app.status())
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(status))
+}
+
+async fn conversations_handler(
+    State(state): State<HttpState>,
+    Query(query): Query<ConversationsQuery>,
+) -> Result<Json<ConversationListResponse>, (StatusCode, String)> {
+    let conversations = run_app(
+        &state,
+        format!("list conversations kind={:?}", query.kind),
+        false,
+        true,
+        move |app| app.list_conversations(query.kind),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(conversations))
+}
+
+async fn conversation_info_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+) -> Result<Json<ConversationInfoResponse>, (StatusCode, String)> {
+    let info = run_app(
+        &state,
+        format!("conversation info id={conversation_id}"),
+        false,
+        false,
+        move |app| app.conversation_info(conversation_id),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(info))
+}
+
+async fn conversation_history_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+) -> Result<Json<HistoryResponse>, (StatusCode, String)> {
+    let history = run_app(
+        &state,
+        format!("history id={conversation_id}"),
+        false,
+        false,
+        move |app| app.history_snapshot(conversation_id),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(history))
+}
+
+async fn open_dm_handler(
+    State(state): State<HttpState>,
+    Json(request): Json<RecipientRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("open dm recipient={}", request.recipient),
+        false,
+        true,
+        move |app| app.open_dm(request.recipient),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn send_dm_handler(
+    State(state): State<HttpState>,
+    Json(request): Json<RecipientMessageRequest>,
+) -> Result<Json<SendDmResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("send dm recipient={}", request.recipient),
+        false,
+        true,
+        move |app| app.send_dm(request.recipient, request.message),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn create_group_handler(
+    State(state): State<HttpState>,
+    Json(request): Json<GroupCreateRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("create group name={:?}", request.name),
+        false,
+        true,
+        move |app| app.create_group(request.name, request.members),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn send_group_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+    Json(request): Json<SendMessageRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("send group id={conversation_id}"),
+        false,
+        true,
+        move |app| app.send_group(conversation_id, request.message),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn reply_handler(
+    State(state): State<HttpState>,
+    AxumPath(message_id): AxumPath<String>,
+    Json(request): Json<SendMessageRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("reply message_id={message_id}"),
+        false,
+        true,
+        move |app| app.reply(message_id, request.message),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn react_handler(
+    State(state): State<HttpState>,
+    AxumPath(message_id): AxumPath<String>,
+    Json(request): Json<EmojiRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("react message_id={message_id}"),
+        false,
+        true,
+        move |app| app.react(message_id, request.emoji),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn unreact_handler(
+    State(state): State<HttpState>,
+    AxumPath(message_id): AxumPath<String>,
+    Json(request): Json<EmojiRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("unreact message_id={message_id}"),
+        false,
+        true,
+        move |app| app.unreact(message_id, request.emoji),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn group_members_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+) -> Result<Json<GroupMembersResponse>, (StatusCode, String)> {
+    let members = run_app(
+        &state,
+        format!("group members id={conversation_id}"),
+        false,
+        false,
+        move |app| app.group_members(conversation_id),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(members))
+}
+
+async fn group_info_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+) -> Result<Json<GroupInfoResponse>, (StatusCode, String)> {
+    let info = run_app(
+        &state,
+        format!("group info id={conversation_id}"),
+        false,
+        false,
+        move |app| app.group_info(conversation_id),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(info))
+}
+
+async fn rename_group_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+    Json(request): Json<RenameGroupRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("rename group id={conversation_id}"),
+        false,
+        true,
+        move |app| app.rename_group(conversation_id, request.name),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn add_group_members_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+    Json(request): Json<GroupMembersUpdateRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("add group members id={conversation_id}"),
+        false,
+        true,
+        move |app| app.add_group_members(conversation_id, request.members),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn remove_group_members_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+    Json(request): Json<GroupMembersUpdateRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("remove group members id={conversation_id}"),
+        false,
+        true,
+        move |app| app.remove_group_members(conversation_id, request.members),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn leave_conversation_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+) -> Result<Json<ActionResponse>, (StatusCode, String)> {
+    let result = run_app(
+        &state,
+        format!("leave conversation id={conversation_id}"),
+        false,
+        true,
+        move |app| app.leave_conversation(conversation_id),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn message_info_handler(
+    State(state): State<HttpState>,
+    AxumPath(message_id): AxumPath<String>,
+) -> Result<Json<MessageInfoResponse>, (StatusCode, String)> {
+    let info = run_app(
+        &state,
+        format!("message info id={message_id}"),
+        false,
+        false,
+        move |app| app.message_info(message_id),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(info))
+}
+
+fn internal_error(err: anyhow::Error) -> (StatusCode, String) {
+    (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}"))
+}
+
+fn sse_event_from_envelope(envelope: &DaemonEventEnvelope) -> Event {
+    let data = serde_json::to_string(envelope).unwrap_or_else(|err| {
+        serde_json::json!({
+            "event_id": next_event_id(),
+            "payload": {
+                "type": "daemon_error",
+                "message": format!("encode daemon event failed: {err}")
+            }
+        })
+        .to_string()
+    });
+    Event::default().event("daemon_event").id(envelope.event_id.clone()).data(data)
+}
+
+async fn app_events_handler(
+    State(state): State<HttpState>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let data_dir = {
+        let guard = state.app.lock().expect("lock daemon app");
+        guard.data_dir.clone()
+    };
+    daemon_log(&data_dir, "info", "app event stream opened");
+
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<Result<Event, std::convert::Infallible>>();
+    let mut subscription = state.events_tx.subscribe();
+    let app = state.app.clone();
+    let events_tx = state.events_tx.clone();
+
+    tokio::spawn(async move {
+        let initial_events = tokio::task::spawn_blocking(move || {
+            let mut guard = app.lock().expect("lock daemon app");
+            let mut snapshots = Vec::new();
+            if let Ok(status) = guard.status() {
+                snapshots.push(DaemonEventEnvelope {
+                    event_id: next_event_id(),
+                    payload: DaemonEventData::Status(status),
+                });
+            }
+            if let Ok(conversations) = guard.conversation_list() {
+                snapshots.push(DaemonEventEnvelope {
+                    event_id: next_event_id(),
+                    payload: DaemonEventData::ConversationList(conversations),
+                });
+            }
+            snapshots
+        })
+        .await
+        .unwrap_or_default();
+
+        for envelope in initial_events {
+            let _ = event_tx.send(Ok(sse_event_from_envelope(&envelope)));
+        }
+
+        loop {
+            match subscription.recv().await {
+                Ok(envelope) => {
+                    let _ = event_tx.send(Ok(sse_event_from_envelope(&envelope)));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    send_event(
+                        &events_tx,
+                        DaemonEventData::DaemonError {
+                            message: format!("app event stream lagged by {skipped} messages"),
+                        },
+                    );
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    Sse::new(UnboundedReceiverStream::new(event_rx)).keep_alive(KeepAlive::default())
+}
+
+async fn history_events_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let data_dir = {
+        let guard = state.app.lock().expect("lock daemon app");
+        guard.data_dir.clone()
+    };
+    daemon_log(
+        &data_dir,
+        "info",
+        format!("history event stream opened conversation={conversation_id}"),
+    );
+
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<Result<Event, std::convert::Infallible>>();
+    let data_dir_for_thread = data_dir.clone();
+    std::thread::spawn(move || {
+        let stream_result = watch_history_with_kind(
+            &data_dir_for_thread,
+            &conversation_id,
+            None,
+            |item| {
+                let envelope = DaemonEventEnvelope {
+                    event_id: next_event_id(),
+                    payload: DaemonEventData::HistoryItem {
+                        conversation_id: conversation_id.clone(),
+                        item,
+                    },
+                };
+                let event = sse_event_from_envelope(&envelope);
+                let _ = event_tx.send(Ok(event));
+            },
+        );
+        if let Err(err) = stream_result {
+            let envelope = DaemonEventEnvelope {
+                event_id: next_event_id(),
+                payload: DaemonEventData::DaemonError {
+                    message: format!("{err:#}"),
+                },
+            };
+            let event = sse_event_from_envelope(&envelope);
+            let _ = event_tx.send(Ok(event));
+        }
+    });
+
+    Sse::new(UnboundedReceiverStream::new(event_rx)).keep_alive(KeepAlive::default())
 }
 
 pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
@@ -1198,269 +1778,119 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
             std::process::id()
         ),
     );
-    let socket_path = socket_path(data_dir);
-    if socket_path.exists() {
-        daemon_log(
-            data_dir,
-            "warn",
-            format!("removing stale socket {}", socket_path.display()),
-        );
-        fs::remove_file(&socket_path).context("remove stale socket")?;
-    }
     fs::write(pid_path(data_dir), std::process::id().to_string()).context("write daemon pid")?;
-    let _cleanup = DaemonFilesGuard::new(socket_path.clone(), pid_path(data_dir));
-    let listener = UnixListener::bind(&socket_path).context("bind unix socket")?;
-    daemon_log(
-        data_dir,
-        "info",
-        format!("listening on socket {}", socket_path.display()),
-    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.context("bind daemon tcp listener")?;
+    let addr: SocketAddr = listener.local_addr().context("read daemon local addr")?;
+    fs::write(addr_path(data_dir), addr.to_string()).context("write daemon addr")?;
+    let _cleanup = DaemonFilesGuard::new(None, addr_path(data_dir), pid_path(data_dir));
+    daemon_log(data_dir, "info", format!("listening on http://{}", addr));
+
     let app = Arc::new(Mutex::new(DaemonApp::new(data_dir.to_path_buf())));
     let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<()>();
-    loop {
-        tokio::select! {
-            _ = shutdown_rx.recv() => {
-                daemon_log(data_dir, "info", "shutdown signal received");
-                break
-            },
-            accept = listener.accept() => {
-                let stream = match accept.context("accept unix socket connection") {
-                    Ok((stream, _addr)) => {
-                        daemon_log(data_dir, "debug", "accepted unix socket connection");
-                        stream
-                    },
-                    Err(err) => {
-                        daemon_log(data_dir, "error", format!("accept failed: {err:#}"));
-                        continue;
+    let (events_tx, _) = broadcast::channel::<DaemonEventEnvelope>(128);
+    let monitor_app = app.clone();
+    let monitor_events_tx = events_tx.clone();
+    let monitor_handle = tokio::spawn(async move {
+        loop {
+            // Background monitor that periodically pushes fresh status and conversation-list
+            // snapshots to global SSE subscribers when those views change.
+            let snapshots = tokio::task::spawn_blocking({
+                let app = monitor_app.clone();
+                move || {
+                    let mut guard = app.lock().expect("lock daemon app");
+                    let status = guard.next_status_event();
+                    let conversations = guard.next_conversation_list_event();
+                    (status, conversations)
+                }
+            })
+            .await;
+
+            match snapshots {
+                Ok((status, conversations)) => {
+                    if let Some(payload) = status {
+                        send_event(&monitor_events_tx, payload);
                     }
-                };
-                let app = Arc::clone(&app);
-                let app_for_error = Arc::clone(&app);
-                let shutdown_tx = shutdown_tx.clone();
-                tokio::spawn(async move {
-                    if let Err(err) = handle_stream(stream, app, shutdown_tx).await {
-                        let data_dir = {
-                            let guard = app_for_error.lock().expect("lock daemon app");
-                            guard.data_dir.clone()
-                        };
-                        daemon_log(&data_dir, "error", format!("stream failed: {err:#}"));
+                    if let Some(payload) = conversations {
+                        send_event(&monitor_events_tx, payload);
                     }
-                });
+                }
+                Err(err) => {
+                    send_event(
+                        &monitor_events_tx,
+                        DaemonEventData::DaemonError {
+                            message: format!("snapshot monitor join error: {err}"),
+                        },
+                    );
+                }
             }
+
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
-    }
+    });
+    let router = Router::new()
+        .route("/v1/login", post(login_handler))
+        .route("/v1/shutdown", post(shutdown_handler))
+        .route("/v1/status", get(status_handler))
+        .route("/v1/conversations", get(conversations_handler))
+        .route("/v1/conversations/{conversation_id}", get(conversation_info_handler))
+        .route(
+            "/v1/conversations/{conversation_id}/history",
+            get(conversation_history_handler),
+        )
+        .route("/v1/direct-message/open", post(open_dm_handler))
+        .route("/v1/direct-message/send", post(send_dm_handler))
+        .route("/v1/groups", post(create_group_handler))
+        .route("/v1/groups/{conversation_id}", get(group_info_handler))
+        .route("/v1/groups/{conversation_id}/members", get(group_members_handler))
+        .route("/v1/groups/{conversation_id}/rename", post(rename_group_handler))
+        .route(
+            "/v1/groups/{conversation_id}/members/add",
+            post(add_group_members_handler),
+        )
+        .route(
+            "/v1/groups/{conversation_id}/members/remove",
+            post(remove_group_members_handler),
+        )
+        .route("/v1/groups/{conversation_id}/send", post(send_group_handler))
+        .route("/v1/conversations/{conversation_id}/leave", post(leave_conversation_handler))
+        .route("/v1/messages/{message_id}", get(message_info_handler))
+        .route("/v1/messages/{message_id}/reply", post(reply_handler))
+        .route("/v1/messages/{message_id}/react", post(react_handler))
+        .route("/v1/messages/{message_id}/unreact", post(unreact_handler))
+        .route("/v1/events", get(app_events_handler))
+        .route("/v1/events/history/{conversation_id}", get(history_events_handler))
+        .with_state(HttpState {
+            app,
+            shutdown_tx: shutdown_tx.clone(),
+            events_tx: events_tx.clone(),
+        });
+
+    let result = axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .context("serve axum daemon");
+
+    monitor_handle.abort();
+    let _ = monitor_handle.await;
+    result?;
+
     daemon_log(data_dir, "info", "daemon serve stopped");
     Ok(())
 }
 
-async fn handle_stream(
-    stream: UnixStream,
-    app: Arc<Mutex<DaemonApp>>,
-    shutdown_tx: mpsc::UnboundedSender<()>,
-) -> anyhow::Result<()> {
-    let started = Instant::now();
-    let (read_half, mut write_half) = stream.into_split();
-    let mut reader = tokio::io::BufReader::new(read_half);
-    let mut line = String::new();
-    reader.read_line(&mut line).await.context("read request line")?;
-    let request: xmtp_ipc::IpcEnvelope<DaemonRequest> =
-        serde_json::from_str(&line).context("decode daemon request")?;
-    let data_dir = {
-        let guard = app.lock().expect("lock daemon app");
-        guard.data_dir.clone()
-    };
-    let request_summary = format!("{:?}", request.payload);
-    daemon_log(
-        &data_dir,
-        "debug",
-        format!("request id={} payload={}", request.request_id, request_summary),
-    );
-    if let DaemonRequest::WatchHistory { conversation_id } = request.payload.clone() {
-        daemon_log(
-            &data_dir,
-            "info",
-            format!(
-                "watch history opened request_id={} conversation={}",
-                request.request_id,
-                conversation_id
-            ),
-        );
-        stream_watch_history(
-            &mut write_half,
-            request.version,
-            &request.request_id,
-            data_dir.clone(),
-            &conversation_id,
-        )
-        .await?;
-        daemon_log(
-            &data_dir,
-            "info",
-            format!(
-                "watch history closed request_id={} elapsed_ms={}",
-                request.request_id,
-                started.elapsed().as_millis()
-            ),
-        );
-        return Ok(());
-    }
-
-    let (response, should_continue) = match tokio::task::block_in_place(|| {
-        let mut guard = app.lock().expect("lock daemon app");
-        guard.handle(request.payload)
-    }) {
-        Ok(result) => result,
-        Err(err) => (
-            DaemonResponse {
-                ok: false,
-                result: None,
-                error: Some(format!("{err:#}")),
-            },
-            true,
-        ),
-    };
-    if !response.ok {
-        daemon_log(
-            &data_dir,
-            "error",
-            format!(
-                "request failed id={} payload={} error={}",
-                request.request_id,
-                request_summary,
-                response.error.clone().unwrap_or_default()
-            ),
-        );
-    } else {
-        daemon_log(
-            &data_dir,
-            "debug",
-            format!(
-                "request ok id={} elapsed_ms={}",
-                request.request_id,
-                started.elapsed().as_millis()
-            ),
-        );
-    }
-
-    let envelope = xmtp_ipc::IpcEnvelope {
-        version: request.version,
-        request_id: request.request_id,
-        payload: response,
-    };
-
-    let json = serde_json::to_string(&envelope).context("encode daemon response")?;
-    write_half.write_all(json.as_bytes()).await.context("write response")?;
-    write_half.write_all(b"\n").await.context("write newline")?;
-    write_half.flush().await.context("flush response")?;
-    if !should_continue {
-        daemon_log(&data_dir, "info", "shutdown requested by client");
-        let _ = shutdown_tx.send(());
-    }
-    Ok(())
-}
-
-async fn stream_watch_history(
-    write_half: &mut tokio::net::unix::OwnedWriteHalf,
-    version: u32,
-    request_id: &str,
-    data_dir: PathBuf,
-    conversation_id: &str,
-) -> anyhow::Result<()> {
-    daemon_log(
-        &data_dir,
-        "debug",
-        format!("sending watch ack request_id={request_id}"),
-    );
-    let ack = xmtp_ipc::IpcEnvelope {
-        version,
-        request_id: request_id.to_owned(),
-        payload: DaemonResponse {
-            ok: true,
-            result: None,
-            error: None,
-        },
-    };
-    let json = serde_json::to_string(&ack).context("encode watch ack")?;
-    write_half.write_all(json.as_bytes()).await.context("write watch ack")?;
-    write_half.write_all(b"\n").await.context("write watch ack newline")?;
-    write_half.flush().await.context("flush watch ack")?;
-
-    let data_dir_for_stream = data_dir.clone();
-    let conversation = conversation_id.to_owned();
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<anyhow::Result<HistoryItem>>();
-    std::thread::spawn(move || {
-        let result = watch_history_with_kind(&data_dir_for_stream, &conversation, None, |item| {
-            let _ = event_tx.send(Ok(item));
-        });
-        if let Err(err) = result {
-            let _ = event_tx.send(Err(err));
-        }
-    });
-
-    while let Some(item) = event_rx.recv().await {
-        let item = item?;
-        daemon_log(
-            &data_dir,
-            "debug",
-            format!(
-                "watch event request_id={} conversation={} message={}",
-                request_id,
-                conversation_id,
-                item.message_id
-            ),
-        );
-        let envelope = xmtp_ipc::IpcEnvelope {
-            version,
-            request_id: request_id.to_owned(),
-            payload: DaemonResponse {
-                ok: true,
-                result: Some(DaemonResponseData::HistoryEvent(
-                    xmtp_ipc::HistoryEventResponse { item },
-                )),
-                error: None,
-            },
-        };
-        let json = serde_json::to_string(&envelope).context("encode history event")?;
-        if let Err(err) = write_half.write_all(json.as_bytes()).await {
-            if err.kind() == std::io::ErrorKind::BrokenPipe {
-                break;
-            }
-            return Err(err).context("write history event");
-        }
-        if let Err(err) = write_half.write_all(b"\n").await {
-            if err.kind() == std::io::ErrorKind::BrokenPipe {
-                break;
-            }
-            return Err(err).context("write history event newline");
-        }
-        if let Err(err) = write_half.flush().await {
-            if err.kind() == std::io::ErrorKind::BrokenPipe {
-                break;
-            }
-            return Err(err).context("flush history event");
-        }
-    }
-    daemon_log(
-        &data_dir,
-        "info",
-        format!(
-            "watch history stream ended request_id={} conversation={}",
-            request_id,
-            conversation_id
-        ),
-    );
-    Ok(())
-}
-
 struct DaemonFilesGuard {
-    socket_path: PathBuf,
+    socket_path: Option<PathBuf>,
+    addr_path: PathBuf,
     pid_path: PathBuf,
 }
 
 impl DaemonFilesGuard {
-    fn new(socket_path: PathBuf, pid_path: PathBuf) -> Self {
+    fn new(socket_path: Option<PathBuf>, addr_path: PathBuf, pid_path: PathBuf) -> Self {
         Self {
             socket_path,
+            addr_path,
             pid_path,
         }
     }
@@ -1468,14 +1898,20 @@ impl DaemonFilesGuard {
 
 impl Drop for DaemonFilesGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.socket_path);
+        if let Some(socket_path) = &self.socket_path {
+            let _ = fs::remove_file(socket_path);
+        }
+        let _ = fs::remove_file(&self.addr_path);
         let _ = fs::remove_file(&self.pid_path);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ConversationLookup, resolve_conversation_id, resolve_message_id, summarize_decoded_content};
+    use super::{
+        ConversationLookup, resolve_conversation_lookup_id, resolve_message_id,
+        summarize_decoded_content,
+    };
     use xmtp::content::{Content, Reaction, ReactionAction, ReactionSchema, Reply, EncodedContent};
 
     #[test]
@@ -1494,7 +1930,7 @@ mod tests {
         ];
 
         let resolved =
-            resolve_conversation_id(&ids, "12345678....66667777", None).expect("resolved id");
+            resolve_conversation_lookup_id(&ids, "12345678....66667777", None).expect("resolved id");
 
         assert_eq!(resolved, ids[0].id);
     }
@@ -1514,7 +1950,7 @@ mod tests {
             },
         ];
 
-        let resolved = resolve_conversation_id(&ids, "abcdef01", None).expect("resolved id");
+        let resolved = resolve_conversation_lookup_id(&ids, "abcdef01", None).expect("resolved id");
 
         assert_eq!(resolved, ids[1].id);
     }
@@ -1534,7 +1970,7 @@ mod tests {
             },
         ];
 
-        let resolved = resolve_conversation_id(&ids, "Andelf", None).expect("resolved id");
+        let resolved = resolve_conversation_lookup_id(&ids, "Andelf", None).expect("resolved id");
 
         assert_eq!(resolved, ids[0].id);
     }
@@ -1554,7 +1990,7 @@ mod tests {
             },
         ];
 
-        let error = resolve_conversation_id(&ids, "dup", None).expect_err("ambiguous name");
+        let error = resolve_conversation_lookup_id(&ids, "dup", None).expect_err("ambiguous name");
 
         assert!(error.to_string().contains("conversation name dup is ambiguous"));
     }
@@ -1598,5 +2034,17 @@ mod tests {
         });
 
         assert_eq!(summary, "unsupported xmtp.org/group_updated:1.0");
+    }
+
+    #[test]
+    fn next_event_id_is_unique_and_non_empty() {
+        let first = super::next_event_id();
+        let second = super::next_event_id();
+
+        assert!(!first.is_empty());
+        assert!(!second.is_empty());
+        assert_ne!(first, second);
+        assert!(first.starts_with("evt-"));
+        assert!(second.starts_with("evt-"));
     }
 }

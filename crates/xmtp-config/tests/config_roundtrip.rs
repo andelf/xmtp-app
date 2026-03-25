@@ -10,7 +10,7 @@ fn config_roundtrips_to_json_file() {
         profile: "default".to_owned(),
         xmtp_env: "dev".to_owned(),
         data_dir: temp.path().display().to_string(),
-        ipc_socket_path: temp.path().join("daemon.sock").display().to_string(),
+        daemon_addr_path: temp.path().join("daemon.addr").display().to_string(),
         log_level: "info".to_owned(),
         api_url: Some("https://grpc.testnet.xmtp.network:443".to_owned()),
     };
@@ -22,6 +22,7 @@ fn config_roundtrips_to_json_file() {
     assert_eq!(loaded.profile, "default");
     assert_eq!(loaded.xmtp_env, "dev");
     assert_eq!(loaded.log_level, "info");
+    assert_eq!(loaded.daemon_addr_path, config.daemon_addr_path);
     assert_eq!(
         loaded.api_url.as_deref(),
         Some("https://grpc.testnet.xmtp.network:443")

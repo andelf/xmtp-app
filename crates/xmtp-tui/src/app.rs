@@ -127,16 +127,13 @@ impl App {
                 last_error: None,
                 exit_armed: false,
             },
-            vec![Effect::RefreshStatus, Effect::RefreshConversations],
+            vec![Effect::SubscribeAppEvents],
         )
     }
 
     pub fn handle_event(&mut self, event: AppEvent) -> Vec<Effect> {
         match event {
             AppEvent::Terminal(event) => self.handle_terminal_event(event),
-            AppEvent::Tick => {
-                vec![Effect::RefreshStatus, Effect::RefreshConversations]
-            }
             AppEvent::StatusLoaded(status) => {
                 self.status = Some(status);
                 Vec::new()
@@ -226,7 +223,6 @@ impl App {
                 self.dm_dialog = CreateDmDialog::default();
                 self.active_conversation_id = Some(result.conversation_id.clone());
                 vec![
-                    Effect::RefreshConversations,
                     Effect::SwitchConversation {
                         conversation_id: result.conversation_id,
                     },
@@ -241,7 +237,6 @@ impl App {
                 };
                 self.active_conversation_id = Some(result.conversation_id.clone());
                 vec![
-                    Effect::RefreshConversations,
                     Effect::SwitchConversation {
                         conversation_id: result.conversation_id,
                     },
@@ -797,13 +792,10 @@ mod tests {
     }
 
     #[test]
-    fn tick_does_not_force_active_history_refresh() {
-        let (mut app, _) = App::new();
-        app.active_conversation_id = Some("conv-1".into());
-        let effects = app.handle_event(crate::event::AppEvent::Tick);
-        assert_eq!(effects.len(), 2);
-        assert!(matches!(effects[0], Effect::RefreshStatus));
-        assert!(matches!(effects[1], Effect::RefreshConversations));
+    fn app_starts_with_app_event_subscription_effect() {
+        let (_, effects) = App::new();
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], Effect::SubscribeAppEvents));
     }
 
     #[test]
