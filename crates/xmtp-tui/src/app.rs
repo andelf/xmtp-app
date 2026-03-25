@@ -629,6 +629,12 @@ impl App {
                     self.selected_message += 1;
                 }
             }
+            KeyCode::Char('r') => {
+                if let Some(message) = self.messages.get(self.selected_message) {
+                    self.reply_to_message_id = Some(message.message_id.clone());
+                    self.focus = Focus::Input;
+                }
+            }
             KeyCode::Enter => {
                 if !self.messages.is_empty() {
                     self.modal = Modal::MessageMenu;
@@ -1258,6 +1264,35 @@ mod tests {
         ))));
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::MessageMenu);
+    }
+
+    #[test]
+    fn pressing_r_in_messages_focus_enters_reply_mode() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Messages;
+        app.messages.push(xmtp_ipc::HistoryItem {
+            message_id: "msg-1".into(),
+            sender_inbox_id: "sender-1".into(),
+            sent_at_ns: 1,
+            content_kind: "text".into(),
+            content: "hello".into(),
+            reply_count: 0,
+            reaction_count: 0,
+            reply_target_message_id: None,
+            reaction_target_message_id: None,
+            reaction_emoji: None,
+            reaction_action: None,
+            attached_reactions: Vec::new(),
+        });
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('r'),
+            KeyModifiers::NONE,
+        ))));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.reply_to_message_id.as_deref(), Some("msg-1"));
+        assert_eq!(app.focus, Focus::Input);
     }
 
     #[test]
