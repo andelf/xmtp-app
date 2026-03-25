@@ -1850,6 +1850,7 @@ mod tests {
             id: "1234567890abcdefghijklmnopqrstuvwxyz".to_owned(),
             kind: "dm".to_owned(),
             name: Some("primary".to_owned()),
+            last_message_ns: None,
         });
 
         assert_eq!(

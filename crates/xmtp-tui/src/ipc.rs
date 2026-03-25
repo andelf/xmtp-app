@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
@@ -31,7 +30,6 @@ pub struct Runtime {
     tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     app_events_handle: Option<JoinHandle<()>>,
     watch_handle: Option<JoinHandle<()>>,
-    unread_monitor_handle: Option<JoinHandle<()>>,
 }
 
 impl Runtime {
@@ -41,7 +39,6 @@ impl Runtime {
             tx,
             app_events_handle: None,
             watch_handle: None,
-            unread_monitor_handle: None,
         }
     }
 
@@ -53,9 +50,6 @@ impl Runtime {
         for effect in effects {
             match effect {
                 Effect::SubscribeAppEvents => self.subscribe_app_events(),
-                Effect::SyncHistorySubscriptions { conversation_ids } => {
-                    self.sync_history_subscriptions(conversation_ids)
-                }
                 Effect::SwitchConversation { conversation_id } => {
                     self.spawn_conversation_info(conversation_id.clone());
                     self.spawn_history(conversation_id.clone());
@@ -144,20 +138,6 @@ impl Runtime {
             if let Err(err) = watch_history(&data_dir, &conversation_id, tx.clone()).await {
                 let _ = tx.send(AppEvent::Error(err.to_string()));
             }
-        }));
-    }
-
-    fn sync_history_subscriptions(&mut self, conversation_ids: Vec<String>) {
-        if let Some(handle) = self.unread_monitor_handle.take() {
-            handle.abort();
-        }
-        if conversation_ids.is_empty() {
-            return;
-        }
-        let tx = self.tx.clone();
-        let data_dir = self.data_dir.clone();
-        self.unread_monitor_handle = Some(tokio::spawn(async move {
-            monitor_unread_history(&data_dir, conversation_ids, tx).await;
         }));
     }
 
@@ -386,16 +366,6 @@ async fn load_history(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Resu
     Ok(response.items)
 }
 
-async fn load_history_with_limit(
-    data_dir: &PathBuf,
-    conversation_id: &str,
-    limit: usize,
-) -> anyhow::Result<Vec<xmtp_ipc::HistoryItem>> {
-    let response: HistoryResponse =
-        http_get(data_dir, &format!("/v1/conversations/{conversation_id}/history?limit={limit}")).await?;
-    Ok(response.items)
-}
-
 async fn watch_history(
     data_dir: &PathBuf,
     conversation_id: &str,
@@ -476,43 +446,6 @@ async fn watch_history(
         }
         tokio::time::sleep(retry_delay).await;
         retry_delay = next_retry_delay(retry_delay);
-    }
-}
-
-async fn monitor_unread_history(
-    data_dir: &PathBuf,
-    conversation_ids: Vec<String>,
-    tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
-) {
-    let mut latest_seen = HashMap::<String, String>::new();
-
-    loop {
-        for conversation_id in &conversation_ids {
-            match load_history_with_limit(data_dir, conversation_id, 1).await {
-                Ok(items) => {
-                    if let Some(item) = items.into_iter().last() {
-                        match latest_seen.get(conversation_id) {
-                            None => {
-                                latest_seen.insert(conversation_id.clone(), item.message_id.clone());
-                            }
-                            Some(previous_id) if previous_id != &item.message_id => {
-                                latest_seen.insert(conversation_id.clone(), item.message_id.clone());
-                                let _ = tx.send(AppEvent::HistoryEvent {
-                                    conversation_id: conversation_id.clone(),
-                                    item,
-                                });
-                            }
-                            Some(_) => {}
-                        }
-                    }
-                }
-                Err(err) => {
-                    let _ = tx.send(AppEvent::Error(err.to_string()));
-                }
-            }
-        }
-
-        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
 

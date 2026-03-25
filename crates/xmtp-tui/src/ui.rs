@@ -578,11 +578,13 @@ mod tests {
                 id: "group-1".into(),
                 kind: "group".into(),
                 name: Some("Andelf".into()),
+                last_message_ns: None,
             },
             xmtp_ipc::ConversationItem {
                 id: "dm-1".into(),
                 kind: "dm".into(),
                 name: None,
+                last_message_ns: None,
             },
         ];
         app.active_conversation_id = Some("group-1".into());

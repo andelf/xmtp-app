@@ -171,6 +171,7 @@ pub struct ConversationSummary {
     pub id: String,
     pub kind: String,
     pub name: Option<String>,
+    pub last_message_ns: Option<i64>,
 }
 
 pub struct SendMessageResult {
@@ -390,6 +391,10 @@ fn list_conversations_with_client(
             id: conversation.id(),
             kind,
             name: conversation.name(),
+            last_message_ns: conversation
+                .last_message()
+                .ok()
+                .and_then(|message| message.map(|message| message.sent_at_ns)),
         });
     }
     Ok(summaries)
@@ -1087,6 +1092,7 @@ impl DaemonApp {
                 id: item.id,
                 kind: item.kind,
                 name: item.name,
+                last_message_ns: item.last_message_ns,
             })
             .collect();
         self.remember_conversation_items(&items);
@@ -1150,6 +1156,7 @@ impl DaemonApp {
                 id: item.id,
                 kind: item.kind,
                 name: item.name,
+                last_message_ns: item.last_message_ns,
             })
             .collect();
         if kind.is_none() {

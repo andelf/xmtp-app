@@ -278,9 +278,28 @@ impl App {
     }
 
     fn update_conversations(&mut self, items: Vec<ConversationItem>) -> Vec<Effect> {
+        let previous_markers = self
+            .conversations
+            .iter()
+            .map(|conversation| (conversation.id.clone(), conversation.last_message_ns))
+            .collect::<HashMap<_, _>>();
         self.conversations = items;
         self.unread_counts
             .retain(|conversation_id, _| self.conversations.iter().any(|conversation| &conversation.id == conversation_id));
+        for conversation in &self.conversations {
+            let previous_last_message_ns = previous_markers
+                .get(&conversation.id)
+                .copied()
+                .flatten();
+            if self.active_conversation_id.as_deref() != Some(conversation.id.as_str())
+                && matches!(
+                    (previous_last_message_ns, conversation.last_message_ns),
+                    (Some(previous), Some(current)) if current > previous
+                )
+            {
+                *self.unread_counts.entry(conversation.id.clone()).or_insert(0) += 1;
+            }
+        }
         if self.conversations.is_empty() {
             self.selected_conversation = 0;
             self.active_conversation = None;
@@ -288,16 +307,9 @@ impl App {
             self.active_info = None;
             self.active_history_loading = false;
             self.messages.clear();
-            return vec![Effect::SyncHistorySubscriptions {
-                conversation_ids: Vec::new(),
-            }];
+            return Vec::new();
         }
 
-        let conversation_ids = self
-            .conversations
-            .iter()
-            .map(|conversation| conversation.id.clone())
-            .collect::<Vec<_>>();
         let current_active = self.active_conversation_id.clone();
         if let Some(active_id) = current_active {
             if let Some(index) = self
@@ -307,15 +319,13 @@ impl App {
             {
                 self.selected_conversation = index;
                 self.active_conversation = Some(self.conversations[index].clone());
-                return vec![Effect::SyncHistorySubscriptions { conversation_ids }];
+                return Vec::new();
             }
         }
 
         self.selected_conversation = self.selected_conversation.min(self.conversations.len() - 1);
         let conversation = self.conversations[self.selected_conversation].clone();
-        let mut effects = vec![Effect::SyncHistorySubscriptions { conversation_ids }];
-        effects.extend(self.activate_conversation(conversation));
-        effects
+        self.activate_conversation(conversation)
     }
 
     fn handle_action_completed(&mut self, outcome: ActionOutcome) -> Vec<Effect> {
@@ -1022,8 +1032,8 @@ mod tests {
     fn conversation_navigation_switches_immediately() {
         let (mut app, _) = App::new();
         app.conversations = vec![
-            xmtp_ipc::ConversationItem { id: "one".into(), kind: "dm".into(), name: None },
-            xmtp_ipc::ConversationItem { id: "two".into(), kind: "group".into(), name: None },
+            xmtp_ipc::ConversationItem { id: "one".into(), kind: "dm".into(), name: None, last_message_ns: None },
+            xmtp_ipc::ConversationItem { id: "two".into(), kind: "group".into(), name: None, last_message_ns: None },
         ];
         app.messages.push(xmtp_ipc::HistoryItem {
             message_id: "old-msg".into(),
@@ -1096,6 +1106,7 @@ mod tests {
             id: "dm-1".into(),
             kind: "dm".into(),
             name: None,
+            last_message_ns: None,
         }];
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
             KeyCode::Enter,
@@ -1114,6 +1125,7 @@ mod tests {
             id: "grp-1".into(),
             kind: "group".into(),
             name: Some("team".into()),
+            last_message_ns: None,
         }];
         app.active_conversation = Some(app.conversations[0].clone());
         app.active_conversation_id = Some("grp-1".into());
@@ -1135,6 +1147,7 @@ mod tests {
             id: "grp-1".into(),
             kind: "group".into(),
             name: Some("old-name".into()),
+            last_message_ns: None,
         });
         app.active_conversation_id = Some("grp-1".into());
         app.modal = Modal::GroupManagement;
@@ -1157,6 +1170,7 @@ mod tests {
             id: "grp-1".into(),
             kind: "group".into(),
             name: Some("team".into()),
+            last_message_ns: None,
         });
         app.active_conversation_id = Some("grp-1".into());
         app.modal = Modal::GroupLeaveConfirm;
@@ -1259,33 +1273,32 @@ mod tests {
                 id: "conv-1".into(),
                 kind: "dm".into(),
                 name: Some("one".into()),
+                last_message_ns: Some(10),
             },
             xmtp_ipc::ConversationItem {
                 id: "conv-2".into(),
                 kind: "group".into(),
                 name: Some("two".into()),
+                last_message_ns: Some(20),
             },
         ];
         app.active_conversation_id = Some("conv-1".into());
         app.active_conversation = Some(app.conversations[0].clone());
 
-        let effects = app.handle_event(crate::event::AppEvent::HistoryEvent {
-            conversation_id: "conv-2".into(),
-            item: xmtp_ipc::HistoryItem {
-                message_id: "msg-3".into(),
-                sender_inbox_id: "sender-1".into(),
-                sent_at_ns: 3,
-                content_kind: "text".into(),
-                content: "third".into(),
-                reply_count: 0,
-                reaction_count: 0,
-                reply_target_message_id: None,
-                reaction_target_message_id: None,
-                reaction_emoji: None,
-                reaction_action: None,
-                attached_reactions: Vec::new(),
+        let effects = app.handle_event(crate::event::AppEvent::ConversationsLoaded(vec![
+            xmtp_ipc::ConversationItem {
+                id: "conv-1".into(),
+                kind: "dm".into(),
+                name: Some("one".into()),
+                last_message_ns: Some(10),
             },
-        });
+            xmtp_ipc::ConversationItem {
+                id: "conv-2".into(),
+                kind: "group".into(),
+                name: Some("two".into()),
+                last_message_ns: Some(30),
+            },
+        ]));
 
         assert!(effects.is_empty());
         assert_eq!(app.unread_counts.get("conv-2"), Some(&1));
@@ -1427,6 +1440,7 @@ mod tests {
             id: "group-1".into(),
             kind: "group".into(),
             name: Some("old-name".into()),
+            last_message_ns: None,
         }];
         app.active_conversation = Some(app.conversations[0].clone());
         app.active_conversation_id = Some("group-1".into());
@@ -1454,6 +1468,7 @@ mod tests {
             id: "group-1".into(),
             kind: "group".into(),
             name: Some("group".into()),
+            last_message_ns: None,
         });
         app.active_conversation_id = Some("group-1".into());
         app.group_management.members = vec![xmtp_ipc::GroupMemberItem {
