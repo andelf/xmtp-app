@@ -520,6 +520,12 @@ impl App {
             Modal::None => {}
         }
 
+        if self.focus == Focus::Input && self.reply_to_message_id.is_some() {
+            self.reply_to_message_id = None;
+            self.exit_armed = false;
+            return Vec::new();
+        }
+
         if self.focus != Focus::Conversations {
             self.focus = Focus::Conversations;
             self.exit_armed = false;
@@ -967,6 +973,8 @@ impl App {
 
     fn activate_conversation(&mut self, conversation: ConversationItem) -> Vec<Effect> {
         self.unread_counts.remove(&conversation.id);
+        self.reply_to_message_id = None;
+        self.input.clear();
         self.active_conversation_id = Some(conversation.id.clone());
         self.active_conversation = Some(conversation.clone());
         self.active_info = None;
@@ -1592,6 +1600,24 @@ mod tests {
     }
 
     #[test]
+    fn esc_in_input_clears_reply_state_before_leaving_input() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Input;
+        app.reply_to_message_id = Some("msg-1".into());
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+        ))));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.focus, Focus::Input);
+        assert!(app.reply_to_message_id.is_none());
+        assert!(!app.should_quit);
+        assert!(!app.exit_armed);
+    }
+
+    #[test]
     fn esc_twice_in_conversations_quits() {
         let (mut app, _) = App::new();
         app.focus = Focus::Conversations;
@@ -1623,5 +1649,27 @@ mod tests {
         assert_eq!(app.modal, Modal::None);
         assert!(!app.exit_armed);
         assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn switching_conversation_clears_reply_state_and_input() {
+        let (mut app, _) = App::new();
+        app.input = "draft message".into();
+        app.reply_to_message_id = Some("msg-1".into());
+
+        let effects = app.activate_conversation(xmtp_ipc::ConversationItem {
+            id: "conv-2".into(),
+            kind: "dm".into(),
+            name: Some("peer".into()),
+            dm_peer_inbox_id: Some("peer-1".into()),
+            last_message_ns: Some(20),
+        });
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-2"
+        ));
+        assert!(app.reply_to_message_id.is_none());
+        assert!(app.input.is_empty());
     }
 }
