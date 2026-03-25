@@ -139,6 +139,7 @@ pub struct App {
     pub active_conversation_id: Option<String>,
     pub active_conversation: Option<ConversationItem>,
     pub unread_counts: HashMap<String, u32>,
+    pub drafts: HashMap<String, String>,
     pub active_info: Option<ConversationInfoResponse>,
     pub active_history_loading: bool,
     pub messages: Vec<HistoryItem>,
@@ -168,6 +169,7 @@ impl App {
                 active_conversation_id: None,
                 active_conversation: None,
                 unread_counts: HashMap::new(),
+                drafts: HashMap::new(),
                 active_info: None,
                 active_history_loading: false,
                 messages: Vec::new(),
@@ -374,6 +376,7 @@ impl App {
                 message_id,
                 text,
             } => {
+                self.drafts.remove(&conversation_id);
                 if self.active_conversation_id.as_deref() == Some(conversation_id.as_str()) {
                     let sender_inbox_id = self.self_inbox_id().unwrap_or_default().to_owned();
                     let sent_at_ns = SystemTime::now()
@@ -978,9 +981,16 @@ impl App {
     }
 
     fn activate_conversation(&mut self, conversation: ConversationItem) -> Vec<Effect> {
+        if let Some(current_id) = self.active_conversation_id.clone() {
+            if self.input.trim().is_empty() {
+                self.drafts.remove(&current_id);
+            } else {
+                self.drafts.insert(current_id, self.input.clone());
+            }
+        }
         self.unread_counts.remove(&conversation.id);
         self.reply_to_message_id = None;
-        self.input.clear();
+        self.input = self.drafts.get(&conversation.id).cloned().unwrap_or_default();
         self.active_conversation_id = Some(conversation.id.clone());
         self.active_conversation = Some(conversation.clone());
         self.active_info = None;
@@ -1687,8 +1697,16 @@ mod tests {
     }
 
     #[test]
-    fn switching_conversation_clears_reply_state_and_input() {
+    fn switching_conversation_preserves_draft_and_clears_reply_state() {
         let (mut app, _) = App::new();
+        app.active_conversation_id = Some("conv-1".into());
+        app.active_conversation = Some(xmtp_ipc::ConversationItem {
+            id: "conv-1".into(),
+            kind: "dm".into(),
+            name: Some("first".into()),
+            dm_peer_inbox_id: Some("peer-a".into()),
+            last_message_ns: Some(10),
+        });
         app.input = "draft message".into();
         app.reply_to_message_id = Some("msg-1".into());
 
@@ -1706,5 +1724,22 @@ mod tests {
         ));
         assert!(app.reply_to_message_id.is_none());
         assert!(app.input.is_empty());
+        assert_eq!(app.drafts.get("conv-1").map(String::as_str), Some("draft message"));
+
+        app.input = "other draft".into();
+        let effects = app.activate_conversation(xmtp_ipc::ConversationItem {
+            id: "conv-1".into(),
+            kind: "dm".into(),
+            name: Some("first".into()),
+            dm_peer_inbox_id: Some("peer-a".into()),
+            last_message_ns: Some(10),
+        });
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-1"
+        ));
+        assert_eq!(app.input, "draft message");
+        assert!(app.reply_to_message_id.is_none());
     }
 }
