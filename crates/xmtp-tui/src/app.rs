@@ -684,12 +684,20 @@ impl App {
                 self.delete_at_cursor();
             }
             KeyCode::Left => {
-                if self.cursor > 0 {
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT)
+                {
+                    self.move_cursor_word_left();
+                } else if self.cursor > 0 {
                     self.cursor -= 1;
                 }
             }
             KeyCode::Right => {
-                if self.cursor < self.input_char_len() {
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT)
+                {
+                    self.move_cursor_word_right();
+                } else if self.cursor < self.input_char_len() {
                     self.cursor += 1;
                 }
             }
@@ -1126,6 +1134,38 @@ impl App {
         self.input.replace_range(byte_start..byte_end, "");
         self.cursor = start;
     }
+
+    fn move_cursor_word_left(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut cursor = self.cursor;
+
+        while cursor > 0 && chars[cursor - 1].is_whitespace() {
+            cursor -= 1;
+        }
+        while cursor > 0 && !chars[cursor - 1].is_whitespace() {
+            cursor -= 1;
+        }
+
+        self.cursor = cursor;
+    }
+
+    fn move_cursor_word_right(&mut self) {
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut cursor = self.cursor;
+
+        while cursor < chars.len() && chars[cursor].is_whitespace() {
+            cursor += 1;
+        }
+        while cursor < chars.len() && !chars[cursor].is_whitespace() {
+            cursor += 1;
+        }
+
+        self.cursor = cursor;
+    }
 }
 
 fn delete_previous_word_from_end(value: &mut String) {
@@ -1242,6 +1282,52 @@ mod tests {
             KeyModifiers::NONE,
         ))));
         assert_eq!(app.cursor, 3);
+    }
+
+    #[test]
+    fn input_ctrl_left_and_right_jump_by_word() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Input;
+        app.input = "hello brave new world".into();
+        app.cursor = app.input.chars().count();
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Left,
+            KeyModifiers::CONTROL,
+        ))));
+        assert_eq!(app.cursor, "hello brave new ".chars().count());
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Right,
+            KeyModifiers::CONTROL,
+        ))));
+        assert_eq!(app.cursor, "hello brave new world".chars().count());
+    }
+
+    #[test]
+    fn input_alt_left_and_right_jump_by_word() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Input;
+        app.input = "hello brave new".into();
+        app.cursor = "hello ".chars().count();
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Right,
+            KeyModifiers::ALT,
+        ))));
+        assert_eq!(app.cursor, "hello brave".chars().count());
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Left,
+            KeyModifiers::ALT,
+        ))));
+        assert_eq!(app.cursor, "hello ".chars().count());
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Left,
+            KeyModifiers::ALT,
+        ))));
+        assert_eq!(app.cursor, 0);
     }
 
     #[test]
