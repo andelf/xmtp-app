@@ -443,8 +443,42 @@ fn send_group_with_client(
     conversation_id: &str,
     text: &str,
 ) -> anyhow::Result<SendMessageResult> {
+    send_group_with_client_logged(client, conversation_id, text, None)
+}
+
+fn send_group_with_client_logged(
+    client: &Client,
+    conversation_id: &str,
+    text: &str,
+    data_dir: Option<&Path>,
+) -> anyhow::Result<SendMessageResult> {
+    let resolve_started = Instant::now();
     let conversation = find_conversation_by_id(client, conversation_id)?;
+    if let Some(data_dir) = data_dir {
+        daemon_log(
+            data_dir,
+            "debug",
+            format!(
+                "group send stage=resolve query={} resolved={} elapsed_ms={}",
+                conversation_id,
+                conversation.id(),
+                resolve_started.elapsed().as_millis()
+            ),
+        );
+    }
+    let send_started = Instant::now();
     let message_id = conversation.send_text(text).context("send group text")?;
+    if let Some(data_dir) = data_dir {
+        daemon_log(
+            data_dir,
+            "debug",
+            format!(
+                "group send stage=send_text conversation={} elapsed_ms={}",
+                conversation.id(),
+                send_started.elapsed().as_millis()
+            ),
+        );
+    }
     Ok(SendMessageResult {
         conversation_id: conversation.id(),
         message_id,
@@ -804,53 +838,24 @@ fn find_conversation_by_id_with_kind(
     conversation_id: &str,
     kind: Option<&str>,
 ) -> anyhow::Result<xmtp::conversation::Conversation> {
-    if looks_like_full_conversation_id(conversation_id) {
-        match client.conversation(conversation_id) {
-            Ok(Some(conversation)) => {
-                let actual_kind = conversation
-                    .conversation_type()
-                    .map(|value| format!("{value:?}").to_lowercase())
-                    .unwrap_or_else(|| "unknown".to_owned());
-                if kind.is_none_or(|expected| expected == actual_kind) {
-                    return Ok(conversation);
-                }
-            }
-            Ok(None) => {}
-            Err(_) => {}
-        }
-    }
-    let need_sync = !looks_like_full_conversation_id(conversation_id)
-        || client
-            .conversation(conversation_id)
-            .ok()
-            .flatten()
-            .is_none();
-    if need_sync {
-        client.sync_welcomes().context("sync welcomes")?;
-        client.sync_all(&[]).context("sync conversations")?;
-    } else if let Some(conversation) = client
-        .conversation(conversation_id)
-        .ok()
-        .flatten()
-    {
-        let actual_kind = conversation
-            .conversation_type()
-            .map(|value| format!("{value:?}").to_lowercase())
-            .unwrap_or_else(|| "unknown".to_owned());
-        if kind.is_none_or(|expected| expected == actual_kind) {
+    let conversations = client.conversations().context("list local conversations")?;
+    if let Ok(resolved_id) = resolve_conversation_query(&conversations, conversation_id, kind) {
+        if let Some(conversation) = conversations
+            .into_iter()
+            .find(|conversation| conversation.id() == resolved_id)
+        {
             return Ok(conversation);
         }
     }
+
+    client.sync_welcomes().context("sync welcomes")?;
+    client.sync_all(&[]).context("sync conversations")?;
     let conversations = client.conversations().context("list conversations")?;
     let resolved_id = resolve_conversation_query(&conversations, conversation_id, kind)?;
     conversations
         .into_iter()
         .find(|conversation| conversation.id() == resolved_id)
         .context("conversation not found")
-}
-
-fn looks_like_full_conversation_id(value: &str) -> bool {
-    value.len() >= 32 && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn resolve_conversation_query(
@@ -1015,6 +1020,7 @@ struct DaemonApp {
     client: Option<Client>,
     last_status_event: Option<StatusResponse>,
     last_conversation_event: Option<ConversationListResponse>,
+    conversation_cache: Vec<ConversationLookup>,
 }
 
 #[derive(Clone)]
@@ -1036,6 +1042,7 @@ impl DaemonApp {
             client: None,
             last_status_event: None,
             last_conversation_event: None,
+            conversation_cache: Vec::new(),
         }
     }
 
@@ -1050,7 +1057,7 @@ impl DaemonApp {
     }
 
     fn conversation_list(&mut self) -> anyhow::Result<ConversationListResponse> {
-        let items = list_conversations_with_client(self.ensure_client()?, None)?
+        let items: Vec<ConversationItem> = list_conversations_with_client(self.ensure_client()?, None)?
             .into_iter()
             .map(|item| ConversationItem {
                 id: item.id,
@@ -1058,6 +1065,7 @@ impl DaemonApp {
                 name: item.name,
             })
             .collect();
+        self.remember_conversation_items(&items);
         Ok(ConversationListResponse { items })
     }
 
@@ -1112,7 +1120,7 @@ impl DaemonApp {
     }
 
     fn list_conversations(&mut self, kind: Option<String>) -> anyhow::Result<ConversationListResponse> {
-        let items = list_conversations_with_client(self.ensure_client()?, kind.as_deref())?
+        let items: Vec<ConversationItem> = list_conversations_with_client(self.ensure_client()?, kind.as_deref())?
             .into_iter()
             .map(|item| ConversationItem {
                 id: item.id,
@@ -1120,6 +1128,9 @@ impl DaemonApp {
                 name: item.name,
             })
             .collect();
+        if kind.is_none() {
+            self.remember_conversation_items(&items);
+        }
         Ok(ConversationListResponse { items })
     }
 
@@ -1173,7 +1184,16 @@ impl DaemonApp {
     }
 
     fn send_group(&mut self, conversation_id: String, message: String) -> anyhow::Result<ActionResponse> {
-        let result = send_group_with_client(self.ensure_client()?, &conversation_id, &message)?;
+        let resolved_conversation_id = self
+            .resolve_cached_conversation_id(&conversation_id, Some("group"))
+            .unwrap_or_else(|| conversation_id.clone());
+        let data_dir = self.data_dir.clone();
+        let result = send_group_with_client_logged(
+            self.ensure_client()?,
+            &resolved_conversation_id,
+            &message,
+            Some(data_dir.as_path()),
+        )?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1214,7 +1234,10 @@ impl DaemonApp {
     }
 
     fn rename_group(&mut self, conversation_id: String, name: String) -> anyhow::Result<ActionResponse> {
-        let result = rename_group_with_client(self.ensure_client()?, &conversation_id, &name)?;
+        let resolved_conversation_id = self
+            .resolve_cached_conversation_id(&conversation_id, Some("group"))
+            .unwrap_or(conversation_id);
+        let result = rename_group_with_client(self.ensure_client()?, &resolved_conversation_id, &name)?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1226,7 +1249,11 @@ impl DaemonApp {
         conversation_id: String,
         members: Vec<String>,
     ) -> anyhow::Result<ActionResponse> {
-        let result = add_group_members_with_client(self.ensure_client()?, &conversation_id, &members)?;
+        let resolved_conversation_id = self
+            .resolve_cached_conversation_id(&conversation_id, Some("group"))
+            .unwrap_or(conversation_id);
+        let result =
+            add_group_members_with_client(self.ensure_client()?, &resolved_conversation_id, &members)?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1238,8 +1265,14 @@ impl DaemonApp {
         conversation_id: String,
         members: Vec<String>,
     ) -> anyhow::Result<ActionResponse> {
-        let result =
-            remove_group_members_with_client(self.ensure_client()?, &conversation_id, &members)?;
+        let resolved_conversation_id = self
+            .resolve_cached_conversation_id(&conversation_id, Some("group"))
+            .unwrap_or(conversation_id);
+        let result = remove_group_members_with_client(
+            self.ensure_client()?,
+            &resolved_conversation_id,
+            &members,
+        )?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1247,7 +1280,10 @@ impl DaemonApp {
     }
 
     fn leave_conversation(&mut self, conversation_id: String) -> anyhow::Result<ActionResponse> {
-        let result = leave_conversation_with_client(self.ensure_client()?, &conversation_id)?;
+        let resolved_conversation_id = self
+            .resolve_cached_conversation_id(&conversation_id, None)
+            .unwrap_or(conversation_id);
+        let result = leave_conversation_with_client(self.ensure_client()?, &resolved_conversation_id)?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1256,6 +1292,21 @@ impl DaemonApp {
 
     fn message_info(&mut self, message_id: String) -> anyhow::Result<MessageInfoResponse> {
         message_info_with_client(self.ensure_client()?, &message_id)
+    }
+
+    fn remember_conversation_items(&mut self, items: &[ConversationItem]) {
+        self.conversation_cache = items
+            .iter()
+            .map(|item| ConversationLookup {
+                id: item.id.clone(),
+                name: item.name.clone(),
+                kind: item.kind.clone(),
+            })
+            .collect();
+    }
+
+    fn resolve_cached_conversation_id(&self, query: &str, kind: Option<&str>) -> Option<String> {
+        resolve_conversation_lookup_id(&self.conversation_cache, query, kind).ok()
     }
 }
 

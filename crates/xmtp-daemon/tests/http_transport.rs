@@ -56,20 +56,32 @@ impl DaemonProcess {
 
     async fn login_dev(&self) -> anyhow::Result<StatusResponse> {
         let client = reqwest::Client::new();
-        client
-            .post(format!("{}/v1/login", self.base_url))
-            .json(&serde_json::json!({
-                "env": "dev",
-                "api_url": null
-            }))
-            .send()
-            .await
-            .context("send login request")?
-            .error_for_status()
-            .context("login status")?
-            .json()
-            .await
-            .context("decode login response")
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut last_error = None;
+        while Instant::now() < deadline {
+            match client
+                .post(format!("{}/v1/login", self.base_url))
+                .json(&serde_json::json!({
+                    "env": "dev",
+                    "api_url": null
+                }))
+                .send()
+                .await
+            {
+                Ok(response) => match response.error_for_status() {
+                    Ok(response) => {
+                        return response
+                            .json()
+                            .await
+                            .context("decode login response");
+                    }
+                    Err(err) => last_error = Some(anyhow::Error::new(err).context("login status")),
+                },
+                Err(err) => last_error = Some(anyhow::Error::new(err).context("send login request")),
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("login request did not succeed before timeout")))
     }
 }
 
