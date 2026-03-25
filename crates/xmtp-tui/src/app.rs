@@ -145,6 +145,7 @@ pub struct App {
     pub messages: Vec<HistoryItem>,
     pub selected_message: usize,
     pub input: String,
+    pub cursor: usize,
     pub reply_to_message_id: Option<String>,
     pub message_menu_index: usize,
     pub reaction_picker_index: usize,
@@ -175,6 +176,7 @@ impl App {
                 messages: Vec::new(),
                 selected_message: 0,
                 input: String::new(),
+                cursor: 0,
                 reply_to_message_id: None,
                 message_menu_index: 0,
                 reaction_picker_index: 0,
@@ -378,6 +380,7 @@ impl App {
             } => {
                 self.drafts.remove(&conversation_id);
                 if self.active_conversation_id.as_deref() == Some(conversation_id.as_str()) {
+                    self.cursor = 0;
                     let sender_inbox_id = self.self_inbox_id().unwrap_or_default().to_owned();
                     let sent_at_ns = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -652,7 +655,7 @@ impl App {
     fn handle_input_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
-                self.input.push('\n');
+                self.insert_input_char('\n');
             }
             KeyCode::Enter => {
                 let text = self.input.trim_end().to_owned();
@@ -660,6 +663,7 @@ impl App {
                     return Vec::new();
                 }
                 self.input.clear();
+                self.cursor = 0;
                 if let Some(message_id) = self.reply_to_message_id.take() {
                     return vec![Effect::Reply { message_id, text }];
                 }
@@ -674,11 +678,36 @@ impl App {
                 }
             }
             KeyCode::Backspace => {
-                self.input.pop();
+                self.delete_before_cursor();
+            }
+            KeyCode::Delete => {
+                self.delete_at_cursor();
+            }
+            KeyCode::Left => {
+                if self.cursor > 0 {
+                    self.cursor -= 1;
+                }
+            }
+            KeyCode::Right => {
+                if self.cursor < self.input_char_len() {
+                    self.cursor += 1;
+                }
+            }
+            KeyCode::Home => {
+                self.cursor = 0;
+            }
+            KeyCode::End => {
+                self.cursor = self.input_char_len();
             }
             KeyCode::Char(ch) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.input.push(ch);
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    match ch {
+                        'a' | 'A' => self.cursor = 0,
+                        'e' | 'E' => self.cursor = self.input_char_len(),
+                        _ => {}
+                    }
+                } else {
+                    self.insert_input_char(ch);
                 }
             }
             _ => {}
@@ -991,6 +1020,7 @@ impl App {
         self.unread_counts.remove(&conversation.id);
         self.reply_to_message_id = None;
         self.input = self.drafts.get(&conversation.id).cloned().unwrap_or_default();
+        self.cursor = self.input.chars().count();
         self.active_conversation_id = Some(conversation.id.clone());
         self.active_conversation = Some(conversation.clone());
         self.active_info = None;
@@ -1018,6 +1048,46 @@ impl App {
         } else {
             Color::Cyan
         }
+    }
+
+    pub fn input_char_len(&self) -> usize {
+        self.input.chars().count()
+    }
+
+    fn input_byte_index(&self, cursor: usize) -> usize {
+        if cursor == 0 {
+            return 0;
+        }
+        self.input
+            .char_indices()
+            .nth(cursor)
+            .map(|(idx, _)| idx)
+            .unwrap_or(self.input.len())
+    }
+
+    fn insert_input_char(&mut self, ch: char) {
+        let byte_idx = self.input_byte_index(self.cursor);
+        self.input.insert(byte_idx, ch);
+        self.cursor += 1;
+    }
+
+    fn delete_before_cursor(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let end = self.input_byte_index(self.cursor);
+        let start = self.input_byte_index(self.cursor - 1);
+        self.input.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
+
+    fn delete_at_cursor(&mut self) {
+        if self.cursor >= self.input_char_len() {
+            return;
+        }
+        let start = self.input_byte_index(self.cursor);
+        let end = self.input_byte_index(self.cursor + 1);
+        self.input.replace_range(start..end, "");
     }
 }
 
@@ -1084,6 +1154,62 @@ mod tests {
         ))));
         assert!(effects.is_empty());
         assert_eq!(app.input, "c");
+    }
+
+    #[test]
+    fn input_cursor_moves_left_and_right() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Input;
+        app.input = "abc".into();
+        app.cursor = 3;
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Left,
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(app.cursor, 2);
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Right,
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(app.cursor, 3);
+    }
+
+    #[test]
+    fn input_home_and_end_move_cursor() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Input;
+        app.input = "abc".into();
+        app.cursor = 1;
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Home,
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(app.cursor, 0);
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::End,
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(app.cursor, 3);
+    }
+
+    #[test]
+    fn input_inserts_text_in_the_middle() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Input;
+        app.input = "helo".into();
+        app.cursor = 2;
+
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            KeyModifiers::NONE,
+        ))));
+
+        assert_eq!(app.input, "hello");
+        assert_eq!(app.cursor, 3);
     }
 
     #[test]

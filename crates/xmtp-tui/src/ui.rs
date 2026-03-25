@@ -230,18 +230,60 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
     if let Some(reply_to) = &app.reply_to_message_id {
         lines.push(Line::from(format!("reply -> {}", short_display_id(reply_to))));
     }
-    if app.input.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "Type message",
-            Style::default().dark_gray(),
-        )));
-    } else {
-        lines.extend(app.input.lines().map(Line::from));
-    }
+    lines.extend(render_input_lines(app));
     let paragraph = Paragraph::new(lines)
         .block(titled_block("Input", app.focus == Focus::Input))
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
+}
+
+fn render_input_lines(app: &App) -> Vec<Line<'static>> {
+    if app.input.is_empty() {
+        return vec![Line::from(vec![
+            Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)),
+            Span::styled("Type message", Style::default().dark_gray()),
+        ])];
+    }
+
+    let mut lines = Vec::new();
+    let mut spans = Vec::new();
+    let chars: Vec<char> = app.input.chars().collect();
+
+    for (index, ch) in chars.iter().enumerate() {
+        if index == app.cursor && *ch == '\n' {
+            spans.push(Span::styled(
+                " ",
+                Style::default().add_modifier(Modifier::REVERSED),
+            ));
+            lines.push(Line::from(std::mem::take(&mut spans)));
+            continue;
+        }
+
+        if *ch == '\n' {
+            lines.push(Line::from(std::mem::take(&mut spans)));
+            continue;
+        }
+
+        let span = if index == app.cursor {
+            Span::styled(
+                ch.to_string(),
+                Style::default().add_modifier(Modifier::REVERSED),
+            )
+        } else {
+            Span::raw(ch.to_string())
+        };
+        spans.push(span);
+    }
+
+    if app.cursor == chars.len() {
+        spans.push(Span::styled(
+            " ",
+            Style::default().add_modifier(Modifier::REVERSED),
+        ));
+    }
+
+    lines.push(Line::from(spans));
+    lines
 }
 
 fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
