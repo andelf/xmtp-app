@@ -8,8 +8,10 @@ use futures_util::StreamExt;
 use tokio::task::JoinHandle;
 use xmtp_daemon::addr_path;
 use xmtp_ipc::{
-    ActionResponse, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope, GroupCreateRequest,
-    HistoryResponse, RecipientMessageRequest, RecipientRequest, SendMessageRequest, EmojiRequest,
+    ActionResponse, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
+    GroupCreateRequest, GroupInfoResponse, GroupMembersResponse, GroupMembersUpdateRequest,
+    HistoryResponse, RecipientMessageRequest, RecipientRequest, RenameGroupRequest,
+    SendMessageRequest,
 };
 
 use crate::event::{ActionOutcome, AppEvent, Effect};
@@ -47,6 +49,22 @@ impl Runtime {
                 }
                 Effect::OpenDm { recipient } => self.spawn_open_dm(recipient),
                 Effect::CreateGroup { name, members } => self.spawn_create_group(name, members),
+                Effect::LoadGroupInfo { conversation_id } => self.spawn_group_info(conversation_id),
+                Effect::LoadGroupMembers { conversation_id } => {
+                    self.spawn_group_members(conversation_id)
+                }
+                Effect::AddGroupMembers {
+                    conversation_id,
+                    members,
+                } => self.spawn_add_group_members(conversation_id, members),
+                Effect::RemoveGroupMembers {
+                    conversation_id,
+                    members,
+                } => self.spawn_remove_group_members(conversation_id, members),
+                Effect::RenameGroup {
+                    conversation_id,
+                    name,
+                } => self.spawn_rename_group(conversation_id, name),
                 Effect::SendMessage {
                     conversation_id,
                     kind,
@@ -137,6 +155,87 @@ impl Runtime {
             match create_group(&data_dir, name, members).await {
                 Ok(result) => {
                     let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::CreatedGroup(result)));
+                }
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    fn spawn_group_info(&self, conversation_id: String) {
+        let tx = self.tx.clone();
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            match group_info(&data_dir, &conversation_id).await {
+                Ok(info) => {
+                    let _ = tx.send(AppEvent::GroupInfoLoaded(info));
+                }
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    fn spawn_group_members(&self, conversation_id: String) {
+        let tx = self.tx.clone();
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            match group_members(&data_dir, &conversation_id).await {
+                Ok(response) => {
+                    let _ = tx.send(AppEvent::GroupMembersLoaded(response.items));
+                }
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    fn spawn_add_group_members(&self, conversation_id: String, members: Vec<String>) {
+        let tx = self.tx.clone();
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            match add_group_members(&data_dir, &conversation_id, members).await {
+                Ok(result) => {
+                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::GroupUpdated(
+                        result.conversation_id,
+                    )));
+                }
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    fn spawn_remove_group_members(&self, conversation_id: String, members: Vec<String>) {
+        let tx = self.tx.clone();
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            match remove_group_members(&data_dir, &conversation_id, members).await {
+                Ok(result) => {
+                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::GroupUpdated(
+                        result.conversation_id,
+                    )));
+                }
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    fn spawn_rename_group(&self, conversation_id: String, name: String) {
+        let tx = self.tx.clone();
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            match rename_group(&data_dir, &conversation_id, &name).await {
+                Ok(result) => {
+                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::GroupUpdated(
+                        result.conversation_id,
+                    )));
                 }
                 Err(err) => {
                     let _ = tx.send(AppEvent::Error(err.to_string()));
@@ -243,6 +342,14 @@ async fn ensure_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
 
 async fn conversation_info(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<ConversationInfoResponse> {
     http_get(data_dir, &format!("/v1/conversations/{conversation_id}")).await
+}
+
+async fn group_info(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<GroupInfoResponse> {
+    http_get(data_dir, &format!("/v1/groups/{conversation_id}")).await
+}
+
+async fn group_members(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<GroupMembersResponse> {
+    http_get(data_dir, &format!("/v1/groups/{conversation_id}/members")).await
 }
 
 async fn load_history(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<Vec<xmtp_ipc::HistoryItem>> {
@@ -371,6 +478,43 @@ async fn create_group(data_dir: &PathBuf, name: Option<String>, members: Vec<Str
     http_post(data_dir, "/v1/groups", &GroupCreateRequest { name, members }).await
 }
 
+async fn add_group_members(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+    members: Vec<String>,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/members"),
+        &GroupMembersUpdateRequest { members },
+    )
+    .await
+}
+
+async fn remove_group_members(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+    members: Vec<String>,
+) -> anyhow::Result<ActionResponse> {
+    http_delete(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/members"),
+        &GroupMembersUpdateRequest { members },
+    )
+    .await
+}
+
+async fn rename_group(data_dir: &PathBuf, conversation_id: &str, name: &str) -> anyhow::Result<ActionResponse> {
+    http_patch(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}"),
+        &RenameGroupRequest {
+            name: name.to_owned(),
+        },
+    )
+    .await
+}
+
 async fn reply(data_dir: &PathBuf, message_id: &str, message: &str) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
@@ -422,6 +566,48 @@ where
     let base_url = daemon_base_url(data_dir)?;
     client
         .post(format!("{base_url}{path}"))
+        .json(body)
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?
+        .json()
+        .await
+        .context("decode daemon http response")
+}
+
+async fn http_patch<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+    B: serde::Serialize + ?Sized,
+{
+    ensure_daemon(data_dir).await?;
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .patch(format!("{base_url}{path}"))
+        .json(body)
+        .send()
+        .await
+        .context("send daemon http request")?
+        .error_for_status()
+        .context("daemon http status")?
+        .json()
+        .await
+        .context("decode daemon http response")
+}
+
+async fn http_delete<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+    B: serde::Serialize + ?Sized,
+{
+    ensure_daemon(data_dir).await?;
+    let client = reqwest::Client::new();
+    let base_url = daemon_base_url(data_dir)?;
+    client
+        .delete(format!("{base_url}{path}"))
         .json(body)
         .send()
         .await

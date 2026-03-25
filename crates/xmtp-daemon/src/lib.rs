@@ -521,7 +521,12 @@ fn group_info_with_client(client: &Client, conversation_id: &str) -> anyhow::Res
         conversation_id: conversation.id(),
         name: conversation.name(),
         description: conversation.description(),
-        creator_inbox_id: String::new(),
+        creator_inbox_id: members
+            .iter()
+            .find(|member| format!("{:?}", member.permission_level).eq_ignore_ascii_case("superadmin"))
+            .map(|member| member.inbox_id.clone())
+            .or_else(|| members.first().map(|member| member.inbox_id.clone()))
+            .unwrap_or_default(),
         conversation_type: conversation
             .conversation_type()
             .map(|kind| format!("{kind:?}").to_lowercase())
@@ -1840,8 +1845,16 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
         .route("/v1/direct-message/open", post(open_dm_handler))
         .route("/v1/direct-message/send", post(send_dm_handler))
         .route("/v1/groups", post(create_group_handler))
-        .route("/v1/groups/{conversation_id}", get(group_info_handler))
-        .route("/v1/groups/{conversation_id}/members", get(group_members_handler))
+        .route(
+            "/v1/groups/{conversation_id}",
+            get(group_info_handler).patch(rename_group_handler),
+        )
+        .route(
+            "/v1/groups/{conversation_id}/members",
+            get(group_members_handler)
+                .post(add_group_members_handler)
+                .delete(remove_group_members_handler),
+        )
         .route("/v1/groups/{conversation_id}/rename", post(rename_group_handler))
         .route(
             "/v1/groups/{conversation_id}/members/add",

@@ -1,6 +1,9 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::Color;
-use xmtp_ipc::{ConversationInfoResponse, ConversationItem, HistoryItem, ReactionDetail, StatusResponse};
+use xmtp_ipc::{
+    ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem, HistoryItem,
+    ReactionDetail, StatusResponse,
+};
 
 use crate::event::{ActionOutcome, AppEvent, Effect};
 
@@ -36,6 +39,12 @@ pub enum Modal {
     ReactionPicker,
     CreateDm,
     CreateGroup,
+    GroupManagement,
+    GroupInfo,
+    GroupAddMembers,
+    GroupRemoveMembers,
+    GroupRename,
+    GroupLeaveConfirm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +72,37 @@ pub enum GroupDialogField {
     Members,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupManagementAction {
+    ViewInfo,
+    AddMembers,
+    RemoveMembers,
+    Rename,
+    LeaveGroup,
+}
+
+impl GroupManagementAction {
+    pub fn all() -> [Self; 5] {
+        [
+            Self::ViewInfo,
+            Self::AddMembers,
+            Self::RemoveMembers,
+            Self::Rename,
+            Self::LeaveGroup,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ViewInfo => "view info",
+            Self::AddMembers => "add members",
+            Self::RemoveMembers => "remove members",
+            Self::Rename => "rename",
+            Self::LeaveGroup => "leave group",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CreateDmDialog {
     pub recipient: String,
@@ -73,6 +113,16 @@ pub struct CreateGroupDialog {
     pub name: String,
     pub members: String,
     pub field: Option<GroupDialogField>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GroupManagementState {
+    pub menu_index: usize,
+    pub info: Option<GroupInfoResponse>,
+    pub members: Vec<GroupMemberItem>,
+    pub selected_member: usize,
+    pub add_members_input: String,
+    pub rename_input: String,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +145,7 @@ pub struct App {
     pub reaction_picker_index: usize,
     pub dm_dialog: CreateDmDialog,
     pub group_dialog: CreateGroupDialog,
+    pub group_management: GroupManagementState,
     pub last_error: Option<String>,
     pub exit_armed: bool,
 }
@@ -124,6 +175,7 @@ impl App {
                     field: Some(GroupDialogField::Name),
                     ..Default::default()
                 },
+                group_management: GroupManagementState::default(),
                 last_error: None,
                 exit_armed: false,
             },
@@ -141,6 +193,18 @@ impl App {
             AppEvent::ConversationsLoaded(items) => self.update_conversations(items),
             AppEvent::ConversationInfoLoaded(info) => {
                 self.active_info = Some(info);
+                Vec::new()
+            }
+            AppEvent::GroupInfoLoaded(info) => {
+                self.group_management.info = Some(info);
+                Vec::new()
+            }
+            AppEvent::GroupMembersLoaded(items) => {
+                self.group_management.members = items;
+                self.group_management.selected_member = self
+                    .group_management
+                    .selected_member
+                    .min(self.group_management.members.len().saturating_sub(1));
                 Vec::new()
             }
             AppEvent::HistoryLoaded {
@@ -242,6 +306,20 @@ impl App {
                     },
                 ]
             }
+            ActionOutcome::GroupUpdated(conversation_id) => {
+                self.modal = Modal::None;
+                self.group_management.add_members_input.clear();
+                self.group_management.rename_input.clear();
+                vec![
+                    Effect::SwitchConversation {
+                        conversation_id: conversation_id.clone(),
+                    },
+                    Effect::LoadGroupInfo {
+                        conversation_id: conversation_id.clone(),
+                    },
+                    Effect::LoadGroupMembers { conversation_id },
+                ]
+            }
             ActionOutcome::Sent | ActionOutcome::Reacted => Vec::new(),
         }
     }
@@ -291,12 +369,27 @@ impl App {
             Modal::ReactionPicker => self.handle_reaction_picker_key(key),
             Modal::CreateDm => self.handle_create_dm_key(key),
             Modal::CreateGroup => self.handle_create_group_key(key),
+            Modal::GroupManagement => self.handle_group_management_key(key),
+            Modal::GroupInfo => self.handle_group_info_key(key),
+            Modal::GroupAddMembers => self.handle_group_add_members_key(key),
+            Modal::GroupRemoveMembers => self.handle_group_remove_members_key(key),
+            Modal::GroupRename => self.handle_group_rename_key(key),
+            Modal::GroupLeaveConfirm => self.handle_group_leave_confirm_key(key),
         }
     }
 
     fn handle_escape(&mut self) -> Vec<Effect> {
         match self.modal {
-            Modal::MessageMenu | Modal::ReactionPicker | Modal::CreateDm | Modal::CreateGroup => {
+            Modal::MessageMenu
+            | Modal::ReactionPicker
+            | Modal::CreateDm
+            | Modal::CreateGroup
+            | Modal::GroupManagement
+            | Modal::GroupInfo
+            | Modal::GroupAddMembers
+            | Modal::GroupRemoveMembers
+            | Modal::GroupRename
+            | Modal::GroupLeaveConfirm => {
                 self.modal = Modal::None;
                 self.exit_armed = false;
                 return Vec::new();
@@ -372,6 +465,15 @@ impl App {
                 }
             }
             KeyCode::Enter => {
+                if self
+                    .conversations
+                    .get(self.selected_conversation)
+                    .is_some_and(|conversation| conversation.kind == "group")
+                {
+                    self.modal = Modal::GroupManagement;
+                    self.group_management.menu_index = 0;
+                    return Vec::new();
+                }
                 self.focus = Focus::Input;
             }
             _ => {}
@@ -562,6 +664,169 @@ impl App {
         Vec::new()
     }
 
+    fn handle_group_management_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Up => {
+                if self.group_management.menu_index > 0 {
+                    self.group_management.menu_index -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.group_management.menu_index + 1 < GroupManagementAction::all().len() {
+                    self.group_management.menu_index += 1;
+                }
+            }
+            KeyCode::Enter => {
+                let Some(conversation_id) = self.active_group_id().map(str::to_owned) else {
+                    self.modal = Modal::None;
+                    return Vec::new();
+                };
+                match GroupManagementAction::all()[self.group_management.menu_index] {
+                    GroupManagementAction::ViewInfo => {
+                        self.modal = Modal::GroupInfo;
+                        return vec![Effect::LoadGroupInfo { conversation_id }];
+                    }
+                    GroupManagementAction::AddMembers => {
+                        self.modal = Modal::GroupAddMembers;
+                        self.group_management.add_members_input.clear();
+                    }
+                    GroupManagementAction::RemoveMembers => {
+                        self.modal = Modal::GroupRemoveMembers;
+                        self.group_management.selected_member = 0;
+                        return vec![Effect::LoadGroupMembers { conversation_id }];
+                    }
+                    GroupManagementAction::Rename => {
+                        self.modal = Modal::GroupRename;
+                        self.group_management.rename_input.clear();
+                    }
+                    GroupManagementAction::LeaveGroup => {
+                        self.modal = Modal::GroupLeaveConfirm;
+                    }
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_group_info_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        if matches!(key.code, KeyCode::Enter) {
+            self.modal = Modal::GroupManagement;
+        }
+        Vec::new()
+    }
+
+    fn handle_group_add_members_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Backspace => {
+                self.group_management.add_members_input.pop();
+            }
+            KeyCode::Enter => {
+                let Some(conversation_id) = self.active_group_id().map(str::to_owned) else {
+                    self.modal = Modal::None;
+                    return Vec::new();
+                };
+                let members: Vec<String> = self
+                    .group_management
+                    .add_members_input
+                    .split(|ch: char| ch == ',' || ch.is_whitespace())
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|value| value.trim().to_owned())
+                    .collect();
+                if !members.is_empty() {
+                    return vec![Effect::AddGroupMembers {
+                        conversation_id,
+                        members,
+                    }];
+                }
+            }
+            KeyCode::Char(ch) => {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.group_management.add_members_input.push(ch);
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_group_remove_members_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Up => {
+                if self.group_management.selected_member > 0 {
+                    self.group_management.selected_member -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.group_management.selected_member + 1 < self.group_management.members.len() {
+                    self.group_management.selected_member += 1;
+                }
+            }
+            KeyCode::Enter => {
+                let Some(conversation_id) = self.active_group_id().map(str::to_owned) else {
+                    self.modal = Modal::None;
+                    return Vec::new();
+                };
+                if let Some(member) = self
+                    .group_management
+                    .members
+                    .get(self.group_management.selected_member)
+                {
+                    return vec![Effect::RemoveGroupMembers {
+                        conversation_id,
+                        members: vec![member.inbox_id.clone()],
+                    }];
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_group_rename_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Backspace => {
+                self.group_management.rename_input.pop();
+            }
+            KeyCode::Enter => {
+                let Some(conversation_id) = self.active_group_id().map(str::to_owned) else {
+                    self.modal = Modal::None;
+                    return Vec::new();
+                };
+                let name = self.group_management.rename_input.trim();
+                if !name.is_empty() {
+                    return vec![Effect::RenameGroup {
+                        conversation_id,
+                        name: name.to_owned(),
+                    }];
+                }
+            }
+            KeyCode::Char(ch) => {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.group_management.rename_input.push(ch);
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_group_leave_confirm_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+            self.modal = Modal::None;
+            self.last_error = Some("Leave group is not supported in this version".to_owned());
+            return Vec::new();
+        }
+        Vec::new()
+    }
+
+    fn active_group_id(&self) -> Option<&str> {
+        self.active_conversation
+            .as_ref()
+            .filter(|conversation| conversation.kind == "group")
+            .map(|conversation| conversation.id.as_str())
+    }
+
     fn selected_history_item(&self) -> Option<&HistoryItem> {
         self.messages.get(self.selected_message)
     }
@@ -575,6 +840,9 @@ impl App {
         self.active_conversation = Some(conversation.clone());
         self.active_info = None;
         self.active_history_loading = true;
+        self.group_management.info = None;
+        self.group_management.members.clear();
+        self.group_management.selected_member = 0;
         self.messages.clear();
         self.selected_message = 0;
         vec![Effect::SwitchConversation {
@@ -712,6 +980,11 @@ mod tests {
     fn enter_in_conversations_jumps_to_input() {
         let (mut app, _) = App::new();
         app.focus = Focus::Conversations;
+        app.conversations = vec![xmtp_ipc::ConversationItem {
+            id: "dm-1".into(),
+            kind: "dm".into(),
+            name: None,
+        }];
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
             KeyCode::Enter,
             KeyModifiers::NONE,
@@ -719,6 +992,74 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(app.focus, Focus::Input);
         assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn enter_on_group_conversation_opens_group_management_modal() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Conversations;
+        app.conversations = vec![xmtp_ipc::ConversationItem {
+            id: "grp-1".into(),
+            kind: "group".into(),
+            name: Some("team".into()),
+        }];
+        app.active_conversation = Some(app.conversations[0].clone());
+        app.active_conversation_id = Some("grp-1".into());
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.modal, Modal::GroupManagement);
+        assert_eq!(app.focus, Focus::Conversations);
+    }
+
+    #[test]
+    fn rename_group_modal_starts_with_empty_input() {
+        let (mut app, _) = App::new();
+        app.active_conversation = Some(xmtp_ipc::ConversationItem {
+            id: "grp-1".into(),
+            kind: "group".into(),
+            name: Some("old-name".into()),
+        });
+        app.active_conversation_id = Some("grp-1".into());
+        app.modal = Modal::GroupManagement;
+        app.group_management.menu_index = 3;
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.modal, Modal::GroupRename);
+        assert!(app.group_management.rename_input.is_empty());
+    }
+
+    #[test]
+    fn leave_group_confirm_sets_explicit_unsupported_message() {
+        let (mut app, _) = App::new();
+        app.active_conversation = Some(xmtp_ipc::ConversationItem {
+            id: "grp-1".into(),
+            kind: "group".into(),
+            name: Some("team".into()),
+        });
+        app.active_conversation_id = Some("grp-1".into());
+        app.modal = Modal::GroupLeaveConfirm;
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('y'),
+            KeyModifiers::NONE,
+        ))));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.modal, Modal::None);
+        assert_eq!(
+            app.last_error.as_deref(),
+            Some("Leave group is not supported in this version")
+        );
     }
 
     #[test]

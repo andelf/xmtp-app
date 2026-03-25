@@ -6,7 +6,10 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, prelude::Alignment};
 
-use crate::app::{App, Focus, GroupDialogField, MessageMenuAction, Modal, reaction_choices};
+use crate::app::{
+    App, Focus, GroupDialogField, GroupManagementAction, MessageMenuAction, Modal,
+    reaction_choices,
+};
 use crate::format::{format_clock, format_day_tag, short_display_id};
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
@@ -35,6 +38,12 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Modal::ReactionPicker => render_reaction_picker(frame, app),
         Modal::CreateDm => render_create_dm(frame, app),
         Modal::CreateGroup => render_create_group(frame, app),
+        Modal::GroupManagement => render_group_management(frame, app),
+        Modal::GroupInfo => render_group_info(frame, app),
+        Modal::GroupAddMembers => render_group_add_members(frame, app),
+        Modal::GroupRemoveMembers => render_group_remove_members(frame, app),
+        Modal::GroupRename => render_group_rename(frame, app),
+        Modal::GroupLeaveConfirm => render_group_leave_confirm(frame, app),
     }
 }
 
@@ -286,6 +295,141 @@ fn render_create_group(frame: &mut Frame<'_>, app: &App) {
     ];
     let paragraph = Paragraph::new(text)
         .block(Block::default().title("New Group").borders(Borders::ALL))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_group_management(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_rect(44, 34, frame.area());
+    frame.render_widget(Clear, area);
+    let items: Vec<ListItem<'_>> = GroupManagementAction::all()
+        .into_iter()
+        .map(|action| ListItem::new(action.label()))
+        .collect();
+    let mut state = ListState::default().with_selected(Some(app.group_management.menu_index));
+    let title = app
+        .active_conversation
+        .as_ref()
+        .and_then(|conversation| conversation.name.clone())
+        .unwrap_or_else(|| "Group".to_owned());
+    let list = List::new(items)
+        .block(Block::default().title(title).borders(Borders::ALL))
+        .highlight_style(Style::default().reversed());
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_group_info(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_rect(64, 36, frame.area());
+    frame.render_widget(Clear, area);
+    let text = if let Some(info) = &app.group_management.info {
+        vec![
+            Line::from(format!(
+                "name: {}",
+                info.name.clone().unwrap_or_else(|| "-".to_owned())
+            )),
+            Line::from(format!("members: {}", info.member_count)),
+            Line::from(format!(
+                "creator: {}",
+                if info.creator_inbox_id.is_empty() {
+                    "-".to_owned()
+                } else {
+                    short_display_id(&info.creator_inbox_id)
+                }
+            )),
+            Line::from(format!("type: {}", info.conversation_type)),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "loading...",
+            Style::default().dark_gray(),
+        ))]
+    };
+    let paragraph = Paragraph::new(text)
+        .block(Block::default().title("Group Info").borders(Borders::ALL))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_group_add_members(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_rect(70, 24, frame.area());
+    frame.render_widget(Clear, area);
+    let text = vec![
+        Line::from("Add members"),
+        Line::from("inbox_id list:"),
+        Line::from(app.group_management.add_members_input.clone()),
+        Line::from("members can be separated by comma or space"),
+    ];
+    let paragraph = Paragraph::new(text)
+        .block(Block::default().title("Add Members").borders(Borders::ALL))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_group_remove_members(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_rect(70, 42, frame.area());
+    frame.render_widget(Clear, area);
+    if app.group_management.members.is_empty() {
+        let paragraph = Paragraph::new(Line::from(Span::styled(
+            "loading...",
+            Style::default().dark_gray(),
+        )))
+        .block(Block::default().title("Remove Members").borders(Borders::ALL));
+        frame.render_widget(paragraph, area);
+        return;
+    }
+    let items: Vec<ListItem<'_>> = app
+        .group_management
+        .members
+        .iter()
+        .map(|member| {
+            ListItem::new(format!(
+                "{} [{}]",
+                short_display_id(&member.inbox_id),
+                member.permission_level
+            ))
+        })
+        .collect();
+    let mut state = ListState::default().with_selected(Some(app.group_management.selected_member));
+    let list = List::new(items)
+        .block(Block::default().title("Remove Members").borders(Borders::ALL))
+        .highlight_style(Style::default().reversed());
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_group_rename(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_rect(64, 22, frame.area());
+    frame.render_widget(Clear, area);
+    let current_name = app
+        .active_conversation
+        .as_ref()
+        .and_then(|conversation| conversation.name.clone())
+        .unwrap_or_else(|| "-".to_owned());
+    let text = vec![
+        Line::from(format!("New name (current: {current_name}):")),
+        Line::from(app.group_management.rename_input.clone()),
+    ];
+    let paragraph = Paragraph::new(text)
+        .block(Block::default().title("Rename").borders(Borders::ALL))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_group_leave_confirm(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_rect(54, 18, frame.area());
+    frame.render_widget(Clear, area);
+    let name = app
+        .active_conversation
+        .as_ref()
+        .and_then(|conversation| conversation.name.clone())
+        .unwrap_or_else(|| "group".to_owned());
+    let text = vec![
+        Line::from(format!("Leave {name}?")),
+        Line::from("Leave group is not supported in this version."),
+        Line::from("press y to acknowledge"),
+        Line::from("press Esc to cancel"),
+    ];
+    let paragraph = Paragraph::new(text)
+        .block(Block::default().title("Leave Group").borders(Borders::ALL))
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }

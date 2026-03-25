@@ -23,4 +23,8 @@ xmtp-logging = { path = "../xmtp-logging" }
 xmtp-store = { path = "../xmtp-store" }
 
 [dev-dependencies]
+eventsource-stream.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
 tempfile.workspace = true
+tokio.workspace = true
