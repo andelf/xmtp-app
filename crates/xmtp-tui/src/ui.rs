@@ -126,11 +126,27 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .and_then(|conversation| conversation.name.clone())
             .unwrap_or_else(|| "Messages".to_owned());
         let paragraph = Paragraph::new(Line::from(Span::styled(
-            "loading...",
+            "Loading…",
             Style::default().dark_gray(),
         )))
         .block(titled_block(&title, app.focus == Focus::Messages))
-        .alignment(Alignment::Left);
+        .alignment(Alignment::Center);
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    if app.messages.is_empty() {
+        let title = app
+            .active_conversation
+            .as_ref()
+            .and_then(|conversation| conversation.name.clone())
+            .unwrap_or_else(|| "Messages".to_owned());
+        let paragraph = Paragraph::new(Line::from(Span::styled(
+            "No messages yet",
+            Style::default().dark_gray(),
+        )))
+        .block(titled_block(&title, app.focus == Focus::Messages))
+        .alignment(Alignment::Center);
         frame.render_widget(paragraph, area);
         return;
     }
