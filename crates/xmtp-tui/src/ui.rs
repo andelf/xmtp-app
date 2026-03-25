@@ -1,5 +1,5 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
@@ -66,8 +66,29 @@ fn render_conversations(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| short_display_id(&conversation.id));
             let kind = if conversation.kind == "group" { "grp" } else { "dm" };
-            let text = format!("{} {} ({})", marker, truncate(&label, 22), kind);
-            ListItem::new(Line::from(Span::styled(text, Style::default())))
+            let unread = app
+                .unread_counts
+                .get(&conversation.id)
+                .copied()
+                .unwrap_or_default();
+            let unread_suffix = if unread > 0 {
+                format!(" [{}]", unread)
+            } else {
+                String::new()
+            };
+            let text = format!(
+                "{} {} ({}){}",
+                marker,
+                truncate(&label, 18),
+                kind,
+                unread_suffix
+            );
+            let style = if unread > 0 {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            ListItem::new(Line::from(Span::styled(text, style)))
         })
         .collect();
     let block = titled_block("Conversations", app.focus == Focus::Conversations);
@@ -537,4 +558,51 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    use crate::app::{App, Focus};
+
+    use super::render;
+
+    #[test]
+    fn conversations_panel_shows_unread_badge() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Conversations;
+        app.conversations = vec![
+            xmtp_ipc::ConversationItem {
+                id: "group-1".into(),
+                kind: "group".into(),
+                name: Some("Andelf".into()),
+            },
+            xmtp_ipc::ConversationItem {
+                id: "dm-1".into(),
+                kind: "dm".into(),
+                name: None,
+            },
+        ];
+        app.active_conversation_id = Some("group-1".into());
+        app.active_conversation = Some(app.conversations[0].clone());
+        app.unread_counts.insert("dm-1".into(), 3);
+
+        let backend = TestBackend::new(140, 40);
+        let mut terminal = Terminal::new(backend).expect("create test terminal");
+        terminal.draw(|frame| render(frame, &app)).expect("render frame");
+
+        let backend = terminal.backend();
+        let mut rendered = String::new();
+        for y in 0..40 {
+            for x in 0..32 {
+                rendered.push_str(backend.buffer()[(x, y)].symbol());
+            }
+            rendered.push('\n');
+        }
+
+        assert!(rendered.contains("(dm) [3]"), "rendered output:\n{rendered}");
+        println!("{rendered}");
+    }
 }

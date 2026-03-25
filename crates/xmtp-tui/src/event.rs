@@ -38,6 +38,7 @@ pub enum ActionOutcome {
 #[derive(Debug, Clone)]
 pub enum Effect {
     SubscribeAppEvents,
+    SyncHistorySubscriptions { conversation_ids: Vec<String> },
     SwitchConversation { conversation_id: String },
     OpenDm { recipient: String },
     CreateGroup { name: Option<String>, members: Vec<String> },

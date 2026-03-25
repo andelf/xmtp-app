@@ -1,5 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::Color;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use xmtp_ipc::{
     ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem, HistoryItem,
@@ -137,6 +138,7 @@ pub struct App {
     pub selected_conversation: usize,
     pub active_conversation_id: Option<String>,
     pub active_conversation: Option<ConversationItem>,
+    pub unread_counts: HashMap<String, u32>,
     pub active_info: Option<ConversationInfoResponse>,
     pub active_history_loading: bool,
     pub messages: Vec<HistoryItem>,
@@ -165,6 +167,7 @@ impl App {
                 selected_conversation: 0,
                 active_conversation_id: None,
                 active_conversation: None,
+                unread_counts: HashMap::new(),
                 active_info: None,
                 active_history_loading: false,
                 messages: Vec::new(),
@@ -256,6 +259,8 @@ impl App {
                     } else {
                         self.selected_message = self.selected_message.min(self.messages.len().saturating_sub(1));
                     }
+                } else {
+                    *self.unread_counts.entry(conversation_id).or_insert(0) += 1;
                 }
                 Vec::new()
             }
@@ -274,6 +279,8 @@ impl App {
 
     fn update_conversations(&mut self, items: Vec<ConversationItem>) -> Vec<Effect> {
         self.conversations = items;
+        self.unread_counts
+            .retain(|conversation_id, _| self.conversations.iter().any(|conversation| &conversation.id == conversation_id));
         if self.conversations.is_empty() {
             self.selected_conversation = 0;
             self.active_conversation = None;
@@ -281,9 +288,16 @@ impl App {
             self.active_info = None;
             self.active_history_loading = false;
             self.messages.clear();
-            return Vec::new();
+            return vec![Effect::SyncHistorySubscriptions {
+                conversation_ids: Vec::new(),
+            }];
         }
 
+        let conversation_ids = self
+            .conversations
+            .iter()
+            .map(|conversation| conversation.id.clone())
+            .collect::<Vec<_>>();
         let current_active = self.active_conversation_id.clone();
         if let Some(active_id) = current_active {
             if let Some(index) = self
@@ -293,13 +307,15 @@ impl App {
             {
                 self.selected_conversation = index;
                 self.active_conversation = Some(self.conversations[index].clone());
-                return Vec::new();
+                return vec![Effect::SyncHistorySubscriptions { conversation_ids }];
             }
         }
 
         self.selected_conversation = self.selected_conversation.min(self.conversations.len() - 1);
         let conversation = self.conversations[self.selected_conversation].clone();
-        self.activate_conversation(conversation)
+        let mut effects = vec![Effect::SyncHistorySubscriptions { conversation_ids }];
+        effects.extend(self.activate_conversation(conversation));
+        effects
     }
 
     fn handle_action_completed(&mut self, outcome: ActionOutcome) -> Vec<Effect> {
@@ -906,6 +922,7 @@ impl App {
     }
 
     fn activate_conversation(&mut self, conversation: ConversationItem) -> Vec<Effect> {
+        self.unread_counts.remove(&conversation.id);
         self.active_conversation_id = Some(conversation.id.clone());
         self.active_conversation = Some(conversation.clone());
         self.active_info = None;
@@ -1232,6 +1249,59 @@ mod tests {
         let (_, effects) = App::new();
         assert_eq!(effects.len(), 1);
         assert!(matches!(effects[0], Effect::SubscribeAppEvents));
+    }
+
+    #[test]
+    fn unread_count_increments_for_inactive_conversation_and_clears_on_switch() {
+        let (mut app, _) = App::new();
+        app.conversations = vec![
+            xmtp_ipc::ConversationItem {
+                id: "conv-1".into(),
+                kind: "dm".into(),
+                name: Some("one".into()),
+            },
+            xmtp_ipc::ConversationItem {
+                id: "conv-2".into(),
+                kind: "group".into(),
+                name: Some("two".into()),
+            },
+        ];
+        app.active_conversation_id = Some("conv-1".into());
+        app.active_conversation = Some(app.conversations[0].clone());
+
+        let effects = app.handle_event(crate::event::AppEvent::HistoryEvent {
+            conversation_id: "conv-2".into(),
+            item: xmtp_ipc::HistoryItem {
+                message_id: "msg-3".into(),
+                sender_inbox_id: "sender-1".into(),
+                sent_at_ns: 3,
+                content_kind: "text".into(),
+                content: "third".into(),
+                reply_count: 0,
+                reaction_count: 0,
+                reply_target_message_id: None,
+                reaction_target_message_id: None,
+                reaction_emoji: None,
+                reaction_action: None,
+                attached_reactions: Vec::new(),
+            },
+        });
+
+        assert!(effects.is_empty());
+        assert_eq!(app.unread_counts.get("conv-2"), Some(&1));
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Down,
+            KeyModifiers::NONE,
+        ))));
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::SwitchConversation { conversation_id }]
+                if conversation_id == "conv-2"
+        ));
+        assert_eq!(app.active_conversation_id.as_deref(), Some("conv-2"));
+        assert_eq!(app.unread_counts.get("conv-2"), None);
     }
 
     #[test]
