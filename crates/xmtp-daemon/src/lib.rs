@@ -1284,6 +1284,19 @@ fn publish_snapshot_events(state: &HttpState, status: bool, conversations: bool)
     }
 }
 
+fn publish_conversation_snapshot_now(state: &HttpState) {
+    let payload = {
+        let mut guard = state.app.lock().expect("lock daemon app");
+        guard
+            .conversation_list()
+            .ok()
+            .map(DaemonEventData::ConversationList)
+    };
+    if let Some(payload) = payload {
+        send_event(&state.events_tx, payload);
+    }
+}
+
 async fn run_app<T>(
     state: &HttpState,
     request_summary: String,
@@ -1422,11 +1435,12 @@ async fn open_dm_handler(
         &state,
         format!("open dm recipient={}", request.recipient),
         false,
-        true,
+        false,
         move |app| app.open_dm(request.recipient),
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
 
@@ -1438,11 +1452,12 @@ async fn send_dm_handler(
         &state,
         format!("send dm recipient={}", request.recipient),
         false,
-        true,
+        false,
         move |app| app.send_dm(request.recipient, request.message),
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
 
@@ -1454,11 +1469,12 @@ async fn create_group_handler(
         &state,
         format!("create group name={:?}", request.name),
         false,
-        true,
+        false,
         move |app| app.create_group(request.name, request.members),
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
 
@@ -1471,11 +1487,12 @@ async fn send_group_handler(
         &state,
         format!("send group id={conversation_id}"),
         false,
-        true,
+        false,
         move |app| app.send_group(conversation_id, request.message),
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
 
@@ -1571,11 +1588,12 @@ async fn rename_group_handler(
         &state,
         format!("rename group id={conversation_id}"),
         false,
-        true,
+        false,
         move |app| app.rename_group(conversation_id, request.name),
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
 
@@ -1588,11 +1606,12 @@ async fn add_group_members_handler(
         &state,
         format!("add group members id={conversation_id}"),
         false,
-        true,
+        false,
         move |app| app.add_group_members(conversation_id, request.members),
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
 
@@ -1605,11 +1624,12 @@ async fn remove_group_members_handler(
         &state,
         format!("remove group members id={conversation_id}"),
         false,
-        true,
+        false,
         move |app| app.remove_group_members(conversation_id, request.members),
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
 

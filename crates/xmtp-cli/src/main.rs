@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
+use std::sync::OnceLock;
 use std::os::unix::process::CommandExt;
 use std::time::Duration;
 
@@ -24,6 +25,12 @@ use xmtp_logging::{
     daemon_events_log_path, daemon_stderr_log_path, daemon_stdout_log_path, ensure_logs_dir,
 };
 use xmtp_store::{load_state, save_state};
+
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "xmtp-cli")]
@@ -686,9 +693,8 @@ async fn watch(data_dir: PathBuf, command: WatchCommand) -> anyhow::Result<()> {
 
 async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
     wait_for_daemon_ready(&data_dir, 4_000).await?;
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(&data_dir)?;
-    let response = client
+    let response = http_client()
         .get(format!("{base_url}/v1/events"))
         .send()
         .await
@@ -938,9 +944,8 @@ async fn http_get<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .get(format!("{base_url}{path}"))
         .send()
         .await
@@ -957,9 +962,8 @@ where
     T: serde::de::DeserializeOwned,
     Q: serde::Serialize + ?Sized,
 {
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .get(format!("{base_url}{path}"))
         .query(query)
         .send()
@@ -980,9 +984,8 @@ where
     if !addr_path(data_dir).exists() {
         daemon_start(data_dir.clone()).await?;
     }
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .post(format!("{base_url}{path}"))
         .json(body)
         .send()
@@ -1003,9 +1006,8 @@ where
     if !addr_path(data_dir).exists() {
         daemon_start(data_dir.clone()).await?;
     }
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .patch(format!("{base_url}{path}"))
         .json(body)
         .send()
@@ -1026,9 +1028,8 @@ where
     if !addr_path(data_dir).exists() {
         daemon_start(data_dir.clone()).await?;
     }
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .delete(format!("{base_url}{path}"))
         .json(body)
         .send()
@@ -1042,9 +1043,8 @@ where
 }
 
 async fn http_post_empty(data_dir: &PathBuf, path: &str) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .post(format!("{base_url}{path}"))
         .send()
         .await

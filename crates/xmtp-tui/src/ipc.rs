@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -15,6 +16,12 @@ use xmtp_ipc::{
 };
 
 use crate::event::{ActionOutcome, AppEvent, Effect};
+
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
 
 #[derive(Debug)]
 pub struct Runtime {
@@ -363,22 +370,56 @@ async fn watch_history(
     conversation_id: &str,
     tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 ) -> anyhow::Result<()> {
+    let mut retry_delay = Duration::from_millis(100);
     loop {
-        ensure_daemon(data_dir).await?;
-        let client = reqwest::Client::new();
-        let base_url = daemon_base_url(data_dir)?;
-        let response = client
+        if let Err(err) = ensure_daemon(data_dir).await {
+            let _ = tx.send(AppEvent::Error(err.to_string()));
+            tokio::time::sleep(retry_delay).await;
+            retry_delay = next_retry_delay(retry_delay);
+            continue;
+        }
+        let base_url = match daemon_base_url(data_dir) {
+            Ok(base_url) => base_url,
+            Err(err) => {
+                let _ = tx.send(AppEvent::Error(err.to_string()));
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = next_retry_delay(retry_delay);
+                continue;
+            }
+        };
+        let response = match http_client()
             .get(format!("{base_url}/v1/events/history/{conversation_id}"))
             .send()
             .await
-            .context("open history sse stream")?
-            .error_for_status()
-            .context("history sse status")?;
+            .context("open history sse stream")
+            .and_then(|response| response.error_for_status().context("history sse status"))
+        {
+            Ok(response) => response,
+            Err(err) => {
+                let _ = tx.send(AppEvent::Error(err.to_string()));
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = next_retry_delay(retry_delay);
+                continue;
+            }
+        };
+        retry_delay = Duration::from_millis(100);
         let mut stream = response.bytes_stream().eventsource();
         while let Some(event) = stream.next().await {
-            let event = event.context("read history sse event")?;
+            let event = match event.context("read history sse event") {
+                Ok(event) => event,
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                    break;
+                }
+            };
             let envelope: DaemonEventEnvelope =
-                serde_json::from_str(&event.data).context("decode history event envelope")?;
+                match serde_json::from_str(&event.data).context("decode history event envelope") {
+                    Ok(envelope) => envelope,
+                    Err(err) => {
+                        let _ = tx.send(AppEvent::Error(err.to_string()));
+                        break;
+                    }
+                };
             match envelope.payload {
                 DaemonEventData::HistoryItem { conversation_id, item } => {
                     let _ = tx.send(AppEvent::HistoryEvent {
@@ -392,7 +433,8 @@ async fn watch_history(
                 DaemonEventData::Status(_) | DaemonEventData::ConversationList(_) => {}
             }
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(retry_delay).await;
+        retry_delay = next_retry_delay(retry_delay);
     }
 }
 
@@ -416,22 +458,56 @@ async fn watch_app_events(
     data_dir: &PathBuf,
     tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 ) -> anyhow::Result<()> {
+    let mut retry_delay = Duration::from_millis(100);
     loop {
-        ensure_daemon(data_dir).await?;
-        let client = reqwest::Client::new();
-        let base_url = daemon_base_url(data_dir)?;
-        let response = client
+        if let Err(err) = ensure_daemon(data_dir).await {
+            let _ = tx.send(AppEvent::Error(err.to_string()));
+            tokio::time::sleep(retry_delay).await;
+            retry_delay = next_retry_delay(retry_delay);
+            continue;
+        }
+        let base_url = match daemon_base_url(data_dir) {
+            Ok(base_url) => base_url,
+            Err(err) => {
+                let _ = tx.send(AppEvent::Error(err.to_string()));
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = next_retry_delay(retry_delay);
+                continue;
+            }
+        };
+        let response = match http_client()
             .get(format!("{base_url}/v1/events"))
             .send()
             .await
-            .context("open app event stream")?
-            .error_for_status()
-            .context("app event stream status")?;
+            .context("open app event stream")
+            .and_then(|response| response.error_for_status().context("app event stream status"))
+        {
+            Ok(response) => response,
+            Err(err) => {
+                let _ = tx.send(AppEvent::Error(err.to_string()));
+                tokio::time::sleep(retry_delay).await;
+                retry_delay = next_retry_delay(retry_delay);
+                continue;
+            }
+        };
+        retry_delay = Duration::from_millis(100);
         let mut stream = response.bytes_stream().eventsource();
         while let Some(event) = stream.next().await {
-            let event = event.context("read app event")?;
+            let event = match event.context("read app event") {
+                Ok(event) => event,
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                    break;
+                }
+            };
             let envelope: DaemonEventEnvelope =
-                serde_json::from_str(&event.data).context("decode app event envelope")?;
+                match serde_json::from_str(&event.data).context("decode app event envelope") {
+                    Ok(envelope) => envelope,
+                    Err(err) => {
+                        let _ = tx.send(AppEvent::Error(err.to_string()));
+                        break;
+                    }
+                };
             match envelope.payload {
                 DaemonEventData::Status(status) => {
                     let _ = tx.send(AppEvent::StatusLoaded(status));
@@ -447,7 +523,8 @@ async fn watch_app_events(
                 DaemonEventData::HistoryItem { .. } => {}
             }
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(retry_delay).await;
+        retry_delay = next_retry_delay(retry_delay);
     }
 }
 
@@ -542,9 +619,8 @@ where
     T: serde::de::DeserializeOwned,
 {
     ensure_daemon(data_dir).await?;
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .get(format!("{base_url}{path}"))
         .send()
         .await
@@ -562,9 +638,8 @@ where
     B: serde::Serialize + ?Sized,
 {
     ensure_daemon(data_dir).await?;
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .post(format!("{base_url}{path}"))
         .json(body)
         .send()
@@ -583,9 +658,8 @@ where
     B: serde::Serialize + ?Sized,
 {
     ensure_daemon(data_dir).await?;
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .patch(format!("{base_url}{path}"))
         .json(body)
         .send()
@@ -604,9 +678,8 @@ where
     B: serde::Serialize + ?Sized,
 {
     ensure_daemon(data_dir).await?;
-    let client = reqwest::Client::new();
     let base_url = daemon_base_url(data_dir)?;
-    client
+    http_client()
         .delete(format!("{base_url}{path}"))
         .json(body)
         .send()
@@ -617,4 +690,9 @@ where
         .json()
         .await
         .context("decode daemon http response")
+}
+
+fn next_retry_delay(current: Duration) -> Duration {
+    let next_ms = (current.as_millis() as u64).saturating_mul(2).min(5_000);
+    Duration::from_millis(next_ms.max(100))
 }
