@@ -1251,11 +1251,20 @@ fn conversation_list_header() -> String {
 }
 
 fn render_conversation_row(conversation: &ConversationItem) -> String {
+    let display_name = if conversation.kind == "dm" {
+        conversation
+            .dm_peer_inbox_id
+            .as_deref()
+            .map(short_id)
+            .unwrap_or_else(|| short_id(&conversation.id))
+    } else {
+        conversation.name.clone().unwrap_or_default()
+    };
     format!(
         "{:<20} {:<12} {}",
         short_id(&conversation.id),
         conversation.kind,
-        conversation.name.clone().unwrap_or_default()
+        display_name
     )
 }
 
@@ -1850,12 +1859,13 @@ mod tests {
             id: "1234567890abcdefghijklmnopqrstuvwxyz".to_owned(),
             kind: "dm".to_owned(),
             name: Some("primary".to_owned()),
+            dm_peer_inbox_id: Some("abcd1234efgh5678ijkl9012mnop3456qrst7890uvwx".to_owned()),
             last_message_ns: None,
         });
 
         assert_eq!(
             rendered,
-            format!("{:<20} {:<12} {}", "1234....wxyz", "dm", "primary")
+            format!("{:<20} {:<12} {}", "1234....wxyz", "dm", "abcd....uvwx")
         );
     }
 

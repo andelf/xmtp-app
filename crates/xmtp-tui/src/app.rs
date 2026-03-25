@@ -1032,8 +1032,8 @@ mod tests {
     fn conversation_navigation_switches_immediately() {
         let (mut app, _) = App::new();
         app.conversations = vec![
-            xmtp_ipc::ConversationItem { id: "one".into(), kind: "dm".into(), name: None, last_message_ns: None },
-            xmtp_ipc::ConversationItem { id: "two".into(), kind: "group".into(), name: None, last_message_ns: None },
+            xmtp_ipc::ConversationItem { id: "one".into(), kind: "dm".into(), name: None, dm_peer_inbox_id: None, last_message_ns: None },
+            xmtp_ipc::ConversationItem { id: "two".into(), kind: "group".into(), name: None, dm_peer_inbox_id: None, last_message_ns: None },
         ];
         app.messages.push(xmtp_ipc::HistoryItem {
             message_id: "old-msg".into(),
@@ -1106,6 +1106,7 @@ mod tests {
             id: "dm-1".into(),
             kind: "dm".into(),
             name: None,
+            dm_peer_inbox_id: None,
             last_message_ns: None,
         }];
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
@@ -1125,6 +1126,7 @@ mod tests {
             id: "grp-1".into(),
             kind: "group".into(),
             name: Some("team".into()),
+            dm_peer_inbox_id: None,
             last_message_ns: None,
         }];
         app.active_conversation = Some(app.conversations[0].clone());
@@ -1147,6 +1149,7 @@ mod tests {
             id: "grp-1".into(),
             kind: "group".into(),
             name: Some("old-name".into()),
+            dm_peer_inbox_id: None,
             last_message_ns: None,
         });
         app.active_conversation_id = Some("grp-1".into());
@@ -1170,6 +1173,7 @@ mod tests {
             id: "grp-1".into(),
             kind: "group".into(),
             name: Some("team".into()),
+            dm_peer_inbox_id: None,
             last_message_ns: None,
         });
         app.active_conversation_id = Some("grp-1".into());
@@ -1273,12 +1277,14 @@ mod tests {
                 id: "conv-1".into(),
                 kind: "dm".into(),
                 name: Some("one".into()),
+                dm_peer_inbox_id: Some("peer-1".into()),
                 last_message_ns: Some(10),
             },
             xmtp_ipc::ConversationItem {
                 id: "conv-2".into(),
                 kind: "group".into(),
                 name: Some("two".into()),
+                dm_peer_inbox_id: None,
                 last_message_ns: Some(20),
             },
         ];
@@ -1290,12 +1296,14 @@ mod tests {
                 id: "conv-1".into(),
                 kind: "dm".into(),
                 name: Some("one".into()),
+                dm_peer_inbox_id: Some("peer-1".into()),
                 last_message_ns: Some(10),
             },
             xmtp_ipc::ConversationItem {
                 id: "conv-2".into(),
                 kind: "group".into(),
                 name: Some("two".into()),
+                dm_peer_inbox_id: None,
                 last_message_ns: Some(30),
             },
         ]));
@@ -1440,6 +1448,7 @@ mod tests {
             id: "group-1".into(),
             kind: "group".into(),
             name: Some("old-name".into()),
+            dm_peer_inbox_id: None,
             last_message_ns: None,
         }];
         app.active_conversation = Some(app.conversations[0].clone());
@@ -1468,6 +1477,7 @@ mod tests {
             id: "group-1".into(),
             kind: "group".into(),
             name: Some("group".into()),
+            dm_peer_inbox_id: None,
             last_message_ns: None,
         });
         app.active_conversation_id = Some("group-1".into());

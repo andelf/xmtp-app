@@ -60,12 +60,20 @@ fn render_conversations(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .map(|conversation| {
             let active = app.active_conversation_id.as_deref() == Some(conversation.id.as_str());
             let marker = if active { "●" } else { " " };
-            let label = conversation
-                .name
-                .clone()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| short_display_id(&conversation.id));
             let kind = if conversation.kind == "group" { "grp" } else { "dm" };
+            let label = if conversation.kind == "dm" {
+                conversation
+                    .dm_peer_inbox_id
+                    .as_deref()
+                    .map(short_display_id)
+                    .unwrap_or_else(|| short_display_id(&conversation.id))
+            } else {
+                conversation
+                    .name
+                    .clone()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| short_display_id(&conversation.id))
+            };
             let unread = app
                 .unread_counts
                 .get(&conversation.id)
@@ -578,12 +586,14 @@ mod tests {
                 id: "group-1".into(),
                 kind: "group".into(),
                 name: Some("Andelf".into()),
+                dm_peer_inbox_id: None,
                 last_message_ns: None,
             },
             xmtp_ipc::ConversationItem {
                 id: "dm-1".into(),
                 kind: "dm".into(),
                 name: None,
+                dm_peer_inbox_id: Some("461584b40048389e051f95c9f515d6ac39e1802abcdd0b3a9c62c178d329ac00".into()),
                 last_message_ns: None,
             },
         ];
@@ -604,6 +614,7 @@ mod tests {
             rendered.push('\n');
         }
 
+        assert!(rendered.contains("4615....ac00"), "rendered output:\n{rendered}");
         assert!(rendered.contains("(dm) [3]"), "rendered output:\n{rendered}");
         println!("{rendered}");
     }

@@ -171,6 +171,7 @@ pub struct ConversationSummary {
     pub id: String,
     pub kind: String,
     pub name: Option<String>,
+    pub dm_peer_inbox_id: Option<String>,
     pub last_message_ns: Option<i64>,
 }
 
@@ -391,6 +392,7 @@ fn list_conversations_with_client(
             id: conversation.id(),
             kind,
             name: conversation.name(),
+            dm_peer_inbox_id: conversation.dm_peer_inbox_id(),
             last_message_ns: conversation
                 .last_message()
                 .ok()
@@ -1092,6 +1094,7 @@ impl DaemonApp {
                 id: item.id,
                 kind: item.kind,
                 name: item.name,
+                dm_peer_inbox_id: item.dm_peer_inbox_id,
                 last_message_ns: item.last_message_ns,
             })
             .collect();
@@ -1156,6 +1159,7 @@ impl DaemonApp {
                 id: item.id,
                 kind: item.kind,
                 name: item.name,
+                dm_peer_inbox_id: item.dm_peer_inbox_id,
                 last_message_ns: item.last_message_ns,
             })
             .collect();

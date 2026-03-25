@@ -317,12 +317,13 @@ async fn create_group_and_send_message_over_http() -> anyhow::Result<()> {
 }
 
 fn is_rate_limited(err: &anyhow::Error) -> bool {
-    err.to_string().to_ascii_lowercase().contains("rate_limit")
-        || err
-            .to_string()
-            .to_ascii_lowercase()
-            .contains("rate limit")
-        || format!("{err:#}")
-            .to_ascii_lowercase()
-            .contains("resource has been exhausted")
+    let message = err.to_string().to_ascii_lowercase();
+    let detailed = format!("{err:#}").to_ascii_lowercase();
+    message.contains("rate_limit")
+        || message.contains("rate limit")
+        || detailed.contains("resource has been exhausted")
+        || message.contains("service is currently unavailable")
+        || detailed.contains("service is currently unavailable")
+        || message.contains("tls handshake eof")
+        || detailed.contains("tls handshake eof")
 }

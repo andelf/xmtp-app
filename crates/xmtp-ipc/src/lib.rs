@@ -19,6 +19,7 @@ pub struct ConversationItem {
     pub id: String,
     pub kind: String,
     pub name: Option<String>,
+    pub dm_peer_inbox_id: Option<String>,
     pub last_message_ns: Option<i64>,
 }
 
