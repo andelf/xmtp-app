@@ -1,0 +1,29 @@
+[package]
+name = "xmtp-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+xmtp-config = { path = "../xmtp-config" }
+xmtp-core = { path = "../xmtp-core" }
+xmtp-daemon = { path = "../xmtp-daemon" }
+xmtp-ipc = { path = "../xmtp-ipc" }
+xmtp-logging = { path = "../xmtp-logging" }
+xmtp-store = { path = "../xmtp-store" }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates = "3.1"
+tempfile.workspace = true
+
+[[bin]]
+name = "xmtp-cli"
+path = "src/main.rs"

@@ -1,0 +1,15 @@
+[package]
+name = "xmtp-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+xmtp-core = { path = "../xmtp-core" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
