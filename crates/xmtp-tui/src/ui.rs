@@ -34,6 +34,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
 
     match app.modal {
         Modal::None => {}
+        Modal::Help => render_help(frame),
         Modal::MessageMenu => render_message_menu(frame, app),
         Modal::ReactionPicker => render_reaction_picker(frame, app),
         Modal::CreateDm => render_create_dm(frame, app),
@@ -249,6 +250,29 @@ fn render_message_menu(frame: &mut Frame<'_>, app: &App) {
         )
         .highlight_style(Style::default().reversed());
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_help(frame: &mut Frame<'_>) {
+    let area = centered_rect(64, 44, frame.area());
+    frame.render_widget(Clear, area);
+    let text = vec![
+        Line::from("Keyboard Help"),
+        Line::from(""),
+        Line::from("Tab            switch panel"),
+        Line::from("Up/Down        navigate"),
+        Line::from("Enter          select / send"),
+        Line::from("Alt+Enter      newline"),
+        Line::from("Ctrl+N         create direct-message"),
+        Line::from("g              create group"),
+        Line::from("q / Esc Esc    quit"),
+        Line::from("?              show help"),
+        Line::from(""),
+        Line::from("Esc closes this help"),
+    ];
+    let paragraph = Paragraph::new(text)
+        .block(Block::default().title("Help").borders(Borders::ALL))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
 }
 
 fn render_reaction_picker(frame: &mut Frame<'_>, app: &App) {

@@ -1,5 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::Color;
+use std::time::{Duration, Instant};
 use xmtp_ipc::{
     ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem, HistoryItem,
     ReactionDetail, StatusResponse,
@@ -35,6 +36,7 @@ impl Focus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modal {
     None,
+    Help,
     MessageMenu,
     ReactionPicker,
     CreateDm,
@@ -147,6 +149,7 @@ pub struct App {
     pub group_dialog: CreateGroupDialog,
     pub group_management: GroupManagementState,
     pub last_error: Option<String>,
+    pub suppressed_error: Option<(String, Instant)>,
     pub exit_armed: bool,
 }
 
@@ -177,6 +180,7 @@ impl App {
                 },
                 group_management: GroupManagementState::default(),
                 last_error: None,
+                suppressed_error: None,
                 exit_armed: false,
             },
             vec![Effect::SubscribeAppEvents],
@@ -257,6 +261,11 @@ impl App {
             }
             AppEvent::ActionCompleted(outcome) => self.handle_action_completed(outcome),
             AppEvent::Error(error) => {
+                if let Some((suppressed, until)) = &self.suppressed_error {
+                    if suppressed == &error && Instant::now() < *until {
+                        return Vec::new();
+                    }
+                }
                 self.last_error = Some(error);
                 Vec::new()
             }
@@ -379,10 +388,18 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        if let Some(error) = self.last_error.take() {
+            self.suppressed_error = Some((error, Instant::now() + Duration::from_secs(2)));
+        }
         if key.code == KeyCode::Esc {
             return self.handle_escape();
         }
         self.exit_armed = false;
+
+        if self.modal == Modal::None && matches!(key.code, KeyCode::Char('?') | KeyCode::Char('/')) {
+            self.modal = Modal::Help;
+            return Vec::new();
+        }
 
         if key.code == KeyCode::Tab {
             if self.modal == Modal::None {
@@ -409,6 +426,7 @@ impl App {
 
         match self.modal {
             Modal::None => self.handle_key_without_modal(key),
+            Modal::Help => self.handle_help_key(key),
             Modal::MessageMenu => self.handle_message_menu_key(key),
             Modal::ReactionPicker => self.handle_reaction_picker_key(key),
             Modal::CreateDm => self.handle_create_dm_key(key),
@@ -424,7 +442,8 @@ impl App {
 
     fn handle_escape(&mut self) -> Vec<Effect> {
         match self.modal {
-            Modal::MessageMenu
+            Modal::Help
+            | Modal::MessageMenu
             | Modal::ReactionPicker
             | Modal::CreateDm
             | Modal::CreateGroup
@@ -521,6 +540,13 @@ impl App {
                 self.focus = Focus::Input;
             }
             _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_help_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        if matches!(key.code, KeyCode::Enter | KeyCode::Char('?')) {
+            self.modal = Modal::None;
         }
         Vec::new()
     }
@@ -1018,6 +1044,31 @@ mod tests {
         ))));
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::CreateDm);
+    }
+
+    #[test]
+    fn question_mark_opens_help_modal() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Conversations;
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Char('?'),
+            KeyModifiers::SHIFT,
+        ))));
+        assert!(effects.is_empty());
+        assert_eq!(app.modal, Modal::Help);
+    }
+
+    #[test]
+    fn any_key_clears_last_error() {
+        let (mut app, _) = App::new();
+        app.last_error = Some("boom".into());
+        app.focus = Focus::Conversations;
+        let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Down,
+            KeyModifiers::NONE,
+        ))));
+        assert!(app.last_error.is_none());
+        assert!(app.suppressed_error.is_some());
     }
 
     #[test]
