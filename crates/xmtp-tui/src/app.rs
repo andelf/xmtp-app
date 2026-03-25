@@ -195,6 +195,16 @@ impl App {
                 self.apply_conversation_updated(update);
                 Vec::new()
             }
+            AppEvent::GroupMembersUpdated(update) => {
+                if self.active_group_id() == Some(update.conversation_id.as_str()) {
+                    self.group_management.members = update.members;
+                    self.group_management.selected_member = self
+                        .group_management
+                        .selected_member
+                        .min(self.group_management.members.len().saturating_sub(1));
+                }
+                Vec::new()
+            }
             AppEvent::ConversationInfoLoaded(info) => {
                 self.active_info = Some(info);
                 Vec::new()
@@ -1314,6 +1324,41 @@ mod tests {
             app.active_conversation.as_ref().and_then(|item| item.name.as_deref()),
             Some("new-name")
         );
+    }
+
+    #[test]
+    fn group_members_updated_event_refreshes_active_group_members() {
+        let (mut app, _) = App::new();
+        app.active_conversation = Some(xmtp_ipc::ConversationItem {
+            id: "group-1".into(),
+            kind: "group".into(),
+            name: Some("group".into()),
+        });
+        app.active_conversation_id = Some("group-1".into());
+        app.group_management.members = vec![xmtp_ipc::GroupMemberItem {
+            inbox_id: "old-member".into(),
+            permission_level: "member".into(),
+            consent_state: "unknown".into(),
+            account_identifiers: Vec::new(),
+            installation_count: 1,
+        }];
+
+        let effects = app.handle_event(crate::event::AppEvent::GroupMembersUpdated(
+            xmtp_ipc::GroupMembersUpdatedEvent {
+                conversation_id: "group-1".into(),
+                members: vec![xmtp_ipc::GroupMemberItem {
+                    inbox_id: "new-member".into(),
+                    permission_level: "member".into(),
+                    consent_state: "unknown".into(),
+                    account_identifiers: Vec::new(),
+                    installation_count: 1,
+                }],
+            },
+        ));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.group_management.members.len(), 1);
+        assert_eq!(app.group_management.members[0].inbox_id, "new-member");
     }
 
     #[test]

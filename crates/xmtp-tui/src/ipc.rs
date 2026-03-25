@@ -440,7 +440,8 @@ async fn watch_history(
                 }
                 DaemonEventData::Status(_)
                 | DaemonEventData::ConversationList(_)
-                | DaemonEventData::ConversationUpdated(_) => {}
+                | DaemonEventData::ConversationUpdated(_)
+                | DaemonEventData::GroupMembersUpdated(_) => {}
             }
         }
         tokio::time::sleep(retry_delay).await;
@@ -534,6 +535,9 @@ async fn watch_app_events(
                 }
                 DaemonEventData::ConversationUpdated(update) => {
                     let _ = tx.send(AppEvent::ConversationUpdated(update));
+                }
+                DaemonEventData::GroupMembersUpdated(update) => {
+                    let _ = tx.send(AppEvent::GroupMembersUpdated(update));
                 }
                 DaemonEventData::DaemonError { message } => {
                     let _ = tx.send(AppEvent::Error(message));

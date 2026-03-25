@@ -515,7 +515,8 @@ async fn watch_history(
             }
             DaemonEventData::Status(_)
             | DaemonEventData::ConversationList(_)
-            | DaemonEventData::ConversationUpdated(_) => {}
+            | DaemonEventData::ConversationUpdated(_)
+            | DaemonEventData::GroupMembersUpdated(_) => {}
         }
     }
     Ok(())
@@ -744,6 +745,19 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                             short_id(&update.conversation_id),
                             update.name.unwrap_or_else(|| "-".to_owned()),
                             update.member_count
+                        ),
+                    )
+                );
+            }
+            DaemonEventData::GroupMembersUpdated(update) => {
+                println!(
+                    "{}",
+                    render_event_row(
+                        "group_members_updated",
+                        &format!(
+                            "{} members={}",
+                            short_id(&update.conversation_id),
+                            update.members.len()
                         ),
                     )
                 );

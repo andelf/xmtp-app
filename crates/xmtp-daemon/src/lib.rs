@@ -26,9 +26,9 @@ use xmtp_ipc::{
     ActionResponse, ApiErrorBody, ApiErrorDetail, ConversationInfoResponse, ConversationItem,
     ConversationListResponse, ConversationUpdatedEvent, DaemonEventData, DaemonEventEnvelope,
     EmojiRequest, GroupCreateRequest, GroupInfoResponse, GroupMemberItem, GroupMembersResponse,
-    GroupMembersUpdateRequest, HistoryItem, HistoryResponse, LoginRequest, MessageInfoResponse,
-    ReactionDetail, RecipientMessageRequest, RecipientRequest, RenameGroupRequest, SendDmResponse,
-    SendMessageRequest, StatusResponse,
+    GroupMembersUpdateRequest, GroupMembersUpdatedEvent, HistoryItem, HistoryResponse,
+    LoginRequest, MessageInfoResponse, ReactionDetail, RecipientMessageRequest, RecipientRequest,
+    RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
 };
 use xmtp_logging::append_daemon_event;
 use xmtp_store::{load_state, save_state};
@@ -217,7 +217,7 @@ pub fn history_with_kind(
     kind: Option<&str>,
 ) -> anyhow::Result<Vec<HistoryEntry>> {
     let client = open_existing_client(data_dir)?;
-    history_with_client(&client, conversation_id, kind)
+    history_with_client(&client, conversation_id, kind, None, 50)
 }
 
 pub fn resolve_conversation_id(
@@ -286,7 +286,7 @@ pub fn group_members(
     conversation_id: &str,
 ) -> anyhow::Result<Vec<GroupMemberItem>> {
     let client = open_existing_client(data_dir)?;
-    group_members_with_client(&client, conversation_id)
+    group_members_with_client(&client, conversation_id, 200)
 }
 
 pub fn rename_group(
@@ -534,11 +534,13 @@ fn remove_group_members_with_client(
 fn group_members_with_client(
     client: &Client,
     conversation_id: &str,
+    limit: usize,
 ) -> anyhow::Result<Vec<GroupMemberItem>> {
     let conversation = find_conversation_by_id(client, conversation_id)?;
     let members = conversation.members().context("list group members")?;
     Ok(members
         .into_iter()
+        .take(limit)
         .map(|member| GroupMemberItem {
             inbox_id: member.inbox_id,
             permission_level: format!("{:?}", member.permission_level).to_lowercase(),
@@ -671,10 +673,18 @@ fn history_with_client(
     client: &Client,
     conversation_id: &str,
     kind: Option<&str>,
+    before_ns: Option<i64>,
+    limit: usize,
 ) -> anyhow::Result<Vec<HistoryEntry>> {
     let conversation = find_conversation_by_id_with_kind(client, conversation_id, kind)?;
     conversation.sync().context("sync conversation")?;
-    let messages = conversation.messages().context("list messages")?;
+    let messages = conversation
+        .list_messages(&xmtp::ListMessagesOptions {
+            sent_before_ns: before_ns.unwrap_or_default(),
+            limit: limit as i64,
+            ..Default::default()
+        })
+        .context("list messages")?;
     let mut entries = Vec::with_capacity(messages.len());
     for message in messages {
         entries.push(history_entry_from_message(&message));
@@ -1038,6 +1048,17 @@ struct ConversationsQuery {
     kind: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct HistoryQuery {
+    before_ns: Option<i64>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MembersQuery {
+    limit: Option<usize>,
+}
+
 impl DaemonApp {
     fn new(data_dir: PathBuf) -> Self {
         Self {
@@ -1141,8 +1162,13 @@ impl DaemonApp {
         conversation_info_with_client(self.ensure_client()?, &conversation_id)
     }
 
-    fn history_snapshot(&mut self, conversation_id: String) -> anyhow::Result<HistoryResponse> {
-        let items = history_with_client(self.ensure_client()?, &conversation_id, None)?
+    fn history_snapshot(
+        &mut self,
+        conversation_id: String,
+        before_ns: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<HistoryResponse> {
+        let items = history_with_client(self.ensure_client()?, &conversation_id, None, before_ns, limit)?
             .into_iter()
             .map(|item| HistoryItem {
                 message_id: item.message_id,
@@ -1227,8 +1253,12 @@ impl DaemonApp {
         })
     }
 
-    fn group_members(&mut self, conversation_id: String) -> anyhow::Result<GroupMembersResponse> {
-        let items = group_members_with_client(self.ensure_client()?, &conversation_id)?;
+    fn group_members(
+        &mut self,
+        conversation_id: String,
+        limit: usize,
+    ) -> anyhow::Result<GroupMembersResponse> {
+        let items = group_members_with_client(self.ensure_client()?, &conversation_id, limit)?;
         Ok(GroupMembersResponse { items })
     }
 
@@ -1370,6 +1400,24 @@ fn publish_conversation_updated_now(state: &HttpState, conversation_id: &str) {
     }
 }
 
+fn publish_group_members_updated_now(state: &HttpState, conversation_id: &str) {
+    let payload = {
+        let mut guard = state.app.lock().expect("lock daemon app");
+        guard
+            .group_members(conversation_id.to_owned(), 200)
+            .ok()
+            .map(|members| {
+                DaemonEventData::GroupMembersUpdated(GroupMembersUpdatedEvent {
+                    conversation_id: conversation_id.to_owned(),
+                    members: members.items,
+                })
+            })
+    };
+    if let Some(payload) = payload {
+        send_event(&state.events_tx, payload);
+    }
+}
+
 async fn run_app<T>(
     state: &HttpState,
     request_summary: String,
@@ -1487,13 +1535,15 @@ async fn conversation_info_handler(
 async fn conversation_history_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
+    Query(query): Query<HistoryQuery>,
 ) -> Result<Json<HistoryResponse>, ApiErrorResponse> {
+    let limit = query.limit.unwrap_or(50);
     let history = run_app(
         &state,
         format!("history id={conversation_id}"),
         false,
         false,
-        move |app| app.history_snapshot(conversation_id),
+        move |app| app.history_snapshot(conversation_id, query.before_ns, limit),
     )
     .await
     .map_err(internal_error)?;
@@ -1623,13 +1673,15 @@ async fn unreact_handler(
 async fn group_members_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
+    Query(query): Query<MembersQuery>,
 ) -> Result<Json<GroupMembersResponse>, ApiErrorResponse> {
+    let limit = query.limit.unwrap_or(200);
     let members = run_app(
         &state,
         format!("group members id={conversation_id}"),
         false,
         false,
-        move |app| app.group_members(conversation_id),
+        move |app| app.group_members(conversation_id, limit),
     )
     .await
     .map_err(internal_error)?;
@@ -1668,6 +1720,7 @@ async fn rename_group_handler(
     .await
     .map_err(internal_error)?;
     publish_conversation_updated_now(&state, &event_conversation_id);
+    publish_group_members_updated_now(&state, &event_conversation_id);
     publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
@@ -1688,6 +1741,7 @@ async fn add_group_members_handler(
     .await
     .map_err(internal_error)?;
     publish_conversation_updated_now(&state, &event_conversation_id);
+    publish_group_members_updated_now(&state, &event_conversation_id);
     publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }

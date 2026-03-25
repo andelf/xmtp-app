@@ -1,8 +1,8 @@
 use xmtp_core::{ConnectionState, DaemonState};
 use xmtp_ipc::{
     ApiErrorBody, ApiErrorDetail, ConversationUpdatedEvent, DaemonEventData, DaemonEventEnvelope,
-    EmojiRequest, GroupCreateRequest, HistoryItem, LoginRequest, RecipientMessageRequest,
-    RecipientRequest, SendMessageRequest, StatusResponse,
+    EmojiRequest, GroupCreateRequest, GroupMembersUpdatedEvent, HistoryItem, LoginRequest,
+    RecipientMessageRequest, RecipientRequest, SendMessageRequest, StatusResponse,
 };
 
 #[test]
@@ -181,4 +181,34 @@ fn api_error_body_roundtrips_as_json() {
         decoded.error.message,
         "Leave group is not supported in this version"
     );
+}
+
+#[test]
+fn group_members_updated_event_roundtrips_as_json() {
+    let event = DaemonEventEnvelope {
+        event_id: "evt-4".to_owned(),
+        payload: DaemonEventData::GroupMembersUpdated(GroupMembersUpdatedEvent {
+            conversation_id: "conv-1".to_owned(),
+            members: vec![xmtp_ipc::GroupMemberItem {
+                inbox_id: "member-1".to_owned(),
+                permission_level: "member".to_owned(),
+                consent_state: "unknown".to_owned(),
+                account_identifiers: vec!["0x1234".to_owned()],
+                installation_count: 1,
+            }],
+        }),
+    };
+
+    let json = serde_json::to_string(&event).expect("serialize group members updated event");
+    let decoded: DaemonEventEnvelope =
+        serde_json::from_str(&json).expect("deserialize group members updated event");
+
+    match decoded.payload {
+        DaemonEventData::GroupMembersUpdated(update) => {
+            assert_eq!(update.conversation_id, "conv-1");
+            assert_eq!(update.members.len(), 1);
+            assert_eq!(update.members[0].inbox_id, "member-1");
+        }
+        _ => panic!("unexpected group members updated payload"),
+    }
 }
