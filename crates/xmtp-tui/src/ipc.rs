@@ -273,8 +273,12 @@ impl Runtime {
                 Err(anyhow::anyhow!("dm peer target unavailable"))
             };
             match result {
-                Ok(_result) => {
-                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::Sent));
+                Ok(result) => {
+                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::Sent {
+                        conversation_id: result.conversation_id,
+                        message_id: result.message_id,
+                        text,
+                    }));
                 }
                 Err(err) => {
                     let _ = tx.send(AppEvent::Error(err.to_string()));
@@ -288,8 +292,12 @@ impl Runtime {
         let data_dir = self.data_dir.clone();
         tokio::spawn(async move {
             match reply(&data_dir, &message_id, &text).await {
-                Ok(_result) => {
-                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::Sent));
+                Ok(result) => {
+                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::Sent {
+                        conversation_id: result.conversation_id,
+                        message_id: result.message_id,
+                        text,
+                    }));
                 }
                 Err(err) => {
                     let _ = tx.send(AppEvent::Error(err.to_string()));

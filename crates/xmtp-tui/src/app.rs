@@ -1,7 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::Color;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use xmtp_ipc::{
     ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem, HistoryItem,
     ReactionDetail, StatusResponse,
@@ -369,7 +369,41 @@ impl App {
                     Effect::LoadGroupMembers { conversation_id },
                 ]
             }
-            ActionOutcome::Sent | ActionOutcome::Reacted => Vec::new(),
+            ActionOutcome::Sent {
+                conversation_id,
+                message_id,
+                text,
+            } => {
+                if self.active_conversation_id.as_deref() == Some(conversation_id.as_str()) {
+                    let sender_inbox_id = self.self_inbox_id().unwrap_or_default().to_owned();
+                    let sent_at_ns = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|duration| duration.as_nanos().min(i64::MAX as u128) as i64)
+                        .unwrap_or_default();
+                    merge_history_item(
+                        &mut self.messages,
+                        HistoryItem {
+                            message_id,
+                            sender_inbox_id,
+                            sent_at_ns,
+                            content_kind: "text".to_owned(),
+                            content: text,
+                            reply_count: 0,
+                            reaction_count: 0,
+                            reply_target_message_id: None,
+                            reaction_target_message_id: None,
+                            reaction_emoji: None,
+                            reaction_action: None,
+                            attached_reactions: Vec::new(),
+                        },
+                    );
+                    if self.should_auto_scroll_messages() {
+                        self.selected_message = self.messages.len().saturating_sub(1);
+                    }
+                }
+                Vec::new()
+            }
+            ActionOutcome::Reacted => Vec::new(),
         }
     }
 
@@ -1323,6 +1357,42 @@ mod tests {
         ));
         assert_eq!(app.active_conversation_id.as_deref(), Some("conv-2"));
         assert_eq!(app.unread_counts.get("conv-2"), None);
+    }
+
+    #[test]
+    fn sent_action_optimistically_appends_message_to_active_conversation() {
+        let (mut app, _) = App::new();
+        app.active_conversation_id = Some("conv-1".into());
+        app.active_conversation = Some(xmtp_ipc::ConversationItem {
+            id: "conv-1".into(),
+            kind: "dm".into(),
+            name: None,
+            dm_peer_inbox_id: Some("peer-1".into()),
+            last_message_ns: Some(10),
+        });
+        app.status = Some(
+            serde_json::from_value(serde_json::json!({
+                "daemon_state": "running",
+                "connection_state": "connected",
+                "inbox_id": "self-1",
+                "installation_id": null
+            }))
+            .expect("build status response"),
+        );
+
+        let effects = app.handle_event(crate::event::AppEvent::ActionCompleted(
+            crate::event::ActionOutcome::Sent {
+                conversation_id: "conv-1".into(),
+                message_id: "msg-1".into(),
+                text: "hello now".into(),
+            },
+        ));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages[0].message_id, "msg-1");
+        assert_eq!(app.messages[0].sender_inbox_id, "self-1");
+        assert_eq!(app.messages[0].content, "hello now");
     }
 
     #[test]

@@ -29,7 +29,11 @@ pub enum AppEvent {
 #[derive(Debug, Clone)]
 pub enum ActionOutcome {
     OpenedDm(ActionResponse),
-    Sent,
+    Sent {
+        conversation_id: String,
+        message_id: String,
+        text: String,
+    },
     CreatedGroup(ActionResponse),
     Reacted,
     GroupUpdated(String),
