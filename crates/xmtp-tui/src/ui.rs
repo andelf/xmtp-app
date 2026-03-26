@@ -706,54 +706,76 @@ fn render_group_permissions(frame: &mut Frame<'_>, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let body = if app.group_management.permissions_loading {
-        vec![Line::from(Span::styled(
-            "loading...",
-            Style::default().dark_gray(),
-        ))]
-    } else if let Some(info) = &app.group_management.permissions {
-        group_permissions_lines(info)
-    } else {
-        vec![Line::from(Span::styled(
-            "no permission data",
-            Style::default().dark_gray(),
-        ))]
-    };
-
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(8), Constraint::Length(1)])
         .split(inner);
 
-    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[0]);
+    if app.group_management.permissions_loading {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "loading...",
+                Style::default().dark_gray(),
+            )))
+            .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+    } else if let Some(info) = &app.group_management.permissions {
+        let mut rows = Vec::new();
+        rows.push(ListItem::new(Line::from(render_group_permission_row(
+            "Preset:",
+            &info.preset,
+            false,
+        ))));
+        for (index, (label, value)) in editable_group_permission_rows(info).into_iter().enumerate() {
+            let style = if index == app.group_management.permissions_cursor {
+                Style::default().reversed()
+            } else {
+                Style::default()
+            };
+            rows.push(ListItem::new(Line::from(render_group_permission_row(label, value, true))).style(style));
+        }
+        let mut state = ListState::default().with_selected(Some(app.group_management.permissions_cursor + 1));
+        let list = List::new(rows).highlight_style(Style::default().reversed());
+        frame.render_stateful_widget(list, chunks[0], &mut state);
+    } else {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "no permission data",
+                Style::default().dark_gray(),
+            )))
+            .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+    }
+
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "Esc closes",
+            "↑↓ 移动  ← → 切换  Enter 保存  Esc 取消",
             Style::default().dark_gray(),
         ))),
         chunks[1],
     );
 }
 
-fn group_permissions_lines(info: &GroupPermissionsResponse) -> Vec<Line<'static>> {
-    vec![
-        Line::from(render_group_permission_row("Preset:", &info.preset)),
-        Line::from(render_group_permission_row("Add members:", &info.add_member)),
-        Line::from(render_group_permission_row("Remove members:", &info.remove_member)),
-        Line::from(render_group_permission_row("Add admins:", &info.add_admin)),
-        Line::from(render_group_permission_row("Remove admins:", &info.remove_admin)),
-        Line::from(render_group_permission_row("Update name:", &info.update_group_name)),
-        Line::from(render_group_permission_row(
-            "Update description:",
-            &info.update_group_description,
-        )),
-        Line::from(render_group_permission_row("Update image:", &info.update_group_image)),
-        Line::from(render_group_permission_row("Update app data:", &info.update_app_data)),
+fn editable_group_permission_rows<'a>(
+    info: &'a GroupPermissionsResponse,
+) -> [(&'static str, &'a str); 8] {
+    [
+        ("Add members:", &info.add_member),
+        ("Remove members:", &info.remove_member),
+        ("Add admins:", &info.add_admin),
+        ("Remove admins:", &info.remove_admin),
+        ("Update name:", &info.update_group_name),
+        ("Update description:", &info.update_group_description),
+        ("Update image:", &info.update_group_image),
+        ("Update app data:", &info.update_app_data),
     ]
 }
 
-fn render_group_permission_row(label: &str, value: &str) -> Span<'static> {
-    Span::raw(format!("{:<20} {}", label, value))
+fn render_group_permission_row(label: &str, value: &str, editable: bool) -> Line<'static> {
+    let prefix = if editable { "  " } else { "" };
+    Line::from(Span::raw(format!("{prefix}{:<20} {}", label, value)))
 }
 
 fn render_group_info(frame: &mut Frame<'_>, app: &App) {

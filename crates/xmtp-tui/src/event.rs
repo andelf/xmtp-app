@@ -39,6 +39,7 @@ pub enum ActionOutcome {
     CreatedGroup(ActionResponse),
     Reacted,
     GroupUpdated(String),
+    PermissionUpdated,
     LeftConversation(String),
 }
 
@@ -51,6 +52,11 @@ pub enum Effect {
     LoadGroupInfo { conversation_id: String },
     LoadGroupMembers { conversation_id: String },
     LoadGroupPermissions { conversation_id: String },
+    UpdateGroupPermission {
+        conversation_id: String,
+        permission: String,
+        policy: String,
+    },
     AddGroupMembers { conversation_id: String, members: Vec<String> },
     RemoveGroupMembers { conversation_id: String, members: Vec<String> },
     RenameGroup { conversation_id: String, name: String },

@@ -15,6 +15,7 @@ use xmtp_ipc::{
     GroupPermissionsResponse,
     GroupMembersUpdateRequest, HistoryResponse, RecipientMessageRequest, RecipientRequest,
     RenameGroupRequest, SendMessageRequest,
+    UpdatePermissionRequest,
 };
 
 use crate::event::{ActionOutcome, AppEvent, Effect};
@@ -65,6 +66,11 @@ impl Runtime {
                 Effect::LoadGroupPermissions { conversation_id } => {
                     self.spawn_group_permissions(conversation_id)
                 }
+                Effect::UpdateGroupPermission {
+                    conversation_id,
+                    permission,
+                    policy,
+                } => self.spawn_update_group_permission(conversation_id, permission, policy),
                 Effect::AddGroupMembers {
                     conversation_id,
                     members,
@@ -248,6 +254,26 @@ impl Runtime {
         });
     }
 
+    fn spawn_update_group_permission(
+        &self,
+        conversation_id: String,
+        permission: String,
+        policy: String,
+    ) {
+        let tx = self.tx.clone();
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            match update_group_permission(&data_dir, &conversation_id, &permission, &policy).await {
+                Ok(_result) => {
+                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::PermissionUpdated));
+                }
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                }
+            }
+        });
+    }
+
     fn spawn_remove_group_members(&self, conversation_id: String, members: Vec<String>) {
         let tx = self.tx.clone();
         let data_dir = self.data_dir.clone();
@@ -420,6 +446,23 @@ async fn group_permissions(
     conversation_id: &str,
 ) -> anyhow::Result<GroupPermissionsResponse> {
     http_get(data_dir, &format!("/v1/groups/{conversation_id}/permissions")).await
+}
+
+async fn update_group_permission(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+    permission: &str,
+    policy: &str,
+) -> anyhow::Result<ActionResponse> {
+    http_patch(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/permissions"),
+        &UpdatePermissionRequest {
+            permission: permission.to_owned(),
+            policy: policy.to_owned(),
+        },
+    )
+    .await
 }
 
 async fn load_history(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<Vec<xmtp_ipc::HistoryItem>> {

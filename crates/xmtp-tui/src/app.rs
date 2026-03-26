@@ -127,12 +127,16 @@ pub struct GroupManagementState {
     pub menu_index: usize,
     pub info: Option<GroupInfoResponse>,
     pub permissions: Option<GroupPermissionsResponse>,
+    pub permissions_original: Option<GroupPermissionsResponse>,
     pub permissions_loading: bool,
+    pub permissions_cursor: usize,
     pub members: Vec<GroupMemberItem>,
     pub selected_member: usize,
     pub info_member_scroll: usize,
     pub add_members_input: String,
     pub rename_input: String,
+    pub permissions_dirty: bool,
+    pub permissions_pending_updates: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -252,8 +256,10 @@ impl App {
                 Vec::new()
             }
             AppEvent::GroupPermissionsLoaded(permissions) => {
+                self.group_management.permissions_original = Some(permissions.clone());
                 self.group_management.permissions = Some(permissions);
                 self.group_management.permissions_loading = false;
+                self.group_management.permissions_cursor = self.group_management.permissions_cursor.min(7);
                 Vec::new()
             }
             AppEvent::HistoryLoaded {
@@ -403,6 +409,20 @@ impl App {
                     },
                     Effect::LoadGroupMembers { conversation_id },
                 ]
+            }
+            ActionOutcome::PermissionUpdated => {
+                if self.group_management.permissions_pending_updates > 0 {
+                    self.group_management.permissions_pending_updates -= 1;
+                }
+                if self.group_management.permissions_pending_updates == 0 {
+                    self.last_error = None;
+                    self.pending_status = None;
+                    self.group_management.permissions_dirty = false;
+                    self.group_management.permissions_original =
+                        self.group_management.permissions.clone();
+                    self.modal = Modal::GroupManagement;
+                }
+                Vec::new()
             }
             ActionOutcome::LeftConversation(conversation_id) => {
                 self.pending_status = None;
@@ -947,7 +967,7 @@ impl App {
                     self.group_management.menu_index += 1;
                 }
             }
-            KeyCode::Char(ch) if ('1'..='5').contains(&ch) => {
+            KeyCode::Char(ch) if ('1'..='6').contains(&ch) => {
                 let index = (ch as u8 - b'1') as usize;
                 if index < GroupManagementAction::all().len() {
                     self.group_management.menu_index = index;
@@ -1001,6 +1021,10 @@ impl App {
                 self.modal = Modal::GroupPermissions;
                 self.group_management.permissions_loading = true;
                 self.group_management.permissions = None;
+                self.group_management.permissions_original = None;
+                self.group_management.permissions_cursor = 0;
+                self.group_management.permissions_dirty = false;
+                self.group_management.permissions_pending_updates = 0;
                 vec![Effect::LoadGroupPermissions { conversation_id }]
             }
         }
@@ -1027,8 +1051,61 @@ impl App {
     }
 
     fn handle_group_permissions_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        if key.code == KeyCode::Esc {
-            self.modal = Modal::GroupManagement;
+        match key.code {
+            KeyCode::Esc => {
+                self.group_management.permissions_dirty = false;
+                self.group_management.permissions_pending_updates = 0;
+                if let Some(original) = self.group_management.permissions_original.clone() {
+                    self.group_management.permissions = Some(original);
+                }
+                self.modal = Modal::GroupManagement;
+            }
+            KeyCode::Up => {
+                if self.group_management.permissions_cursor > 0 {
+                    self.group_management.permissions_cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.group_management.permissions_cursor < 7 {
+                    self.group_management.permissions_cursor += 1;
+                }
+            }
+            KeyCode::Left => {
+                self.shift_permission_policy(false);
+            }
+            KeyCode::Right => {
+                self.shift_permission_policy(true);
+            }
+            KeyCode::Enter => {
+                let Some(conversation_id) = self.active_group_id().map(str::to_owned) else {
+                    self.modal = Modal::None;
+                    return Vec::new();
+                };
+                let Some(current) = self.group_management.permissions.clone() else {
+                    return Vec::new();
+                };
+                let Some(original) = self.group_management.permissions_original.clone() else {
+                    self.modal = Modal::GroupManagement;
+                    return Vec::new();
+                };
+                let updates = diff_group_permissions(&original, &current)
+                    .into_iter()
+                    .map(|(permission, policy)| Effect::UpdateGroupPermission {
+                        conversation_id: conversation_id.clone(),
+                        permission,
+                        policy,
+                    })
+                    .collect::<Vec<_>>();
+                if updates.is_empty() {
+                    self.group_management.permissions_dirty = false;
+                    self.modal = Modal::GroupManagement;
+                } else {
+                    self.pending_status = Some("Saving permissions...".to_owned());
+                    self.group_management.permissions_pending_updates = updates.len();
+                    return updates;
+                }
+            }
+            _ => {}
         }
         Vec::new()
     }
@@ -1158,6 +1235,22 @@ impl App {
 
     fn selected_history_item(&self) -> Option<&HistoryItem> {
         self.messages.get(self.selected_message)
+    }
+
+    fn shift_permission_policy(&mut self, forward: bool) {
+        let Some(permissions) = self.group_management.permissions.as_mut() else {
+            return;
+        };
+        let value = editable_permission_value_mut(permissions, self.group_management.permissions_cursor);
+        let next = next_permission_policy(value, forward);
+        if next != *value {
+            *value = next;
+            self.group_management.permissions_dirty = self
+                .group_management
+                .permissions_original
+                .as_ref()
+                .is_some_and(|original| original != permissions);
+        }
     }
 
     fn should_auto_scroll_messages(&self) -> bool {
@@ -1331,6 +1424,102 @@ fn delete_previous_word_from_end(value: &mut String) {
         chars.pop();
     }
     *value = chars.into_iter().collect();
+}
+
+fn editable_permission_value_mut(
+    permissions: &mut GroupPermissionsResponse,
+    cursor: usize,
+) -> &mut String {
+    match cursor {
+        0 => &mut permissions.add_member,
+        1 => &mut permissions.remove_member,
+        2 => &mut permissions.add_admin,
+        3 => &mut permissions.remove_admin,
+        4 => &mut permissions.update_group_name,
+        5 => &mut permissions.update_group_description,
+        6 => &mut permissions.update_group_image,
+        _ => &mut permissions.update_app_data,
+    }
+}
+
+fn next_permission_policy(current: &str, forward: bool) -> String {
+    const POLICIES: [&str; 4] = ["everyone", "admin_only", "super_admin_only", "deny"];
+    let index = POLICIES.iter().position(|policy| *policy == current).unwrap_or(0);
+    let next_index = if forward {
+        (index + 1) % POLICIES.len()
+    } else if index == 0 {
+        POLICIES.len() - 1
+    } else {
+        index - 1
+    };
+    POLICIES[next_index].to_owned()
+}
+
+fn diff_group_permissions(
+    original: &GroupPermissionsResponse,
+    current: &GroupPermissionsResponse,
+) -> Vec<(String, String)> {
+    let mut updates = Vec::new();
+    push_permission_update(
+        &mut updates,
+        "add_member",
+        &original.add_member,
+        &current.add_member,
+    );
+    push_permission_update(
+        &mut updates,
+        "remove_member",
+        &original.remove_member,
+        &current.remove_member,
+    );
+    push_permission_update(
+        &mut updates,
+        "add_admin",
+        &original.add_admin,
+        &current.add_admin,
+    );
+    push_permission_update(
+        &mut updates,
+        "remove_admin",
+        &original.remove_admin,
+        &current.remove_admin,
+    );
+    push_permission_update(
+        &mut updates,
+        "update_group_name",
+        &original.update_group_name,
+        &current.update_group_name,
+    );
+    push_permission_update(
+        &mut updates,
+        "update_group_description",
+        &original.update_group_description,
+        &current.update_group_description,
+    );
+    push_permission_update(
+        &mut updates,
+        "update_group_image",
+        &original.update_group_image,
+        &current.update_group_image,
+    );
+    push_permission_update(
+        &mut updates,
+        "update_app_data",
+        &original.update_app_data,
+        &current.update_app_data,
+    );
+    updates
+}
+
+fn push_permission_update(
+    updates: &mut Vec<(String, String)>,
+    permission: &str,
+    original: &str,
+    current: &str,
+) {
+    if original != current {
+        updates.push((permission.to_owned(), current.to_owned()));
+    }
 }
 
 pub fn reaction_choices() -> [&'static str; 5] {
