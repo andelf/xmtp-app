@@ -253,9 +253,12 @@ enum InfoCommand {
 
 #[derive(Clone, Debug, ValueEnum)]
 enum Network {
+    Local,
     Dev,
-    Testnet,
     Production,
+    D14nDev,
+    D14nStaging,
+    D14nTestnet,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -469,33 +472,69 @@ struct LoginNetworkDefaults<'a> {
 
 fn login_network_defaults(network: Network) -> LoginNetworkDefaults<'static> {
     match network {
-        Network::Dev => LoginNetworkDefaults {
-            env: "dev",
-            api_url: None,
+        Network::Local => LoginNetworkDefaults {
+            env: "local",
+            api_url: Some("http://localhost:5558"),
             gateway_url: None,
         },
-        Network::Testnet => LoginNetworkDefaults {
+        Network::Dev => LoginNetworkDefaults {
             env: "dev",
-            api_url: Some("https://grpc.testnet.xmtp.network:443"),
-            gateway_url: Some("https://payer.testnet-staging.xmtp.network"),
+            api_url: Some("https://api.dev.xmtp.network:5558"),
+            gateway_url: None,
         },
         Network::Production => LoginNetworkDefaults {
             env: "production",
             api_url: None,
             gateway_url: None,
         },
+        Network::D14nDev => LoginNetworkDefaults {
+            env: "dev",
+            api_url: Some("https://api.dev.xmtp.network:5558"),
+            gateway_url: Some("https://payer.testnet-dev.xmtp.network:443"),
+        },
+        Network::D14nStaging => LoginNetworkDefaults {
+            env: "dev",
+            api_url: Some("https://api.dev.xmtp.network:5558"),
+            gateway_url: Some("https://payer.testnet-staging.xmtp.network"),
+        },
+        Network::D14nTestnet => LoginNetworkDefaults {
+            env: "dev",
+            api_url: Some("https://grpc.testnet.xmtp.network:443"),
+            gateway_url: Some("https://payer.testnet-staging.xmtp.network"),
+        },
     }
 }
 
 fn infer_network_name(config: &AppConfig) -> &'static str {
-    if config.xmtp_env == "production" && config.api_url.is_none() && config.gateway_url.is_none() {
+    if config.xmtp_env == "local"
+        && config.api_url.as_deref() == Some("http://localhost:5558")
+        && config.gateway_url.is_none()
+    {
+        "local"
+    } else if config.xmtp_env == "production"
+        && config.api_url.is_none()
+        && config.gateway_url.is_none()
+    {
         "production"
+    } else if config.xmtp_env == "dev"
+        && config.api_url.as_deref() == Some("https://api.dev.xmtp.network:5558")
+        && config.gateway_url.as_deref() == Some("https://payer.testnet-dev.xmtp.network:443")
+    {
+        "d14n-dev"
+    } else if config.xmtp_env == "dev"
+        && config.api_url.as_deref() == Some("https://api.dev.xmtp.network:5558")
+        && config.gateway_url.as_deref() == Some("https://payer.testnet-staging.xmtp.network")
+    {
+        "d14n-staging"
     } else if config.xmtp_env == "dev"
         && config.api_url.as_deref() == Some("https://grpc.testnet.xmtp.network:443")
         && config.gateway_url.as_deref() == Some("https://payer.testnet-staging.xmtp.network")
     {
-        "testnet"
-    } else if config.xmtp_env == "dev" && config.api_url.is_none() && config.gateway_url.is_none() {
+        "d14n-testnet"
+    } else if config.xmtp_env == "dev"
+        && config.api_url.as_deref() == Some("https://api.dev.xmtp.network:5558")
+        && config.gateway_url.is_none()
+    {
         "dev"
     } else {
         "custom"
