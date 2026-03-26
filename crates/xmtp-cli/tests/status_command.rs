@@ -1,8 +1,9 @@
 use assert_cmd::Command;
+use predicates::str::contains;
 use tempfile::tempdir;
 
 #[test]
-fn status_command_prints_stopped_state_after_init() {
+fn doctor_command_prints_stopped_state_after_init() {
     let temp = tempdir().expect("tempdir");
     let data_dir = temp.path().join("data");
 
@@ -18,9 +19,11 @@ fn status_command_prints_stopped_state_after_init() {
         .expect("binary")
         .args(["--data-dir"])
         .arg(&data_dir)
-        .arg("status")
+        .arg("doctor")
         .assert()
         .success()
-        .stdout(predicates::str::contains("stopped"))
-        .stdout(predicates::str::contains("disconnected"));
+        .stdout(contains("network"))
+        .stdout(contains("daemon_reachable"))
+        .stdout(contains("stopped"))
+        .stdout(contains("disconnected"));
 }

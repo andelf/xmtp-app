@@ -1244,7 +1244,7 @@ fn merge_history_item(visible: &mut Vec<HistoryItem>, item: HistoryItem) {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Focus, Modal};
+    use super::{App, Focus, GroupDialogField, Modal};
     use crate::event::Effect;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
