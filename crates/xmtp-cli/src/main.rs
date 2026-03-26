@@ -8,7 +8,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
-use xmtp_config::{AppConfig, save_config};
+use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_daemon::{
     HistoryEntry, addr_path, history_with_kind as load_history_direct, pid_path,
     resolve_conversation_id, serve,
@@ -265,6 +265,9 @@ fn init(data_dir: PathBuf) -> anyhow::Result<()> {
 
 fn status(data_dir: PathBuf) -> anyhow::Result<()> {
     let state = load_state(&data_dir.join("state.json"))?;
+    if let Ok(config) = load_config(&data_dir.join("config.json")) {
+        println!("{}", render_status_row("xmtp_env", &config.xmtp_env));
+    }
     println!("{}", render_status_row("daemon_state", &state.daemon_state.to_string()));
     println!(
         "{}",
@@ -305,6 +308,23 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
         "{}",
         render_status_row("signer_key", bool_label(signer_path.exists()))
     );
+    if let Ok(config) = load_config(&config_path) {
+        println!("{}", render_status_row("xmtp_env", &config.xmtp_env));
+        println!(
+            "{}",
+            render_status_row(
+                "api_url",
+                config.api_url.as_deref().unwrap_or("(default)")
+            )
+        );
+        println!(
+            "{}",
+            render_status_row(
+                "gateway_url",
+                config.gateway_url.as_deref().unwrap_or("(default)")
+            )
+        );
+    }
     println!(
         "{}",
         render_status_row("daemon_addr", bool_label(addr.exists()))
