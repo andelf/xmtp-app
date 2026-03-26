@@ -217,19 +217,23 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn message_panel_title(app: &App) -> String {
+    conversation_display_name(app).unwrap_or_else(|| "Messages".to_owned())
+}
+
+fn conversation_display_name(app: &App) -> Option<String> {
     match app.active_conversation.as_ref() {
         Some(conversation) if conversation.kind == "dm" => conversation
             .dm_peer_inbox_id
             .as_deref()
             .map(short_display_id)
             .or_else(|| conversation.name.clone())
-            .unwrap_or_else(|| "DM".to_owned()),
+            .or(Some("DM".to_owned())),
         Some(conversation) if conversation.kind == "group" => conversation
             .name
             .clone()
-            .unwrap_or_else(|| "Group".to_owned()),
-        Some(conversation) => conversation.name.clone().unwrap_or_else(|| "Messages".to_owned()),
-        None => "Messages".to_owned(),
+            .or(Some("Group".to_owned())),
+        Some(conversation) => conversation.name.clone(),
+        None => None,
     }
 }
 
@@ -321,20 +325,7 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .get(app.selected_message)
         .map(|item| short_display_id(&item.message_id))
         .unwrap_or_else(|| "-".to_owned());
-    let current_name = match app.active_conversation.as_ref() {
-        Some(conversation) if conversation.kind == "dm" => conversation
-            .dm_peer_inbox_id
-            .as_deref()
-            .map(short_display_id)
-            .or_else(|| conversation.name.clone())
-            .unwrap_or_else(|| "DM".to_owned()),
-        Some(conversation) if conversation.kind == "group" => conversation
-            .name
-            .clone()
-            .unwrap_or_else(|| "Group".to_owned()),
-        Some(conversation) => conversation.name.clone().unwrap_or_else(|| "-".to_owned()),
-        None => "-".to_owned(),
-    };
+    let current_name = conversation_display_name(app).unwrap_or_else(|| "-".to_owned());
     let current_id = app
         .active_conversation_id
         .as_deref()
