@@ -154,6 +154,7 @@ pub struct App {
     pub group_dialog: CreateGroupDialog,
     pub group_management: GroupManagementState,
     pub last_error: Option<String>,
+    pub pending_status: Option<String>,
     pub suppressed_error: Option<(String, Instant)>,
     pub exit_armed: bool,
 }
@@ -189,6 +190,7 @@ impl App {
                 },
                 group_management: GroupManagementState::default(),
                 last_error: None,
+                pending_status: None,
                 suppressed_error: None,
                 exit_armed: false,
             },
@@ -272,6 +274,7 @@ impl App {
             }
             AppEvent::ActionCompleted(outcome) => self.handle_action_completed(outcome),
             AppEvent::Error(error) => {
+                self.pending_status = None;
                 if let Some((suppressed, until)) = &self.suppressed_error {
                     if suppressed == &error && Instant::now() < *until {
                         return Vec::new();
@@ -337,6 +340,8 @@ impl App {
     fn handle_action_completed(&mut self, outcome: ActionOutcome) -> Vec<Effect> {
         match outcome {
             ActionOutcome::OpenedDm(result) => {
+                self.pending_status = None;
+                self.last_error = None;
                 self.modal = Modal::None;
                 self.focus = Focus::Input;
                 self.dm_dialog = CreateDmDialog::default();
@@ -348,6 +353,8 @@ impl App {
                 ]
             }
             ActionOutcome::CreatedGroup(result) => {
+                self.pending_status = None;
+                self.last_error = None;
                 self.modal = Modal::None;
                 self.focus = Focus::Input;
                 self.group_dialog = CreateGroupDialog {
@@ -380,6 +387,7 @@ impl App {
                 message_id,
                 text,
             } => {
+                self.pending_status = None;
                 self.drafts.remove(&conversation_id);
                 if self.active_conversation_id.as_deref() == Some(conversation_id.as_str()) {
                     self.cursor = 0;
@@ -666,6 +674,7 @@ impl App {
                 }
                 self.input.clear();
                 self.cursor = 0;
+                self.pending_status = Some("Sending...".to_owned());
                 if let Some(message_id) = self.reply_to_message_id.take() {
                     return vec![Effect::Reply { message_id, text }];
                 }
@@ -798,6 +807,9 @@ impl App {
             KeyCode::Enter => {
                 let recipient = self.dm_dialog.recipient.trim().to_owned();
                 if !recipient.is_empty() {
+                    self.modal = Modal::None;
+                    self.focus = Focus::Conversations;
+                    self.pending_status = Some("Opening DM...".to_owned());
                     return vec![Effect::OpenDm { recipient }];
                 }
             }
@@ -835,6 +847,9 @@ impl App {
                         .collect();
                     if !members.is_empty() {
                         let name = self.group_dialog.name.trim();
+                        self.modal = Modal::None;
+                        self.focus = Focus::Conversations;
+                        self.pending_status = Some("Creating group...".to_owned());
                         return vec![Effect::CreateGroup {
                             name: if name.is_empty() { None } else { Some(name.to_owned()) },
                             members,
@@ -1544,6 +1559,44 @@ mod tests {
     }
 
     #[test]
+    fn create_dm_enter_closes_modal_and_sets_progress_message() {
+        let (mut app, _) = App::new();
+        app.modal = Modal::CreateDm;
+        app.focus = Focus::Input;
+        app.dm_dialog.recipient = "peer-1".into();
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))));
+
+        assert!(matches!(effects.as_slice(), [Effect::OpenDm { recipient }] if recipient == "peer-1"));
+        assert_eq!(app.modal, Modal::None);
+        assert_eq!(app.focus, Focus::Conversations);
+        assert_eq!(app.pending_status.as_deref(), Some("Opening DM..."));
+    }
+
+    #[test]
+    fn create_group_enter_closes_modal_and_sets_progress_message() {
+        let (mut app, _) = App::new();
+        app.modal = Modal::CreateGroup;
+        app.focus = Focus::Input;
+        app.group_dialog.field = Some(GroupDialogField::Members);
+        app.group_dialog.name = "team".into();
+        app.group_dialog.members = "peer-1".into();
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))));
+
+        assert!(matches!(effects.as_slice(), [Effect::CreateGroup { name, members }] if name.as_deref() == Some("team") && members == &vec!["peer-1".to_owned()]));
+        assert_eq!(app.modal, Modal::None);
+        assert_eq!(app.focus, Focus::Conversations);
+        assert_eq!(app.pending_status.as_deref(), Some("Creating group..."));
+    }
+
+    #[test]
     fn leave_group_confirm_sets_explicit_unsupported_message() {
         let (mut app, _) = App::new();
         app.active_conversation = Some(xmtp_ipc::ConversationItem {
@@ -1751,6 +1804,7 @@ mod tests {
             }))
             .expect("build status response"),
         );
+        app.pending_status = Some("Sending...".into());
 
         let effects = app.handle_event(crate::event::AppEvent::ActionCompleted(
             crate::event::ActionOutcome::Sent {
@@ -1765,6 +1819,7 @@ mod tests {
         assert_eq!(app.messages[0].message_id, "msg-1");
         assert_eq!(app.messages[0].sender_inbox_id, "self-1");
         assert_eq!(app.messages[0].content, "hello now");
+        assert!(app.pending_status.is_none());
     }
 
     #[test]

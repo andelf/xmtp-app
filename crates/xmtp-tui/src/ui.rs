@@ -362,6 +362,12 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     if let Some(error) = &app.last_error {
         runtime_spans.push(Span::raw(" | "));
         runtime_spans.push(Span::raw(truncate(error, 48)));
+    } else if let Some(status) = &app.pending_status {
+        runtime_spans.push(Span::raw(" | "));
+        runtime_spans.push(Span::styled(
+            truncate(status, 48),
+            Style::default().dark_gray(),
+        ));
     }
     let lines = vec![
         Line::from(current_detail),

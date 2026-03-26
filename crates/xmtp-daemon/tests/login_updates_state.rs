@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use tempfile::tempdir;
+use xmtp_config::{AppConfig, save_config};
 use xmtp_core::{ConnectionState, DaemonState, StateSnapshot, SyncPhase, SyncState};
 use xmtp_daemon::{RuntimeInfo, XmtpRuntimeAdapter, login_with_adapter};
 use xmtp_store::{load_state, save_state};
@@ -38,6 +39,8 @@ fn login_updates_state_with_connected_runtime_info() {
         },
         recent_error: None,
     };
+    let config = AppConfig::for_data_dir(&data_dir);
+    save_config(&data_dir.join("config.json"), &config).expect("save config");
     save_state(&data_dir.join("state.json"), &state).expect("save state");
 
     login_with_adapter(&FakeAdapter, "dev", &data_dir).expect("login");
