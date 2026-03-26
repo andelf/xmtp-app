@@ -2,12 +2,14 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::Color;
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use textwrap::wrap;
 use xmtp_ipc::{
     ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem,
     GroupPermissionsResponse, HistoryItem, ReactionDetail, StatusResponse,
 };
 
 use crate::event::{ActionOutcome, AppEvent, Effect};
+use crate::markdown::render_markdown;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -39,6 +41,7 @@ pub enum Modal {
     None,
     Help,
     MessageMenu,
+    MessageDetail,
     ReactionPicker,
     CreateDm,
     CreateGroup,
@@ -53,17 +56,15 @@ pub enum Modal {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageMenuAction {
+    ViewFull,
     Reply,
     Reaction,
 }
 
 impl MessageMenuAction {
-    pub fn all() -> [Self; 2] {
-        [Self::Reply, Self::Reaction]
-    }
-
     pub fn label(self) -> &'static str {
         match self {
+            Self::ViewFull => "view full",
             Self::Reply => "reply",
             Self::Reaction => "reaction",
         }
@@ -156,6 +157,8 @@ pub struct App {
     pub active_history_loading: bool,
     pub messages: Vec<HistoryItem>,
     pub selected_message: usize,
+    pub detail_scroll: usize,
+    pub detail_message_id: Option<String>,
     pub input: String,
     pub cursor: usize,
     pub reply_to_message_id: Option<String>,
@@ -189,6 +192,8 @@ impl App {
                 active_history_loading: false,
                 messages: Vec::new(),
                 selected_message: 0,
+                detail_scroll: 0,
+                detail_message_id: None,
                 input: String::new(),
                 cursor: 0,
                 reply_to_message_id: None,
@@ -577,6 +582,7 @@ impl App {
             Modal::None => self.handle_key_without_modal(key),
             Modal::Help => self.handle_help_key(key),
             Modal::MessageMenu => self.handle_message_menu_key(key),
+            Modal::MessageDetail => self.handle_message_detail_key(key),
             Modal::ReactionPicker => self.handle_reaction_picker_key(key),
             Modal::CreateDm => self.handle_create_dm_key(key),
             Modal::CreateGroup => self.handle_create_group_key(key),
@@ -594,6 +600,7 @@ impl App {
         match self.modal {
             Modal::Help
             | Modal::MessageMenu
+            | Modal::MessageDetail
             | Modal::ReactionPicker
             | Modal::CreateDm
             | Modal::CreateGroup
@@ -604,6 +611,10 @@ impl App {
             | Modal::GroupRemoveMembers
             | Modal::GroupRename
             | Modal::GroupLeaveConfirm => {
+                if self.modal == Modal::MessageDetail {
+                    self.detail_scroll = 0;
+                    self.detail_message_id = None;
+                }
                 self.modal = Modal::None;
                 self.exit_armed = false;
                 return Vec::new();
@@ -830,13 +841,18 @@ impl App {
                 }
             }
             KeyCode::Down => {
-                if self.message_menu_index + 1 < MessageMenuAction::all().len() {
+                if self.message_menu_index + 1 < self.message_menu_actions().len() {
                     self.message_menu_index += 1;
                 }
             }
             KeyCode::Enter => {
                 if let Some(message) = self.selected_history_item() {
-                    match MessageMenuAction::all()[self.message_menu_index] {
+                    match self.message_menu_actions()[self.message_menu_index] {
+                        MessageMenuAction::ViewFull => {
+                            self.detail_message_id = Some(message.message_id.clone());
+                            self.detail_scroll = 0;
+                            self.modal = Modal::MessageDetail;
+                        }
                         MessageMenuAction::Reply => {
                             self.reply_to_message_id = Some(message.message_id.clone());
                             self.modal = Modal::None;
@@ -850,6 +866,21 @@ impl App {
                 } else {
                     self.modal = Modal::None;
                 }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_message_detail_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Up => {
+                if self.detail_scroll > 0 {
+                    self.detail_scroll -= 1;
+                }
+            }
+            KeyCode::Down => {
+                self.detail_scroll = self.detail_scroll.saturating_add(1);
             }
             _ => {}
         }
@@ -1281,6 +1312,8 @@ impl App {
         self.active_conversation = Some(conversation.clone());
         self.active_info = None;
         self.active_history_loading = true;
+        self.detail_scroll = 0;
+        self.detail_message_id = None;
         self.group_management.info = None;
         self.group_management.members.clear();
         self.group_management.selected_member = 0;
@@ -1310,8 +1343,53 @@ impl App {
         }
     }
 
+    pub fn message_menu_actions(&self) -> Vec<MessageMenuAction> {
+        let mut actions = Vec::new();
+        if self.selected_message_can_view_full() {
+            actions.push(MessageMenuAction::ViewFull);
+        }
+        actions.push(MessageMenuAction::Reply);
+        actions.push(MessageMenuAction::Reaction);
+        actions
+    }
+
+    pub fn detail_message(&self) -> Option<&HistoryItem> {
+        let detail_id = self.detail_message_id.as_deref()?;
+        self.messages.iter().find(|item| item.message_id == detail_id)
+    }
+
     pub fn input_char_len(&self) -> usize {
         self.input.chars().count()
+    }
+
+    fn selected_message_can_view_full(&self) -> bool {
+        const THRESHOLD: usize = 4;
+        const PREVIEW_WIDTH: usize = 72;
+
+        let Some(item) = self.selected_history_item() else {
+            return false;
+        };
+
+        let line_count = if item.content_kind == "markdown" {
+            let rendered = render_markdown(&item.content, PREVIEW_WIDTH);
+            let non_empty = rendered
+                .iter()
+                .filter(|line| {
+                    line.spans
+                        .iter()
+                        .any(|span| !span.content.as_ref().trim().is_empty())
+                })
+                .count();
+            if non_empty == 0 {
+                wrap_text_lines_for_count(&item.content, PREVIEW_WIDTH)
+            } else {
+                non_empty
+            }
+        } else {
+            wrap_text_lines_for_count(&item.content, PREVIEW_WIDTH)
+        };
+
+        line_count > THRESHOLD
     }
 
     fn input_byte_index(&self, cursor: usize) -> usize {
@@ -1524,6 +1602,15 @@ fn push_permission_update(
 
 pub fn reaction_choices() -> [&'static str; 5] {
     ["👍", "❤️", "🔥", "😂", "👀"]
+}
+
+fn wrap_text_lines_for_count(text: &str, width: usize) -> usize {
+    let mut lines = 0usize;
+    for raw_line in text.split('\n') {
+        let wrapped = wrap(raw_line, width.max(1));
+        lines += wrapped.len().max(1);
+    }
+    lines.max(1)
 }
 
 fn normalize_history(items: Vec<HistoryItem>) -> Vec<HistoryItem> {

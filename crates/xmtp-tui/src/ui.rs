@@ -8,7 +8,7 @@ use ratatui::{Frame, prelude::Alignment};
 use textwrap::wrap;
 
 use crate::app::{
-    App, Focus, GroupDialogField, GroupManagementAction, MessageMenuAction, Modal,
+    App, Focus, GroupDialogField, GroupManagementAction, Modal,
     reaction_choices,
 };
 use crate::format::{format_clock, format_day_tag, short_display_id};
@@ -24,6 +24,7 @@ enum MessageRowKind {
 
 struct MessageRow<'a> {
     kind: MessageRowKind,
+    is_collapsed: bool,
     item: ListItem<'a>,
 }
 
@@ -52,6 +53,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Modal::None => {}
         Modal::Help => render_help(frame),
         Modal::MessageMenu => render_message_menu(frame, app),
+        Modal::MessageDetail => render_message_detail(frame, app),
         Modal::ReactionPicker => render_reaction_picker(frame, app),
         Modal::CreateDm => render_create_dm(frame, app),
         Modal::CreateGroup => render_create_group(frame, app),
@@ -164,6 +166,7 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
         MessageRowKind::Message(index) => index == app.selected_message,
         MessageRowKind::DateSeparator | MessageRowKind::ReplyContext | MessageRowKind::Reactions => false,
     });
+    let _selected_row_is_collapsed = selected_row.and_then(|index| rows.get(index).map(|row| row.is_collapsed));
     let mut items = Vec::with_capacity(rows.len());
     for row in &rows {
         items.push(row.item.clone());
@@ -183,6 +186,8 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
+    const THRESHOLD: usize = 4;
+
     let mut rows = Vec::new();
     let mut last_day: Option<String> = None;
     let wrap_width = width.max(1) as usize;
@@ -193,6 +198,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             last_day = Some(day_tag.clone());
             rows.push(MessageRow {
                 kind: MessageRowKind::DateSeparator,
+                is_collapsed: false,
                 item: ListItem::new(Line::from(Span::styled(
                     format!("----- {} ----", day_tag),
                     Style::default().dark_gray().bg(Color::Reset),
@@ -218,6 +224,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             };
             rows.push(MessageRow {
                 kind: MessageRowKind::ReplyContext,
+                is_collapsed: false,
                 item: ListItem::new(Line::from(Span::styled(
                     reply_line,
                     Style::default().fg(Color::Gray).bg(Color::Reset),
@@ -232,16 +239,21 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
         } else {
             short_display_id(&item.sender_inbox_id)
         };
-        let header = format!("{} [{}] ", format_clock(item.sent_at_ns), sender_display);
-        let lines = if item.content_kind == "markdown" {
-            let indent = " ".repeat(header.chars().count());
-            let rendered = render_markdown(&item.content, wrap_width.saturating_sub(indent.len()).max(1));
+        let header = format!("{} [{}]", format_clock(item.sent_at_ns), sender_display);
+        let header_line = Line::from(Span::styled(
+            header,
+            Style::default()
+                .fg(app.color_for_message(item))
+                .bg(Color::Reset),
+        ));
+
+        let mut content_lines = if item.content_kind == "markdown" {
+            let rendered = render_markdown(&item.content, wrap_width.max(1));
             if rendered
                 .iter()
                 .all(|line| line.spans.iter().all(|span| span.content.as_ref().trim().is_empty()))
             {
-                let message_line = format!("{}{}", header, content);
-                wrap_text_lines(&message_line, wrap_width)
+                wrap_text_lines(&content, wrap_width)
                     .into_iter()
                     .map(|segment| {
                         Line::from(Span::styled(
@@ -253,42 +265,13 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
                     })
                     .collect::<Vec<_>>()
             } else {
-                let mut lines = Vec::with_capacity(rendered.len().max(1));
-                for (line_index, line) in rendered.into_iter().enumerate() {
-                    let mut spans = Vec::new();
-                    if line_index == 0 {
-                        spans.push(Span::styled(
-                            header.clone(),
-                            Style::default()
-                                .fg(app.color_for_message(item))
-                                .bg(Color::Reset),
-                        ));
-                    } else {
-                        spans.push(Span::raw(indent.clone()));
-                    }
-                    spans.extend(line.spans);
-                    lines.push(Line::from(spans));
-                }
-                if lines.is_empty() {
-                    let message_line = format!("{}{}", header, content);
-                    wrap_text_lines(&message_line, wrap_width)
-                        .into_iter()
-                        .map(|segment| {
-                            Line::from(Span::styled(
-                                segment,
-                                Style::default()
-                                    .fg(app.color_for_message(item))
-                                    .bg(Color::Reset),
-                            ))
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    lines
-                }
+                rendered
+                    .into_iter()
+                    .map(|line| line.style(Style::default().bg(Color::Reset)))
+                    .collect::<Vec<_>>()
             }
         } else {
-            let message_line = format!("{}{}", header, content);
-            wrap_text_lines(&message_line, wrap_width)
+            wrap_text_lines(&content, wrap_width)
                 .into_iter()
                 .map(|segment| {
                     Line::from(Span::styled(
@@ -301,14 +284,45 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
                 .collect::<Vec<_>>()
         };
 
+        if content_lines.is_empty() {
+            content_lines.push(Line::from(Span::styled(
+                content.clone(),
+                Style::default()
+                    .fg(app.color_for_message(item))
+                    .bg(Color::Reset),
+            )));
+        }
+
+        let is_collapsed = content_lines.len() > THRESHOLD;
+        let mut preview_lines = if is_collapsed {
+            content_lines.into_iter().take(THRESHOLD).collect::<Vec<_>>()
+        } else {
+            content_lines
+        };
+
+        if is_collapsed {
+            if let Some(last_line) = preview_lines.last_mut() {
+                last_line.spans.push(Span::styled(
+                    " ... (Enter: view full)",
+                    Style::default().dark_gray().bg(Color::Reset),
+                ));
+            }
+        }
+
+        let mut lines = Vec::with_capacity(preview_lines.len() + 1);
+        lines.push(header_line);
+        lines.extend(preview_lines);
+
         rows.push(MessageRow {
             kind: MessageRowKind::Message(index),
+            is_collapsed,
             item: ListItem::new(lines).style(Style::default().bg(Color::Reset)),
         });
 
         if let Some(reactions_line) = format_reactions_line(item) {
             rows.push(MessageRow {
                 kind: MessageRowKind::Reactions,
+                is_collapsed: false,
                 item: ListItem::new(Line::from(Span::styled(
                     format!("  reactions: {reactions_line}"),
                     Style::default().fg(Color::Gray).bg(Color::Reset),
@@ -562,7 +576,8 @@ fn render_message_menu(frame: &mut Frame<'_>, app: &App) {
         .get(app.selected_message)
         .map(|item| short_display_id(&item.message_id))
         .unwrap_or_else(|| "-".to_owned());
-    let items: Vec<ListItem<'_>> = MessageMenuAction::all()
+    let items: Vec<ListItem<'_>> = app
+        .message_menu_actions()
         .into_iter()
         .map(|action| ListItem::new(action.label()))
         .collect();
@@ -575,6 +590,54 @@ fn render_message_menu(frame: &mut Frame<'_>, app: &App) {
         )
         .highlight_style(Style::default().reversed());
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_rect(88, 84, frame.area());
+    frame.render_widget(Clear, area);
+    let Some(message) = app.detail_message() else {
+        let paragraph = Paragraph::new("Message not found")
+            .block(Block::default().title("Message Detail").borders(Borders::ALL))
+            .alignment(Alignment::Center);
+        frame.render_widget(paragraph, area);
+        return;
+    };
+
+    let mut lines = vec![
+        Line::from(format!(
+            "{} [{}]",
+            format_clock(message.sent_at_ns),
+            if app.self_inbox_id() == Some(message.sender_inbox_id.as_str()) {
+                "You".to_owned()
+            } else {
+                short_display_id(&message.sender_inbox_id)
+            }
+        )),
+        Line::from(""),
+    ];
+    if message.content_kind == "markdown" {
+        lines.extend(render_markdown(
+            &message.content,
+            area.width.saturating_sub(4).max(1) as usize,
+        ));
+    } else {
+        lines.extend(
+            wrap_text_lines(&message.content, area.width.saturating_sub(4).max(1) as usize)
+                .into_iter()
+                .map(Line::from),
+        );
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "↑↓ 滚动  Esc 关闭",
+        Style::default().dark_gray(),
+    )));
+
+    let paragraph = Paragraph::new(lines)
+        .block(Block::default().title("Message Detail").borders(Borders::ALL))
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll as u16, 0));
+    frame.render_widget(paragraph, area);
 }
 
 fn render_help(frame: &mut Frame<'_>) {
