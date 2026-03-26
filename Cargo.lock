@@ -4175,6 +4175,7 @@ checksum = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",
@@ -4981,6 +4982,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "assert_cmd",
+ "async-trait",
  "chrono",
  "clap",
  "eventsource-stream",
@@ -4992,6 +4994,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "xmtp-config",
  "xmtp-core",
  "xmtp-daemon",
