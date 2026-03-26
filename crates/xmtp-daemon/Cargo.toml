@@ -16,7 +16,7 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-xmtp.workspace = true
+xmtp = { path = "../../../xmtp-fork/xmtp", features = ["alloy"] }
 xmtp-config = { path = "../xmtp-config" }
 xmtp-core = { path = "../xmtp-core" }
 xmtp-ipc = { path = "../xmtp-ipc" }

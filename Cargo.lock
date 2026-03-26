@@ -4716,8 +4716,6 @@ dependencies = [
 [[package]]
 name = "xmtp"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94945fdb64433390b926f7525cf7d840d3ccb1f5495a970e99b76a1ac39b0710"
 dependencies = [
  "alloy-signer",
  "alloy-signer-local",
@@ -4779,6 +4777,7 @@ dependencies = [
  "chrono",
  "eventsource-stream",
  "futures-util",
+ "prost",
  "reqwest",
  "serde",
  "serde_json",
@@ -4830,8 +4829,6 @@ dependencies = [
 [[package]]
 name = "xmtp-sys"
 version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8f67f31ad52933957f247ee4c8cdb13fcffb2e79e112249dac97abb8afdd62c"
 dependencies = [
  "flate2",
  "tar",

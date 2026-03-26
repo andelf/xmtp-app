@@ -248,6 +248,7 @@ pub struct HistoryEntry {
     pub reaction_target_message_id: Option<String>,
     pub reaction_emoji: Option<String>,
     pub reaction_action: Option<String>,
+    pub attached_reactions: Vec<ReactionDetail>,
 }
 
 pub fn list_conversations(data_dir: &Path) -> anyhow::Result<Vec<ConversationSummary>> {
@@ -795,6 +796,7 @@ fn history_entry_from_message(message: &xmtp::conversation::Message) -> HistoryE
         reaction_target_message_id: item.reaction_target_message_id,
         reaction_emoji: item.reaction_emoji,
         reaction_action: item.reaction_action,
+        attached_reactions: item.attached_reactions,
     }
 }
 
@@ -893,7 +895,15 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
         reaction_target_message_id,
         reaction_emoji,
         reaction_action,
-        attached_reactions: Vec::<ReactionDetail>::new(),
+        attached_reactions: message
+            .reactions
+            .iter()
+            .map(|reaction| ReactionDetail {
+                sender_inbox_id: reaction.sender_inbox_id.clone(),
+                emoji: reaction.emoji.clone(),
+                action: reaction.action.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -1382,7 +1392,7 @@ impl DaemonApp {
                 reaction_target_message_id: item.reaction_target_message_id,
                 reaction_emoji: item.reaction_emoji,
                 reaction_action: item.reaction_action,
-                attached_reactions: Vec::new(),
+                attached_reactions: item.attached_reactions,
             })
             .collect();
         Ok(HistoryResponse { items })
