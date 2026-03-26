@@ -506,6 +506,9 @@ impl App {
 
         if key.code == KeyCode::Tab {
             if self.modal == Modal::None {
+                if self.focus == Focus::Messages {
+                    self.reset_selected_message_to_end();
+                }
                 self.focus = self.focus.next();
             } else if self.modal == Modal::CreateGroup {
                 self.group_dialog.field = Some(match self.group_dialog.field.unwrap_or(GroupDialogField::Name) {
@@ -517,6 +520,9 @@ impl App {
         }
         if key.code == KeyCode::BackTab {
             if self.modal == Modal::None {
+                if self.focus == Focus::Messages {
+                    self.reset_selected_message_to_end();
+                }
                 self.focus = self.focus.previous();
             } else if self.modal == Modal::CreateGroup {
                 self.group_dialog.field = Some(match self.group_dialog.field.unwrap_or(GroupDialogField::Name) {
@@ -570,6 +576,9 @@ impl App {
         }
 
         if self.focus != Focus::Conversations {
+            if self.focus == Focus::Messages {
+                self.reset_selected_message_to_end();
+            }
             self.focus = Focus::Conversations;
             self.exit_armed = false;
             return Vec::new();
@@ -1081,6 +1090,10 @@ impl App {
     }
 
     fn activate_conversation(&mut self, conversation: ConversationItem) -> Vec<Effect> {
+        if self.active_conversation_id.as_deref() == Some(conversation.id.as_str()) {
+            self.active_conversation = Some(conversation);
+            return Vec::new();
+        }
         if let Some(current_id) = self.active_conversation_id.clone() {
             if self.input.trim().is_empty() {
                 self.drafts.remove(&current_id);
@@ -1100,10 +1113,14 @@ impl App {
         self.group_management.members.clear();
         self.group_management.selected_member = 0;
         self.messages.clear();
-        self.selected_message = 0;
+        self.selected_message = self.messages.len().saturating_sub(1);
         vec![Effect::SwitchConversation {
             conversation_id: conversation.id,
         }]
+    }
+
+    fn reset_selected_message_to_end(&mut self) {
+        self.selected_message = self.messages.len().saturating_sub(1);
     }
 
     pub fn self_inbox_id(&self) -> Option<&str> {
@@ -1316,6 +1333,24 @@ mod tests {
     use super::{App, Focus, GroupDialogField, Modal};
     use crate::event::Effect;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use xmtp_ipc::{ConversationItem, HistoryItem};
+
+    fn sample_history_item(message_id: &str, content: &str) -> HistoryItem {
+        HistoryItem {
+            message_id: message_id.to_owned(),
+            sender_inbox_id: "sender-1".to_owned(),
+            sent_at_ns: 1,
+            content_kind: "text".to_owned(),
+            content: content.to_owned(),
+            reply_count: 0,
+            reaction_count: 0,
+            reply_target_message_id: None,
+            reaction_target_message_id: None,
+            reaction_emoji: None,
+            reaction_action: None,
+            attached_reactions: Vec::new(),
+        }
+    }
 
     #[test]
     fn focus_cycles_forward() {
@@ -2286,5 +2321,86 @@ mod tests {
         ));
         assert_eq!(app.input, "draft message");
         assert!(app.reply_to_message_id.is_none());
+    }
+
+    #[test]
+    fn switching_to_different_conversation_resets_selected_message_to_end() {
+        let (mut app, _) = App::new();
+        app.active_conversation_id = Some("conv-1".into());
+        app.active_conversation = Some(ConversationItem {
+            id: "conv-1".into(),
+            kind: "dm".into(),
+            name: Some("first".into()),
+            dm_peer_inbox_id: Some("peer-a".into()),
+            last_message_ns: Some(10),
+        });
+        app.messages = vec![
+            sample_history_item("msg-1", "one"),
+            sample_history_item("msg-2", "two"),
+            sample_history_item("msg-3", "three"),
+        ];
+        app.selected_message = 0;
+
+        let effects = app.activate_conversation(ConversationItem {
+            id: "conv-2".into(),
+            kind: "dm".into(),
+            name: Some("second".into()),
+            dm_peer_inbox_id: Some("peer-b".into()),
+            last_message_ns: Some(20),
+        });
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-2"
+        ));
+        assert_eq!(app.selected_message, 0);
+    }
+
+    #[test]
+    fn leaving_messages_focus_resets_selected_message_to_end() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Messages;
+        app.messages = vec![
+            sample_history_item("msg-1", "one"),
+            sample_history_item("msg-2", "two"),
+            sample_history_item("msg-3", "three"),
+        ];
+        app.selected_message = 0;
+
+        let _ = app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+        assert_eq!(app.focus, Focus::Input);
+        assert_eq!(app.selected_message, 2);
+    }
+
+    #[test]
+    fn reactivating_same_conversation_keeps_selected_message_position() {
+        let (mut app, _) = App::new();
+        app.active_conversation_id = Some("conv-1".into());
+        app.active_conversation = Some(ConversationItem {
+            id: "conv-1".into(),
+            kind: "dm".into(),
+            name: Some("first".into()),
+            dm_peer_inbox_id: Some("peer-a".into()),
+            last_message_ns: Some(10),
+        });
+        app.messages = vec![
+            sample_history_item("msg-1", "one"),
+            sample_history_item("msg-2", "two"),
+            sample_history_item("msg-3", "three"),
+        ];
+        app.selected_message = 1;
+
+        let effects = app.activate_conversation(ConversationItem {
+            id: "conv-1".into(),
+            kind: "dm".into(),
+            name: Some("first updated".into()),
+            dm_peer_inbox_id: Some("peer-a".into()),
+            last_message_ns: Some(11),
+        });
+
+        assert!(effects.is_empty());
+        assert_eq!(app.selected_message, 1);
+        assert_eq!(app.active_conversation.as_ref().and_then(|c| c.name.as_deref()), Some("first updated"));
     }
 }
