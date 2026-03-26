@@ -474,27 +474,27 @@ fn login_network_defaults(network: Network) -> LoginNetworkDefaults<'static> {
     match network {
         Network::Local => LoginNetworkDefaults {
             env: "local",
-            api_url: Some("http://localhost:5558"),
+            api_url: Some("http://localhost:5556"),
             gateway_url: None,
         },
         Network::Dev => LoginNetworkDefaults {
             env: "dev",
-            api_url: Some("https://api.dev.xmtp.network:5558"),
+            api_url: Some("https://grpc.dev.xmtp.network:443"),
             gateway_url: None,
         },
         Network::Production => LoginNetworkDefaults {
             env: "production",
-            api_url: None,
+            api_url: Some("https://grpc.production.xmtp.network:443"),
             gateway_url: None,
         },
         Network::D14nDev => LoginNetworkDefaults {
             env: "dev",
-            api_url: Some("https://api.dev.xmtp.network:5558"),
+            api_url: Some("https://grpc.dev.xmtp.network:443"),
             gateway_url: Some("https://payer.testnet-dev.xmtp.network:443"),
         },
         Network::D14nStaging => LoginNetworkDefaults {
             env: "dev",
-            api_url: Some("https://api.dev.xmtp.network:5558"),
+            api_url: Some("https://grpc.dev.xmtp.network:443"),
             gateway_url: Some("https://payer.testnet-staging.xmtp.network"),
         },
         Network::D14nTestnet => LoginNetworkDefaults {
@@ -507,22 +507,22 @@ fn login_network_defaults(network: Network) -> LoginNetworkDefaults<'static> {
 
 fn infer_network_name(config: &AppConfig) -> &'static str {
     if config.xmtp_env == "local"
-        && config.api_url.as_deref() == Some("http://localhost:5558")
+        && config.api_url.as_deref() == Some("http://localhost:5556")
         && config.gateway_url.is_none()
     {
         "local"
     } else if config.xmtp_env == "production"
-        && config.api_url.is_none()
+        && config.api_url.as_deref() == Some("https://grpc.production.xmtp.network:443")
         && config.gateway_url.is_none()
     {
         "production"
     } else if config.xmtp_env == "dev"
-        && config.api_url.as_deref() == Some("https://api.dev.xmtp.network:5558")
+        && config.api_url.as_deref() == Some("https://grpc.dev.xmtp.network:443")
         && config.gateway_url.as_deref() == Some("https://payer.testnet-dev.xmtp.network:443")
     {
         "d14n-dev"
     } else if config.xmtp_env == "dev"
-        && config.api_url.as_deref() == Some("https://api.dev.xmtp.network:5558")
+        && config.api_url.as_deref() == Some("https://grpc.dev.xmtp.network:443")
         && config.gateway_url.as_deref() == Some("https://payer.testnet-staging.xmtp.network")
     {
         "d14n-staging"
@@ -532,7 +532,7 @@ fn infer_network_name(config: &AppConfig) -> &'static str {
     {
         "d14n-testnet"
     } else if config.xmtp_env == "dev"
-        && config.api_url.as_deref() == Some("https://api.dev.xmtp.network:5558")
+        && config.api_url.as_deref() == Some("https://grpc.dev.xmtp.network:443")
         && config.gateway_url.is_none()
     {
         "dev"
