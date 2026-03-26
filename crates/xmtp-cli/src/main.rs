@@ -15,11 +15,11 @@ use xmtp_daemon::{
 };
 use xmtp_core::{ConnectionState, DaemonState, StateSnapshot, SyncPhase, SyncState};
 use xmtp_ipc::{
-    ActionResponse, ConversationInfoResponse, ConversationItem, ConversationListResponse,
-    DaemonEventData, DaemonEventEnvelope, EmojiRequest, GroupCreateRequest, GroupInfoResponse,
-    GroupMemberItem, GroupMembersResponse, GroupMembersUpdateRequest, LoginRequest,
-    MessageInfoResponse, RecipientMessageRequest, RenameGroupRequest, SendDmResponse,
-    SendMessageRequest, StatusResponse,
+    ActionResponse, ApiErrorBody, ConversationInfoResponse, ConversationItem,
+    ConversationListResponse, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
+    GroupCreateRequest, GroupInfoResponse, GroupMemberItem, GroupMembersResponse,
+    GroupMembersUpdateRequest, LoginRequest, MessageInfoResponse, RecipientMessageRequest,
+    RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
 };
 use xmtp_logging::{
     daemon_events_log_path, daemon_stderr_log_path, daemon_stdout_log_path, ensure_logs_dir,
@@ -983,16 +983,12 @@ where
     T: serde::de::DeserializeOwned,
 {
     let base_url = daemon_base_url(data_dir)?;
-    http_client()
+    let response = http_client()
         .get(format!("{base_url}{path}"))
         .send()
         .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?
-        .json()
-        .await
-        .context("decode daemon http response")
+        .context("send daemon http request")?;
+    decode_json_response(response).await
 }
 
 async fn http_get_with_query<T, Q>(data_dir: &PathBuf, path: &str, query: &Q) -> anyhow::Result<T>
@@ -1002,17 +998,13 @@ where
 {
     ensure_daemon_running(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
-    http_client()
+    let response = http_client()
         .get(format!("{base_url}{path}"))
         .query(query)
         .send()
         .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?
-        .json()
-        .await
-        .context("decode daemon http response")
+        .context("send daemon http request")?;
+    decode_json_response(response).await
 }
 
 async fn http_post<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
@@ -1022,17 +1014,13 @@ where
 {
     ensure_daemon_running(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
-    http_client()
+    let response = http_client()
         .post(format!("{base_url}{path}"))
         .json(body)
         .send()
         .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?
-        .json()
-        .await
-        .context("decode daemon http response")
+        .context("send daemon http request")?;
+    decode_json_response(response).await
 }
 
 async fn http_patch<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
@@ -1042,17 +1030,13 @@ where
 {
     ensure_daemon_running(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
-    http_client()
+    let response = http_client()
         .patch(format!("{base_url}{path}"))
         .json(body)
         .send()
         .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?
-        .json()
-        .await
-        .context("decode daemon http response")
+        .context("send daemon http request")?;
+    decode_json_response(response).await
 }
 
 async fn http_delete<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
@@ -1062,28 +1046,59 @@ where
 {
     ensure_daemon_running(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
-    http_client()
+    let response = http_client()
         .delete(format!("{base_url}{path}"))
         .json(body)
         .send()
         .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?
+        .context("send daemon http request")?;
+    decode_json_response(response).await
+}
+
+async fn http_post_empty(data_dir: &PathBuf, path: &str) -> anyhow::Result<()> {
+    let base_url = daemon_base_url(data_dir)?;
+    let response = http_client()
+        .post(format!("{base_url}{path}"))
+        .send()
+        .await
+        .context("send daemon http request")?;
+    decode_empty_response(response).await
+}
+
+async fn decode_json_response<T>(response: reqwest::Response) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .context("read daemon http error body")?;
+        if let Ok(body) = serde_json::from_str::<ApiErrorBody>(&body) {
+            anyhow::bail!(body.error.message);
+        }
+        anyhow::bail!("daemon http status: {status}");
+    }
+
+    response
         .json()
         .await
         .context("decode daemon http response")
 }
 
-async fn http_post_empty(data_dir: &PathBuf, path: &str) -> anyhow::Result<()> {
-    let base_url = daemon_base_url(data_dir)?;
-    http_client()
-        .post(format!("{base_url}{path}"))
-        .send()
-        .await
-        .context("send daemon http request")?
-        .error_for_status()
-        .context("daemon http status")?;
+async fn decode_empty_response(response: reqwest::Response) -> anyhow::Result<()> {
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .context("read daemon http error body")?;
+        if let Ok(body) = serde_json::from_str::<ApiErrorBody>(&body) {
+            anyhow::bail!(body.error.message);
+        }
+        anyhow::bail!("daemon http status: {status}");
+    }
     Ok(())
 }
 
@@ -1109,9 +1124,7 @@ async fn probe_daemon_status(data_dir: &PathBuf) -> anyhow::Result<()> {
         .timeout(Duration::from_millis(500))
         .send()
         .await
-        .context("send daemon status probe")?
-        .error_for_status()
-        .context("daemon status probe failed")?;
+        .context("send daemon status probe")?;
     Ok(())
 }
 

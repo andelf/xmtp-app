@@ -80,6 +80,7 @@ pub fn login_with_adapter(
     env: &str,
     data_dir: &Path,
 ) -> anyhow::Result<()> {
+    ensure_initialized(data_dir)?;
     let runtime = adapter.connect(env, data_dir)?;
     let mut state = load_state(&data_dir.join("state.json"))?;
     state.daemon_state = DaemonState::Running;
@@ -151,6 +152,7 @@ fn build_client(config: &AppConfig, signer: &AlloySigner, data_dir: &Path) -> an
 }
 
 fn open_client_with_login(data_dir: &Path, env: &str) -> anyhow::Result<Client> {
+    ensure_initialized(data_dir)?;
     let signer_hex = load_or_create_signer_key_hex(data_dir)?;
     let signer = AlloySigner::from_hex(&signer_hex).context("load signer from hex")?;
     let mut config = load_config(&data_dir.join("config.json"))?;
@@ -162,10 +164,23 @@ fn open_client_with_login(data_dir: &Path, env: &str) -> anyhow::Result<Client> 
 }
 
 pub fn configure_runtime(data_dir: &Path, env: &str, api_url: Option<&str>) -> anyhow::Result<()> {
+    ensure_initialized(data_dir)?;
     let mut config = load_config(&data_dir.join("config.json"))?;
     config.xmtp_env = env.to_owned();
     config.api_url = api_url.map(str::to_owned);
     save_config(&data_dir.join("config.json"), &config)
+}
+
+fn ensure_initialized(data_dir: &Path) -> anyhow::Result<()> {
+    let config_path = data_dir.join("config.json");
+    let state_path = data_dir.join("state.json");
+    if config_path.exists() && state_path.exists() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "data dir is not initialized; run `xmtp-cli --data-dir {} init` first",
+        data_dir.display()
+    );
 }
 
 pub struct ConversationSummary {
@@ -365,6 +380,7 @@ pub fn message_info(data_dir: &Path, message_id: &str) -> anyhow::Result<Message
 }
 
 fn open_existing_client(data_dir: &Path) -> anyhow::Result<Client> {
+    ensure_initialized(data_dir)?;
     let signer_hex = load_or_create_signer_key_hex(data_dir)?;
     let signer = AlloySigner::from_hex(&signer_hex).context("load signer from hex")?;
     let config = load_config(&data_dir.join("config.json"))?;
@@ -1084,6 +1100,7 @@ impl DaemonApp {
     }
 
     fn status(&self) -> anyhow::Result<StatusResponse> {
+        ensure_initialized(&self.data_dir)?;
         let state = load_state(&self.data_dir.join("state.json"))?;
         Ok(StatusResponse {
             daemon_state: state.daemon_state,
