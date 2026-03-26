@@ -2,7 +2,8 @@ use xmtp_core::{ConnectionState, DaemonState};
 use xmtp_ipc::{
     ApiErrorBody, ApiErrorDetail, ConversationUpdatedEvent, DaemonEventData, DaemonEventEnvelope,
     EmojiRequest, GroupCreateRequest, GroupMembersUpdatedEvent, HistoryItem, LoginRequest,
-    RecipientMessageRequest, RecipientRequest, SendMessageRequest, StatusResponse,
+    ReadReceiptConfig, RecipientMessageRequest, RecipientRequest, SendMessageRequest,
+    StatusResponse,
 };
 
 #[test]
@@ -17,7 +18,10 @@ fn login_request_roundtrips_as_json() {
     let decoded: LoginRequest = serde_json::from_str(&json).expect("deserialize login request");
 
     assert_eq!(decoded.env, "dev");
-    assert_eq!(decoded.api_url.as_deref(), Some("https://grpc.dev.xmtp.network:443"));
+    assert_eq!(
+        decoded.api_url.as_deref(),
+        Some("https://grpc.dev.xmtp.network:443")
+    );
     assert_eq!(
         decoded.gateway_url.as_deref(),
         Some("https://payer.testnet-staging.xmtp.network")
@@ -54,6 +58,7 @@ fn group_and_message_requests_roundtrip_as_json() {
     let group = GroupCreateRequest {
         name: Some("team".to_owned()),
         members: vec!["member-1".to_owned(), "member-2".to_owned()],
+        permission_preset: None,
     };
     let send = SendMessageRequest {
         message: "hi".to_owned(),
@@ -105,7 +110,10 @@ fn daemon_event_envelope_roundtrips_as_json() {
     match decoded.payload {
         DaemonEventData::Status(status) => {
             assert!(matches!(status.daemon_state, DaemonState::Running));
-            assert!(matches!(status.connection_state, ConnectionState::Connected));
+            assert!(matches!(
+                status.connection_state,
+                ConnectionState::Connected
+            ));
             assert_eq!(status.inbox_id.as_deref(), Some("inbox-123"));
         }
         _ => panic!("unexpected event payload"),
@@ -131,6 +139,7 @@ fn history_event_roundtrips_as_json() {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: vec!["reader-1".to_owned()],
             },
         },
     };
@@ -147,9 +156,21 @@ fn history_event_roundtrips_as_json() {
             assert_eq!(conversation_id, "conv-1");
             assert_eq!(item.message_id, "msg-1");
             assert_eq!(item.content, "hello");
+            assert_eq!(item.read_by, vec!["reader-1".to_owned()]);
         }
         _ => panic!("unexpected history payload"),
     }
+}
+
+#[test]
+fn read_receipt_config_roundtrips_as_json() {
+    let config = ReadReceiptConfig { auto_send: true };
+
+    let json = serde_json::to_string(&config).expect("serialize read receipt config");
+    let decoded: ReadReceiptConfig =
+        serde_json::from_str(&json).expect("deserialize read receipt config");
+
+    assert!(decoded.auto_send);
 }
 
 #[test]

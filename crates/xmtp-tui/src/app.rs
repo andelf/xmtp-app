@@ -60,6 +60,7 @@ pub enum MessageMenuAction {
     ViewFull,
     Reply,
     Reaction,
+    SendReadReceipt,
 }
 
 impl MessageMenuAction {
@@ -68,6 +69,7 @@ impl MessageMenuAction {
             Self::ViewFull => "view full",
             Self::Reply => "reply",
             Self::Reaction => "reaction",
+            Self::SendReadReceipt => "send read receipt",
         }
     }
 }
@@ -157,6 +159,7 @@ pub struct App {
     pub active_info: Option<ConversationInfoResponse>,
     pub active_history_loading: bool,
     pub messages: Vec<HistoryItem>,
+    pub read_receipt_auto_send: bool,
     pub selected_message: usize,
     pub detail_scroll: usize,
     pub detail_message_id: Option<String>,
@@ -194,6 +197,7 @@ impl App {
                 active_info: None,
                 active_history_loading: false,
                 messages: Vec::new(),
+                read_receipt_auto_send: true,
                 selected_message: 0,
                 detail_scroll: 0,
                 detail_message_id: None,
@@ -269,7 +273,8 @@ impl App {
                 self.group_management.permissions_original = Some(permissions.clone());
                 self.group_management.permissions = Some(permissions);
                 self.group_management.permissions_loading = false;
-                self.group_management.permissions_cursor = self.group_management.permissions_cursor.min(7);
+                self.group_management.permissions_cursor =
+                    self.group_management.permissions_cursor.min(7);
                 Vec::new()
             }
             AppEvent::HistoryLoaded {
@@ -277,7 +282,9 @@ impl App {
                 items,
             } => {
                 if self.active_conversation_id.as_deref() == Some(conversation_id.as_str()) {
-                    let previous_selected = self.selected_history_item().map(|item| item.message_id.clone());
+                    let previous_selected = self
+                        .selected_history_item()
+                        .map(|item| item.message_id.clone());
                     let was_at_bottom = self.is_selected_message_at_end();
                     self.messages = normalize_history(items);
                     self.active_history_loading = false;
@@ -286,9 +293,14 @@ impl App {
                     } else {
                         previous_selected
                             .and_then(|message_id| {
-                                self.messages.iter().position(|item| item.message_id == message_id)
+                                self.messages
+                                    .iter()
+                                    .position(|item| item.message_id == message_id)
                             })
-                            .unwrap_or_else(|| self.selected_message.min(self.messages.len().saturating_sub(1)))
+                            .unwrap_or_else(|| {
+                                self.selected_message
+                                    .min(self.messages.len().saturating_sub(1))
+                            })
                     };
                 }
                 Vec::new()
@@ -303,7 +315,9 @@ impl App {
                     if was_at_bottom {
                         self.selected_message = self.messages.len().saturating_sub(1);
                     } else {
-                        self.selected_message = self.selected_message.min(self.messages.len().saturating_sub(1));
+                        self.selected_message = self
+                            .selected_message
+                            .min(self.messages.len().saturating_sub(1));
                     }
                 } else {
                     *self.unread_counts.entry(conversation_id).or_insert(0) += 1;
@@ -314,7 +328,8 @@ impl App {
             AppEvent::Error(error) => {
                 self.pending_status = None;
                 if let Some((suppressed, until)) = &self.suppressed_error
-                    && suppressed == &error && Instant::now() < *until
+                    && suppressed == &error
+                    && Instant::now() < *until
                 {
                     return Vec::new();
                 }
@@ -331,20 +346,24 @@ impl App {
             .map(|conversation| (conversation.id.clone(), conversation.last_message_ns))
             .collect::<HashMap<_, _>>();
         self.conversations = items;
-        self.unread_counts
-            .retain(|conversation_id, _| self.conversations.iter().any(|conversation| &conversation.id == conversation_id));
+        self.unread_counts.retain(|conversation_id, _| {
+            self.conversations
+                .iter()
+                .any(|conversation| &conversation.id == conversation_id)
+        });
         for conversation in &self.conversations {
-            let previous_last_message_ns = previous_markers
-                .get(&conversation.id)
-                .copied()
-                .flatten();
+            let previous_last_message_ns =
+                previous_markers.get(&conversation.id).copied().flatten();
             if self.active_conversation_id.as_deref() != Some(conversation.id.as_str())
                 && matches!(
                     (previous_last_message_ns, conversation.last_message_ns),
                     (Some(previous), Some(current)) if current > previous
                 )
             {
-                *self.unread_counts.entry(conversation.id.clone()).or_insert(0) += 1;
+                *self
+                    .unread_counts
+                    .entry(conversation.id.clone())
+                    .or_insert(0) += 1;
             }
         }
         if self.conversations.is_empty() {
@@ -383,11 +402,9 @@ impl App {
                 self.focus = Focus::Input;
                 self.dm_dialog = CreateDmDialog::default();
                 self.active_conversation_id = Some(result.conversation_id.clone());
-                vec![
-                    Effect::SwitchConversation {
-                        conversation_id: result.conversation_id,
-                    },
-                ]
+                vec![Effect::SwitchConversation {
+                    conversation_id: result.conversation_id,
+                }]
             }
             ActionOutcome::CreatedGroup(result) => {
                 self.pending_status = None;
@@ -399,11 +416,9 @@ impl App {
                     ..Default::default()
                 };
                 self.active_conversation_id = Some(result.conversation_id.clone());
-                vec![
-                    Effect::SwitchConversation {
-                        conversation_id: result.conversation_id,
-                    },
-                ]
+                vec![Effect::SwitchConversation {
+                    conversation_id: result.conversation_id,
+                }]
             }
             ActionOutcome::GroupUpdated(conversation_id) => {
                 self.modal = Modal::None;
@@ -487,6 +502,7 @@ impl App {
                             reaction_emoji: None,
                             reaction_action: None,
                             attached_reactions: Vec::new(),
+                            read_by: Vec::new(),
                         },
                     );
                     if self.should_auto_scroll_messages() {
@@ -548,7 +564,8 @@ impl App {
         }
         self.exit_armed = false;
 
-        if self.modal == Modal::None && matches!(key.code, KeyCode::Char('?') | KeyCode::Char('/')) {
+        if self.modal == Modal::None && matches!(key.code, KeyCode::Char('?') | KeyCode::Char('/'))
+        {
             self.modal = Modal::Help;
             return Vec::new();
         }
@@ -560,10 +577,12 @@ impl App {
                 }
                 self.focus = self.focus.next();
             } else if self.modal == Modal::CreateGroup {
-                self.group_dialog.field = Some(match self.group_dialog.field.unwrap_or(GroupDialogField::Name) {
-                    GroupDialogField::Name => GroupDialogField::Members,
-                    GroupDialogField::Members => GroupDialogField::Name,
-                });
+                self.group_dialog.field = Some(
+                    match self.group_dialog.field.unwrap_or(GroupDialogField::Name) {
+                        GroupDialogField::Name => GroupDialogField::Members,
+                        GroupDialogField::Members => GroupDialogField::Name,
+                    },
+                );
             }
             return Vec::new();
         }
@@ -574,10 +593,12 @@ impl App {
                 }
                 self.focus = self.focus.previous();
             } else if self.modal == Modal::CreateGroup {
-                self.group_dialog.field = Some(match self.group_dialog.field.unwrap_or(GroupDialogField::Name) {
-                    GroupDialogField::Name => GroupDialogField::Members,
-                    GroupDialogField::Members => GroupDialogField::Name,
-                });
+                self.group_dialog.field = Some(
+                    match self.group_dialog.field.unwrap_or(GroupDialogField::Name) {
+                        GroupDialogField::Name => GroupDialogField::Members,
+                        GroupDialogField::Members => GroupDialogField::Name,
+                    },
+                );
             }
             return Vec::new();
         }
@@ -779,7 +800,10 @@ impl App {
                     return Vec::new();
                 }
                 if let Some(conversation) = &self.active_conversation {
-                    let target = self.active_info.as_ref().and_then(|info| info.dm_peer_inbox_id.clone());
+                    let target = self
+                        .active_info
+                        .as_ref()
+                        .and_then(|info| info.dm_peer_inbox_id.clone());
                     return vec![Effect::SendMessage {
                         conversation_id: conversation.id.clone(),
                         kind: conversation.kind.clone(),
@@ -865,6 +889,12 @@ impl App {
                         MessageMenuAction::Reaction => {
                             self.modal = Modal::ReactionPicker;
                             self.reaction_picker_index = 0;
+                        }
+                        MessageMenuAction::SendReadReceipt => {
+                            self.modal = Modal::None;
+                            if let Some(conversation_id) = self.active_conversation_id.clone() {
+                                return vec![Effect::SendReadReceipt { conversation_id }];
+                            }
                         }
                     }
                 } else {
@@ -976,7 +1006,11 @@ impl App {
                         self.focus = Focus::Conversations;
                         self.pending_status = Some("Creating group...".to_owned());
                         return vec![Effect::CreateGroup {
-                            name: if name.is_empty() { None } else { Some(name.to_owned()) },
+                            name: if name.is_empty() {
+                                None
+                            } else {
+                                Some(name.to_owned())
+                            },
                             members,
                         }];
                     }
@@ -1074,7 +1108,9 @@ impl App {
                 }
             }
             KeyCode::Down => {
-                if self.group_management.info_member_scroll + 1 < self.group_management.members.len() {
+                if self.group_management.info_member_scroll + 1
+                    < self.group_management.members.len()
+                {
                     self.group_management.info_member_scroll += 1;
                 }
             }
@@ -1277,7 +1313,8 @@ impl App {
         let Some(permissions) = self.group_management.permissions.as_mut() else {
             return;
         };
-        let value = editable_permission_value_mut(permissions, self.group_management.permissions_cursor);
+        let value =
+            editable_permission_value_mut(permissions, self.group_management.permissions_cursor);
         let next = next_permission_policy(value, forward);
         if next != *value {
             *value = next;
@@ -1311,7 +1348,11 @@ impl App {
         }
         self.unread_counts.remove(&conversation.id);
         self.reply_to_message_id = None;
-        self.input = self.drafts.get(&conversation.id).cloned().unwrap_or_default();
+        self.input = self
+            .drafts
+            .get(&conversation.id)
+            .cloned()
+            .unwrap_or_default();
         self.cursor = self.input.chars().count();
         self.active_conversation_id = Some(conversation.id.clone());
         self.active_conversation = Some(conversation.clone());
@@ -1324,9 +1365,14 @@ impl App {
         self.group_management.selected_member = 0;
         self.messages.clear();
         self.selected_message = self.messages.len().saturating_sub(1);
-        vec![Effect::SwitchConversation {
-            conversation_id: conversation.id,
-        }]
+        let conversation_id = conversation.id;
+        let mut effects = vec![Effect::SwitchConversation {
+            conversation_id: conversation_id.clone(),
+        }];
+        if self.read_receipt_auto_send {
+            effects.push(Effect::SendReadReceipt { conversation_id });
+        }
+        effects
     }
 
     fn reset_selected_message_to_end(&mut self) {
@@ -1334,11 +1380,14 @@ impl App {
     }
 
     pub fn self_inbox_id(&self) -> Option<&str> {
-        self.status.as_ref().and_then(|status| status.inbox_id.as_deref())
+        self.status
+            .as_ref()
+            .and_then(|status| status.inbox_id.as_deref())
     }
 
     pub fn color_for_message(&self, item: &HistoryItem) -> Color {
-        if item.content_kind == "unknown" || item.content.starts_with("type=unknown content_type=") {
+        if item.content_kind == "unknown" || item.content.starts_with("type=unknown content_type=")
+        {
             return Color::White;
         }
         if self.self_inbox_id() == Some(item.sender_inbox_id.as_str()) {
@@ -1355,12 +1404,15 @@ impl App {
         }
         actions.push(MessageMenuAction::Reply);
         actions.push(MessageMenuAction::Reaction);
+        actions.push(MessageMenuAction::SendReadReceipt);
         actions
     }
 
     pub fn detail_message(&self) -> Option<&HistoryItem> {
         let detail_id = self.detail_message_id.as_deref()?;
-        self.messages.iter().find(|item| item.message_id == detail_id)
+        self.messages
+            .iter()
+            .find(|item| item.message_id == detail_id)
     }
 
     pub fn detail_max_scroll(&self) -> usize {
@@ -1543,7 +1595,10 @@ fn editable_permission_value_mut(
 
 fn next_permission_policy(current: &str, forward: bool) -> String {
     const POLICIES: [&str; 4] = ["everyone", "admin_only", "super_admin_only", "deny"];
-    let index = POLICIES.iter().position(|policy| *policy == current).unwrap_or(0);
+    let index = POLICIES
+        .iter()
+        .position(|policy| *policy == current)
+        .unwrap_or(0);
     let next_index = if forward {
         (index + 1) % POLICIES.len()
     } else if index == 0 {
@@ -1637,7 +1692,7 @@ fn wrap_text_lines_for_count(text: &str, width: usize) -> usize {
 fn normalize_history(items: Vec<HistoryItem>) -> Vec<HistoryItem> {
     let mut visible: Vec<HistoryItem> = items
         .iter()
-        .filter(|item| item.content_kind != "reaction")
+        .filter(|item| item.content_kind != "reaction" && item.content_kind != "read_receipt")
         .cloned()
         .collect();
 
@@ -1674,7 +1729,10 @@ fn dedupe_reactions(reactions: &mut Vec<ReactionDetail>) {
 }
 
 fn merge_history_item(visible: &mut Vec<HistoryItem>, item: HistoryItem) {
-    if visible.iter().any(|existing| existing.message_id == item.message_id) {
+    if visible
+        .iter()
+        .any(|existing| existing.message_id == item.message_id)
+    {
         return;
     }
 
@@ -1691,6 +1749,21 @@ fn merge_history_item(visible: &mut Vec<HistoryItem>, item: HistoryItem) {
             emoji,
             action,
         });
+        return;
+    }
+
+    if item.content_kind == "read_receipt" {
+        for existing in visible.iter_mut() {
+            if existing.sent_at_ns <= item.sent_at_ns
+                && existing.sender_inbox_id != item.sender_inbox_id
+                && !existing
+                    .read_by
+                    .iter()
+                    .any(|inbox_id| inbox_id == &item.sender_inbox_id)
+            {
+                existing.read_by.push(item.sender_inbox_id.clone());
+            }
+        }
         return;
     }
 
@@ -1718,6 +1791,7 @@ mod tests {
             reaction_emoji: None,
             reaction_action: None,
             attached_reactions: Vec::new(),
+            read_by: Vec::new(),
         }
     }
 
@@ -1732,10 +1806,9 @@ mod tests {
     fn input_focus_treats_char_as_text() {
         let (mut app, _) = App::new();
         app.focus = Focus::Input;
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Char('c'),
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        )));
         assert!(effects.is_empty());
         assert_eq!(app.input, "c");
     }
@@ -1878,8 +1951,20 @@ mod tests {
     fn conversation_navigation_switches_immediately() {
         let (mut app, _) = App::new();
         app.conversations = vec![
-            xmtp_ipc::ConversationItem { id: "one".into(), kind: "dm".into(), name: None, dm_peer_inbox_id: None, last_message_ns: None },
-            xmtp_ipc::ConversationItem { id: "two".into(), kind: "group".into(), name: None, dm_peer_inbox_id: None, last_message_ns: None },
+            xmtp_ipc::ConversationItem {
+                id: "one".into(),
+                kind: "dm".into(),
+                name: None,
+                dm_peer_inbox_id: None,
+                last_message_ns: None,
+            },
+            xmtp_ipc::ConversationItem {
+                id: "two".into(),
+                kind: "group".into(),
+                name: None,
+                dm_peer_inbox_id: None,
+                last_message_ns: None,
+            },
         ];
         app.messages.push(xmtp_ipc::HistoryItem {
             message_id: "old-msg".into(),
@@ -1894,27 +1979,32 @@ mod tests {
             reaction_emoji: None,
             reaction_action: None,
             attached_reactions: Vec::new(),
+            read_by: Vec::new(),
         });
         app.focus = Focus::Conversations;
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Down,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+        )));
         assert_eq!(app.selected_conversation, 1);
         assert_eq!(app.active_conversation_id.as_deref(), Some("two"));
         assert!(app.active_history_loading);
         assert!(app.messages.is_empty());
-        assert!(matches!(effects.as_slice(), [Effect::SwitchConversation { conversation_id }] if conversation_id == "two"));
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                Effect::SwitchConversation { conversation_id: switch_id },
+                Effect::SendReadReceipt { conversation_id: receipt_id }
+            ] if switch_id == "two" && receipt_id == "two"
+        ));
     }
 
     #[test]
     fn ctrl_n_opens_create_dm_modal_outside_input() {
         let (mut app, _) = App::new();
         app.focus = Focus::Conversations;
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Char('n'),
-            KeyModifiers::CONTROL,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+        )));
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::CreateDm);
     }
@@ -1923,10 +2013,9 @@ mod tests {
     fn question_mark_opens_help_modal() {
         let (mut app, _) = App::new();
         app.focus = Focus::Conversations;
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Char('?'),
-            KeyModifiers::SHIFT,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT),
+        )));
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::Help);
     }
@@ -1955,10 +2044,9 @@ mod tests {
             dm_peer_inbox_id: None,
             last_message_ns: None,
         }];
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
         assert!(effects.is_empty());
         assert_eq!(app.focus, Focus::Input);
         assert!(app.input.is_empty());
@@ -1978,10 +2066,9 @@ mod tests {
         app.active_conversation = Some(app.conversations[0].clone());
         app.active_conversation_id = Some("grp-1".into());
 
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
 
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::GroupManagement);
@@ -2002,10 +2089,9 @@ mod tests {
         app.modal = Modal::GroupManagement;
         app.group_management.menu_index = 3;
 
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
 
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::GroupRename);
@@ -2038,12 +2124,13 @@ mod tests {
         app.focus = Focus::Input;
         app.dm_dialog.recipient = "peer-1".into();
 
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
 
-        assert!(matches!(effects.as_slice(), [Effect::OpenDm { recipient }] if recipient == "peer-1"));
+        assert!(
+            matches!(effects.as_slice(), [Effect::OpenDm { recipient }] if recipient == "peer-1")
+        );
         assert_eq!(app.modal, Modal::None);
         assert_eq!(app.focus, Focus::Conversations);
         assert_eq!(app.pending_status.as_deref(), Some("Opening DM..."));
@@ -2058,12 +2145,13 @@ mod tests {
         app.group_dialog.name = "team".into();
         app.group_dialog.members = "peer-1".into();
 
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
 
-        assert!(matches!(effects.as_slice(), [Effect::CreateGroup { name, members }] if name.as_deref() == Some("team") && members == &vec!["peer-1".to_owned()]));
+        assert!(
+            matches!(effects.as_slice(), [Effect::CreateGroup { name, members }] if name.as_deref() == Some("team") && members == &vec!["peer-1".to_owned()])
+        );
         assert_eq!(app.modal, Modal::None);
         assert_eq!(app.focus, Focus::Conversations);
         assert_eq!(app.pending_status.as_deref(), Some("Creating group..."));
@@ -2082,10 +2170,9 @@ mod tests {
         app.active_conversation_id = Some("grp-1".into());
         app.modal = Modal::GroupLeaveConfirm;
 
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Char('y'),
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        )));
 
         assert!(matches!(
             effects.as_slice(),
@@ -2112,11 +2199,11 @@ mod tests {
             reaction_emoji: None,
             reaction_action: None,
             attached_reactions: Vec::new(),
+            read_by: Vec::new(),
         });
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::MessageMenu);
     }
@@ -2129,7 +2216,11 @@ mod tests {
 
         assert_eq!(
             app.message_menu_actions(),
-            vec![MessageMenuAction::Reply, MessageMenuAction::Reaction]
+            vec![
+                MessageMenuAction::Reply,
+                MessageMenuAction::Reaction,
+                MessageMenuAction::SendReadReceipt,
+            ]
         );
     }
 
@@ -2148,6 +2239,7 @@ mod tests {
                 MessageMenuAction::ViewFull,
                 MessageMenuAction::Reply,
                 MessageMenuAction::Reaction,
+                MessageMenuAction::SendReadReceipt,
             ]
         );
     }
@@ -2169,12 +2261,12 @@ mod tests {
             reaction_emoji: None,
             reaction_action: None,
             attached_reactions: Vec::new(),
+            read_by: Vec::new(),
         });
 
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Char('r'),
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+        )));
 
         assert!(effects.is_empty());
         assert_eq!(app.reply_to_message_id.as_deref(), Some("msg-1"));
@@ -2201,6 +2293,7 @@ mod tests {
                     reaction_emoji: None,
                     reaction_action: None,
                     attached_reactions: Vec::new(),
+                    read_by: Vec::new(),
                 },
                 xmtp_ipc::HistoryItem {
                     message_id: "msg-2".into(),
@@ -2215,6 +2308,7 @@ mod tests {
                     reaction_emoji: Some("👍".into()),
                     reaction_action: Some("added".into()),
                     attached_reactions: Vec::new(),
+                    read_by: Vec::new(),
                 },
             ],
         });
@@ -2245,6 +2339,7 @@ mod tests {
                     reaction_emoji: Some("👍".into()),
                     reaction_action: Some("added".into()),
                     attached_reactions: Vec::new(),
+                    read_by: Vec::new(),
                 },
                 xmtp_ipc::HistoryItem {
                     message_id: "msg-1".into(),
@@ -2259,6 +2354,7 @@ mod tests {
                     reaction_emoji: None,
                     reaction_action: None,
                     attached_reactions: Vec::new(),
+                    read_by: Vec::new(),
                 },
             ],
         });
@@ -2318,15 +2414,16 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(app.unread_counts.get("conv-2"), Some(&1));
 
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Down,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+        )));
 
         assert!(matches!(
             effects.as_slice(),
-            [Effect::SwitchConversation { conversation_id }]
-                if conversation_id == "conv-2"
+            [
+                Effect::SwitchConversation { conversation_id: switch_id },
+                Effect::SendReadReceipt { conversation_id: receipt_id }
+            ] if switch_id == "conv-2" && receipt_id == "conv-2"
         ));
         assert_eq!(app.active_conversation_id.as_deref(), Some("conv-2"));
         assert_eq!(app.unread_counts.get("conv-2"), None);
@@ -2389,6 +2486,7 @@ mod tests {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: Vec::new(),
             },
             xmtp_ipc::HistoryItem {
                 message_id: "msg-2".into(),
@@ -2403,6 +2501,7 @@ mod tests {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: Vec::new(),
             },
         ];
         app.selected_message = 0;
@@ -2422,6 +2521,7 @@ mod tests {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: Vec::new(),
             },
         });
 
@@ -2447,6 +2547,7 @@ mod tests {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: Vec::new(),
             },
             xmtp_ipc::HistoryItem {
                 message_id: "msg-2".into(),
@@ -2461,6 +2562,7 @@ mod tests {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: Vec::new(),
             },
         ];
         app.selected_message = 1;
@@ -2480,6 +2582,7 @@ mod tests {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: Vec::new(),
             },
         });
 
@@ -2505,6 +2608,7 @@ mod tests {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: Vec::new(),
             },
             xmtp_ipc::HistoryItem {
                 message_id: "msg-2".into(),
@@ -2519,6 +2623,7 @@ mod tests {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: Vec::new(),
             },
         ];
         app.selected_message = 0;
@@ -2538,6 +2643,7 @@ mod tests {
                 reaction_emoji: None,
                 reaction_action: None,
                 attached_reactions: Vec::new(),
+                read_by: Vec::new(),
             },
         });
 
@@ -2568,7 +2674,9 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(app.conversations[0].name.as_deref(), Some("new-name"));
         assert_eq!(
-            app.active_conversation.as_ref().and_then(|item| item.name.as_deref()),
+            app.active_conversation
+                .as_ref()
+                .and_then(|item| item.name.as_deref()),
             Some("new-name")
         );
     }
@@ -2614,10 +2722,9 @@ mod tests {
     fn esc_from_input_returns_to_conversations_without_quitting() {
         let (mut app, _) = App::new();
         app.focus = Focus::Input;
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        )));
         assert!(effects.is_empty());
         assert_eq!(app.focus, Focus::Conversations);
         assert!(!app.should_quit);
@@ -2630,10 +2737,9 @@ mod tests {
         app.focus = Focus::Input;
         app.reply_to_message_id = Some("msg-1".into());
 
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        )));
 
         assert!(effects.is_empty());
         assert_eq!(app.focus, Focus::Input);
@@ -2666,10 +2772,9 @@ mod tests {
     fn esc_closes_modal_without_arming_exit() {
         let (mut app, _) = App::new();
         app.modal = Modal::CreateDm;
-        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::NONE,
-        ))));
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        )));
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::None);
         assert!(!app.exit_armed);
@@ -2700,11 +2805,17 @@ mod tests {
 
         assert!(matches!(
             effects.as_slice(),
-            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-2"
+            [
+                Effect::SwitchConversation { conversation_id: switch_id },
+                Effect::SendReadReceipt { conversation_id: receipt_id }
+            ] if switch_id == "conv-2" && receipt_id == "conv-2"
         ));
         assert!(app.reply_to_message_id.is_none());
         assert!(app.input.is_empty());
-        assert_eq!(app.drafts.get("conv-1").map(String::as_str), Some("draft message"));
+        assert_eq!(
+            app.drafts.get("conv-1").map(String::as_str),
+            Some("draft message")
+        );
 
         app.input = "other draft".into();
         let effects = app.activate_conversation(xmtp_ipc::ConversationItem {
@@ -2717,7 +2828,10 @@ mod tests {
 
         assert!(matches!(
             effects.as_slice(),
-            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-1"
+            [
+                Effect::SwitchConversation { conversation_id: switch_id },
+                Effect::SendReadReceipt { conversation_id: receipt_id }
+            ] if switch_id == "conv-1" && receipt_id == "conv-1"
         ));
         assert_eq!(app.input, "draft message");
         assert!(app.reply_to_message_id.is_none());
@@ -2751,7 +2865,10 @@ mod tests {
 
         assert!(matches!(
             effects.as_slice(),
-            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-2"
+            [
+                Effect::SwitchConversation { conversation_id: switch_id },
+                Effect::SendReadReceipt { conversation_id: receipt_id }
+            ] if switch_id == "conv-2" && receipt_id == "conv-2"
         ));
         assert_eq!(app.selected_message, 0);
     }
@@ -2801,6 +2918,11 @@ mod tests {
 
         assert!(effects.is_empty());
         assert_eq!(app.selected_message, 1);
-        assert_eq!(app.active_conversation.as_ref().and_then(|c| c.name.as_deref()), Some("first updated"));
+        assert_eq!(
+            app.active_conversation
+                .as_ref()
+                .and_then(|c| c.name.as_deref()),
+            Some("first updated")
+        );
     }
 }

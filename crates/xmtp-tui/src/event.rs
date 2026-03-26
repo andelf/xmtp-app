@@ -46,22 +46,62 @@ pub enum ActionOutcome {
 #[derive(Debug, Clone)]
 pub enum Effect {
     SubscribeAppEvents,
-    SwitchConversation { conversation_id: String },
-    OpenDm { recipient: String },
-    CreateGroup { name: Option<String>, members: Vec<String> },
-    LoadGroupInfo { conversation_id: String },
-    LoadGroupMembers { conversation_id: String },
-    LoadGroupPermissions { conversation_id: String },
+    SwitchConversation {
+        conversation_id: String,
+    },
+    SendReadReceipt {
+        conversation_id: String,
+    },
+    OpenDm {
+        recipient: String,
+    },
+    CreateGroup {
+        name: Option<String>,
+        members: Vec<String>,
+    },
+    LoadGroupInfo {
+        conversation_id: String,
+    },
+    LoadGroupMembers {
+        conversation_id: String,
+    },
+    LoadGroupPermissions {
+        conversation_id: String,
+    },
     UpdateGroupPermission {
         conversation_id: String,
         permission: String,
         policy: String,
     },
-    AddGroupMembers { conversation_id: String, members: Vec<String> },
-    RemoveGroupMembers { conversation_id: String, members: Vec<String> },
-    RenameGroup { conversation_id: String, name: String },
-    LeaveConversation { conversation_id: String },
-    SendMessage { conversation_id: String, kind: String, target: Option<String>, text: String },
-    Reply { message_id: String, text: String, conversation_id: String },
-    React { message_id: String, emoji: String, conversation_id: String },
+    AddGroupMembers {
+        conversation_id: String,
+        members: Vec<String>,
+    },
+    RemoveGroupMembers {
+        conversation_id: String,
+        members: Vec<String>,
+    },
+    RenameGroup {
+        conversation_id: String,
+        name: String,
+    },
+    LeaveConversation {
+        conversation_id: String,
+    },
+    SendMessage {
+        conversation_id: String,
+        kind: String,
+        target: Option<String>,
+        text: String,
+    },
+    Reply {
+        message_id: String,
+        text: String,
+        conversation_id: String,
+    },
+    React {
+        message_id: String,
+        emoji: String,
+        conversation_id: String,
+    },
 }

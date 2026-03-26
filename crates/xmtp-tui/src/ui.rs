@@ -1,16 +1,11 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
-};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, prelude::Alignment};
 use textwrap::wrap;
 
-use crate::app::{
-    App, Focus, GroupDialogField, GroupManagementAction, Modal,
-    reaction_choices,
-};
+use crate::app::{App, Focus, GroupDialogField, GroupManagementAction, Modal, reaction_choices};
 use crate::format::{format_clock, format_day_tag, short_display_id};
 use crate::markdown::render_markdown;
 use xmtp_ipc::GroupPermissionsResponse;
@@ -79,7 +74,11 @@ fn render_conversations(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .map(|conversation| {
             let active = app.active_conversation_id.as_deref() == Some(conversation.id.as_str());
             let marker = if active { "●" } else { " " };
-            let kind = if conversation.kind == "group" { "grp" } else { "dm" };
+            let kind = if conversation.kind == "group" {
+                "grp"
+            } else {
+                "dm"
+            };
             let label = if conversation.kind == "dm" {
                 conversation
                     .dm_peer_inbox_id
@@ -111,7 +110,9 @@ fn render_conversations(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 unread_suffix
             );
             let style = if unread > 0 {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
@@ -119,9 +120,11 @@ fn render_conversations(frame: &mut Frame<'_>, app: &App, area: Rect) {
         })
         .collect();
     let block = titled_block("Conversations", app.focus == Focus::Conversations);
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -164,9 +167,12 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let rows = build_message_rows(app, area.width.saturating_sub(2));
     let selected_row = rows.iter().position(|row| match row.kind {
         MessageRowKind::Message(index) => index == app.selected_message,
-        MessageRowKind::DateSeparator | MessageRowKind::ReplyContext | MessageRowKind::Reactions => false,
+        MessageRowKind::DateSeparator
+        | MessageRowKind::ReplyContext
+        | MessageRowKind::Reactions => false,
     });
-    let _selected_row_is_collapsed = selected_row.and_then(|index| rows.get(index).map(|row| row.is_collapsed));
+    let _selected_row_is_collapsed =
+        selected_row.and_then(|index| rows.get(index).map(|row| row.is_collapsed));
     let mut items = Vec::with_capacity(rows.len());
     for row in &rows {
         items.push(row.item.clone());
@@ -181,7 +187,11 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
     let list = List::new(items)
         .block(titled_block(&title, app.focus == Focus::Messages))
-        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -240,19 +250,27 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             short_display_id(&item.sender_inbox_id)
         };
         let header = format!("{} [{}]", format_clock(item.sent_at_ns), sender_display);
-        let header_line = Line::from(Span::styled(
+        let mut header_spans = vec![Span::styled(
             header,
             Style::default()
                 .fg(app.color_for_message(item))
                 .bg(Color::Reset),
-        ));
+        )];
+        if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) && !item.read_by.is_empty() {
+            header_spans.push(Span::styled(
+                " ✓",
+                Style::default().fg(Color::DarkGray).bg(Color::Reset),
+            ));
+        }
+        let header_line = Line::from(header_spans);
 
         let mut content_lines = if item.content_kind == "markdown" {
             let rendered = render_markdown(&item.content, wrap_width.max(1));
-            if rendered
-                .iter()
-                .all(|line| line.spans.iter().all(|span| span.content.as_ref().trim().is_empty()))
-            {
+            if rendered.iter().all(|line| {
+                line.spans
+                    .iter()
+                    .all(|span| span.content.as_ref().trim().is_empty())
+            }) {
                 wrap_text_lines(&content, wrap_width)
                     .into_iter()
                     .map(|segment| {
@@ -295,14 +313,15 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
 
         let is_collapsed = content_lines.len() > THRESHOLD;
         let mut preview_lines = if is_collapsed {
-            content_lines.into_iter().take(THRESHOLD).collect::<Vec<_>>()
+            content_lines
+                .into_iter()
+                .take(THRESHOLD)
+                .collect::<Vec<_>>()
         } else {
             content_lines
         };
 
-        if is_collapsed
-            && let Some(last_line) = preview_lines.last_mut()
-        {
+        if is_collapsed && let Some(last_line) = preview_lines.last_mut() {
             last_line.spans.push(Span::styled(
                 " ... (Enter: view full)",
                 Style::default().fg(Color::Yellow).bg(Color::Reset),
@@ -347,10 +366,9 @@ fn conversation_display_name(app: &App) -> Option<String> {
             .map(short_display_id)
             .or_else(|| conversation.name.clone())
             .or(Some("DM".to_owned())),
-        Some(conversation) if conversation.kind == "group" => conversation
-            .name
-            .clone()
-            .or(Some("Group".to_owned())),
+        Some(conversation) if conversation.kind == "group" => {
+            conversation.name.clone().or(Some("Group".to_owned()))
+        }
         Some(conversation) => conversation.name.clone(),
         None => None,
     }
@@ -359,7 +377,10 @@ fn conversation_display_name(app: &App) -> Option<String> {
 fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let mut lines = Vec::new();
     if let Some(reply_to) = &app.reply_to_message_id {
-        lines.push(Line::from(format!("reply -> {}", short_display_id(reply_to))));
+        lines.push(Line::from(format!(
+            "reply -> {}",
+            short_display_id(reply_to)
+        )));
     }
     lines.extend(render_input_lines(app, app.focus == Focus::Input));
     let paragraph = Paragraph::new(lines)
@@ -467,7 +488,9 @@ fn trailing_row_end_index(rows: &[MessageRow<'_>], selected_row_idx: usize) -> u
     for (index, row) in rows.iter().enumerate().skip(selected_row_idx + 1) {
         match row.kind {
             MessageRowKind::Message(_) => break,
-            MessageRowKind::DateSeparator | MessageRowKind::ReplyContext | MessageRowKind::Reactions => {
+            MessageRowKind::DateSeparator
+            | MessageRowKind::ReplyContext
+            | MessageRowKind::Reactions => {
                 end = index;
             }
         }
@@ -475,7 +498,11 @@ fn trailing_row_end_index(rows: &[MessageRow<'_>], selected_row_idx: usize) -> u
     end
 }
 
-fn list_offset_for_visible_window(items: &[ListItem<'_>], end_row_idx: usize, visible_height: usize) -> usize {
+fn list_offset_for_visible_window(
+    items: &[ListItem<'_>],
+    end_row_idx: usize,
+    visible_height: usize,
+) -> usize {
     if items.is_empty() || visible_height == 0 {
         return 0;
     }
@@ -561,10 +588,7 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
             Style::default().dark_gray(),
         ));
     }
-    let lines = vec![
-        Line::from(current_detail),
-        Line::from(runtime_spans),
-    ];
+    let lines = vec![Line::from(current_detail), Line::from(runtime_spans)];
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Left), area);
 }
 
@@ -601,7 +625,11 @@ fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
     app.last_detail_visible_height.set(visible_height);
     let Some(message) = app.detail_message() else {
         let paragraph = Paragraph::new("Message not found")
-            .block(Block::default().title("Message Detail").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("Message Detail")
+                    .borders(Borders::ALL),
+            )
             .alignment(Alignment::Center);
         frame.render_widget(paragraph, area);
         return;
@@ -622,7 +650,11 @@ fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
     if message.content_kind == "markdown" {
         lines.extend(render_markdown(&message.content, wrap_width));
     } else {
-        lines.extend(wrap_text_lines(&message.content, wrap_width).into_iter().map(Line::from));
+        lines.extend(
+            wrap_text_lines(&message.content, wrap_width)
+                .into_iter()
+                .map(Line::from),
+        );
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -634,7 +666,11 @@ fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
     let scroll = app.detail_scroll.min(max_scroll) as u16;
 
     let paragraph = Paragraph::new(lines)
-        .block(Block::default().title("Message Detail").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title("Message Detail")
+                .borders(Borders::ALL),
+        )
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
     frame.render_widget(paragraph, area);
@@ -675,10 +711,7 @@ fn render_help(frame: &mut Frame<'_>) {
 fn render_reaction_picker(frame: &mut Frame<'_>, app: &App) {
     let area = centered_rect(28, 24, frame.area());
     frame.render_widget(Clear, area);
-    let items: Vec<ListItem<'_>> = reaction_choices()
-        .into_iter()
-        .map(ListItem::new)
-        .collect();
+    let items: Vec<ListItem<'_>> = reaction_choices().into_iter().map(ListItem::new).collect();
     let mut state = ListState::default().with_selected(Some(app.reaction_picker_index));
     let list = List::new(items)
         .block(Block::default().title("Reaction").borders(Borders::ALL))
@@ -703,8 +736,16 @@ fn render_create_dm(frame: &mut Frame<'_>, app: &App) {
 fn render_create_group(frame: &mut Frame<'_>, app: &App) {
     let area = centered_rect(72, 28, frame.area());
     frame.render_widget(Clear, area);
-    let name_marker = if app.group_dialog.field == Some(GroupDialogField::Name) { ">" } else { " " };
-    let members_marker = if app.group_dialog.field == Some(GroupDialogField::Members) { ">" } else { " " };
+    let name_marker = if app.group_dialog.field == Some(GroupDialogField::Name) {
+        ">"
+    } else {
+        " "
+    };
+    let members_marker = if app.group_dialog.field == Some(GroupDialogField::Members) {
+        ">"
+    } else {
+        " "
+    };
     let text = vec![
         Line::from("Create group"),
         Line::from(format!("{} name: {}", name_marker, app.group_dialog.name)),
@@ -773,7 +814,8 @@ fn render_group_permissions(frame: &mut Frame<'_>, app: &App) {
             &info.preset,
             false,
         )));
-        for (index, (label, value)) in editable_group_permission_rows(info).into_iter().enumerate() {
+        for (index, (label, value)) in editable_group_permission_rows(info).into_iter().enumerate()
+        {
             let style = if index == app.group_management.permissions_cursor {
                 Style::default().reversed()
             } else {
@@ -781,7 +823,8 @@ fn render_group_permissions(frame: &mut Frame<'_>, app: &App) {
             };
             rows.push(ListItem::new(render_group_permission_row(label, value, true)).style(style));
         }
-        let mut state = ListState::default().with_selected(Some(app.group_management.permissions_cursor + 1));
+        let mut state =
+            ListState::default().with_selected(Some(app.group_management.permissions_cursor + 1));
         let list = List::new(rows).highlight_style(Style::default().reversed());
         frame.render_stateful_widget(list, chunks[0], &mut state);
     } else {
@@ -804,9 +847,7 @@ fn render_group_permissions(frame: &mut Frame<'_>, app: &App) {
     );
 }
 
-fn editable_group_permission_rows(
-    info: &GroupPermissionsResponse,
-) -> [(&'static str, &str); 8] {
+fn editable_group_permission_rows(info: &GroupPermissionsResponse) -> [(&'static str, &str); 8] {
     [
         ("Add members:", &info.add_member),
         ("Remove members:", &info.remove_member),
@@ -927,7 +968,11 @@ fn render_group_remove_members(frame: &mut Frame<'_>, app: &App) {
             "loading...",
             Style::default().dark_gray(),
         )))
-        .block(Block::default().title("Remove Members").borders(Borders::ALL));
+        .block(
+            Block::default()
+                .title("Remove Members")
+                .borders(Borders::ALL),
+        );
         frame.render_widget(paragraph, area);
         return;
     }
@@ -945,7 +990,11 @@ fn render_group_remove_members(frame: &mut Frame<'_>, app: &App) {
         .collect();
     let mut state = ListState::default().with_selected(Some(app.group_management.selected_member));
     let list = List::new(items)
-        .block(Block::default().title("Remove Members").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title("Remove Members")
+                .borders(Borders::ALL),
+        )
         .highlight_style(Style::default().reversed());
     frame.render_stateful_widget(list, area, &mut state);
 }
@@ -1079,8 +1128,8 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     use crate::app::{App, Focus};
 
@@ -1102,7 +1151,9 @@ mod tests {
                 id: "dm-1".into(),
                 kind: "dm".into(),
                 name: None,
-                dm_peer_inbox_id: Some("461584b40048389e051f95c9f515d6ac39e1802abcdd0b3a9c62c178d329ac00".into()),
+                dm_peer_inbox_id: Some(
+                    "461584b40048389e051f95c9f515d6ac39e1802abcdd0b3a9c62c178d329ac00".into(),
+                ),
                 last_message_ns: None,
             },
         ];
@@ -1112,7 +1163,9 @@ mod tests {
 
         let backend = TestBackend::new(140, 40);
         let mut terminal = Terminal::new(backend).expect("create test terminal");
-        terminal.draw(|frame| render(frame, &app)).expect("render frame");
+        terminal
+            .draw(|frame| render(frame, &app))
+            .expect("render frame");
 
         let backend = terminal.backend();
         let mut rendered = String::new();
@@ -1123,8 +1176,14 @@ mod tests {
             rendered.push('\n');
         }
 
-        assert!(rendered.contains("4615....ac00"), "rendered output:\n{rendered}");
-        assert!(rendered.contains("(dm) [3]"), "rendered output:\n{rendered}");
+        assert!(
+            rendered.contains("4615....ac00"),
+            "rendered output:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("(dm) [3]"),
+            "rendered output:\n{rendered}"
+        );
         println!("{rendered}");
     }
 }

@@ -1,10 +1,10 @@
 mod acp;
 
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::OnceLock;
-use std::os::unix::process::CommandExt;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -12,12 +12,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use xmtp_config::{AppConfig, load_config, save_config};
-use xmtp_daemon::{
-    HistoryEntry, addr_path, history_with_kind as load_history_direct,
-    normalize_signer_key_hex, pid_path, resolve_conversation_id, serve,
-    signer_address_from_hex,
-};
 use xmtp_core::{ConnectionState, DaemonState, StateSnapshot, SyncPhase, SyncState};
+use xmtp_daemon::{
+    HistoryEntry, addr_path, history_with_kind as load_history_direct, normalize_signer_key_hex,
+    pid_path, resolve_conversation_id, serve, signer_address_from_hex,
+};
 use xmtp_ipc::{
     ActionResponse, ApiErrorBody, ConversationInfoResponse, ConversationItem,
     ConversationListResponse, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
@@ -59,7 +58,10 @@ struct Cli {
 enum Command {
     #[command(about = "Initialize the local data directory")]
     Init {
-        #[arg(long, help = "Delete the local XMTP database files before re-initializing")]
+        #[arg(
+            long,
+            help = "Delete the local XMTP database files before re-initializing"
+        )]
         reset: bool,
     },
     #[command(about = "Login to an XMTP network")]
@@ -81,7 +83,10 @@ enum Command {
             help = "Import existing secp256k1 private key (hex, with or without 0x prefix). WARNING: handle with care."
         )]
         private_key: Option<String>,
-        #[arg(long, help = "Force a network switch even if the current data directory is tied to a different network")]
+        #[arg(
+            long,
+            help = "Force a network switch even if the current data directory is tied to a different network"
+        )]
         force: bool,
     },
     #[command(about = "Check local setup, daemon reachability, and runtime status")]
@@ -102,7 +107,11 @@ enum Command {
     },
     #[command(about = "Read daemon logs")]
     Logs {
-        #[arg(long, default_value = "events", help = "Log stream to read: events, stdout, or stderr")]
+        #[arg(
+            long,
+            default_value = "events",
+            help = "Log stream to read: events, stdout, or stderr"
+        )]
         kind: String,
         #[arg(long, help = "Keep streaming new log entries")]
         follow: bool,
@@ -116,7 +125,11 @@ enum Command {
     ListConversations {
         #[arg(long, conflicts_with = "dm", help = "Show only group conversations")]
         group: bool,
-        #[arg(long, conflicts_with = "group", help = "Show only direct-message conversations")]
+        #[arg(
+            long,
+            conflicts_with = "group",
+            help = "Show only direct-message conversations"
+        )]
         dm: bool,
     },
     #[command(
@@ -125,7 +138,9 @@ enum Command {
         about = "Send a direct message"
     )]
     DirectMessage {
-        #[arg(help = "Recipient inbox ID, wallet address, or other supported recipient identifier")]
+        #[arg(
+            help = "Recipient inbox ID, wallet address, or other supported recipient identifier"
+        )]
         recipient: String,
         #[arg(help = "Message text to send")]
         message: String,
@@ -172,9 +187,17 @@ enum Command {
         conversation_id: String,
         #[arg(long, help = "Keep watching for new messages")]
         watch: bool,
-        #[arg(long, conflicts_with = "dm", help = "Treat the target as a group conversation")]
+        #[arg(
+            long,
+            conflicts_with = "dm",
+            help = "Treat the target as a group conversation"
+        )]
         group: bool,
-        #[arg(long, conflicts_with = "group", help = "Treat the target as a direct-message conversation")]
+        #[arg(
+            long,
+            conflicts_with = "group",
+            help = "Treat the target as a direct-message conversation"
+        )]
         dm: bool,
     },
 }
@@ -214,9 +237,16 @@ enum GroupCommand {
     Create {
         #[arg(long, help = "Optional group display name")]
         name: Option<String>,
-        #[arg(long = "member", required = true, help = "Initial member inbox ID; repeat for multiple members")]
+        #[arg(
+            long = "member",
+            required = true,
+            help = "Initial member inbox ID; repeat for multiple members"
+        )]
         members: Vec<String>,
-        #[arg(long, help = "Permission preset: all_members or admin_only (default: all_members)")]
+        #[arg(
+            long,
+            help = "Permission preset: all_members or admin_only (default: all_members)"
+        )]
         permission_preset: Option<String>,
     },
     #[command(about = "Send a message to a group")]
@@ -237,14 +267,22 @@ enum GroupCommand {
     Add {
         #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
-        #[arg(long = "member", required = true, help = "Member inbox ID to add; repeat for multiple members")]
+        #[arg(
+            long = "member",
+            required = true,
+            help = "Member inbox ID to add; repeat for multiple members"
+        )]
         members: Vec<String>,
     },
     #[command(about = "Remove members from a group")]
     Remove {
         #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
-        #[arg(long = "member", required = true, help = "Member inbox ID to remove; repeat for multiple members")]
+        #[arg(
+            long = "member",
+            required = true,
+            help = "Member inbox ID to remove; repeat for multiple members"
+        )]
         members: Vec<String>,
     },
     #[command(about = "Show group members")]
@@ -261,7 +299,9 @@ enum GroupCommand {
     UpdatePermission {
         #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
-        #[arg(help = "权限项: add_member/remove_member/add_admin/remove_admin/update_group_name/update_group_description/update_group_image/update_app_data")]
+        #[arg(
+            help = "权限项: add_member/remove_member/add_admin/remove_admin/update_group_name/update_group_description/update_group_image/update_app_data"
+        )]
         permission: String,
         #[arg(help = "策略值: everyone/admin_only/super_admin_only/deny")]
         policy: String,
@@ -316,14 +356,16 @@ async fn run() -> anyhow::Result<()> {
             gateway_url,
             private_key,
             force,
-        } => login(
-            data_dir,
-            network,
-            gateway_url.as_deref(),
-            private_key.as_deref(),
-            force,
-        )
-        .await,
+        } => {
+            login(
+                data_dir,
+                network,
+                gateway_url.as_deref(),
+                private_key.as_deref(),
+                force,
+            )
+            .await
+        }
         Command::Doctor => doctor(data_dir).await,
         Command::Tui => xmtp_tui::run(data_dir),
         Command::Acp {
@@ -345,7 +387,10 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::DirectMessage { recipient, message } => dm(data_dir, &recipient, &message).await,
         Command::Group { command } => group(data_dir, command).await,
-        Command::Reply { message_id, message } => reply(data_dir, &message_id, &message).await,
+        Command::Reply {
+            message_id,
+            message,
+        } => reply(data_dir, &message_id, &message).await,
         Command::React { message_id, emoji } => react(data_dir, &message_id, &emoji).await,
         Command::Unreact { message_id, emoji } => unreact(data_dir, &message_id, &emoji).await,
         Command::Leave { conversation_id } => leave(data_dir, &conversation_id).await,
@@ -415,7 +460,10 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
     let stdout_log = daemon_stdout_log_path(&data_dir);
     let stderr_log = daemon_stderr_log_path(&data_dir);
 
-    println!("{}", render_status_row("data_dir", &data_dir.display().to_string()));
+    println!(
+        "{}",
+        render_status_row("data_dir", &data_dir.display().to_string())
+    );
     println!(
         "{}",
         render_status_row("config_json", bool_label(config_path.exists()))
@@ -435,7 +483,10 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
         println!("{}", render_status_row("eth_address", &address));
     }
     if let Ok(config) = load_config(&config_path) {
-        println!("{}", render_status_row("network", infer_network_name(&config)));
+        println!(
+            "{}",
+            render_status_row("network", infer_network_name(&config))
+        );
         println!(
             "{}",
             render_status_row(
@@ -522,7 +573,8 @@ async fn login(
         let current_network = infer_network_name(&config);
         let requested_network = network.as_str();
         let has_network_config = !config.xmtp_env.is_empty() || config.api_url.is_some();
-        if has_network_config && current_network != "custom" && current_network != requested_network {
+        if has_network_config && current_network != "custom" && current_network != requested_network
+        {
             eprintln!("WARNING: Network switch detected");
             eprintln!("Current: {current_network}");
             eprintln!("New: {requested_network}");
@@ -550,8 +602,13 @@ async fn login(
     if let Some(key) = private_key {
         import_private_key(&data_dir, key, force)?;
     }
-    let status =
-        daemon_login(&data_dir, resolved_env, resolved_api_url, resolved_gateway_url).await?;
+    let status = daemon_login(
+        &data_dir,
+        resolved_env,
+        resolved_api_url,
+        resolved_gateway_url,
+    )
+    .await?;
     print_status_response(status)?;
     Ok(())
 }
@@ -728,7 +785,9 @@ async fn group(data_dir: PathBuf, command: GroupCommand) -> anyhow::Result<()> {
             conversation_id,
             members,
         } => group_remove(data_dir, &conversation_id, members).await,
-        GroupCommand::Members { conversation_id } => group_members(data_dir, &conversation_id).await,
+        GroupCommand::Members { conversation_id } => {
+            group_members(data_dir, &conversation_id).await
+        }
         GroupCommand::Permissions { conversation_id } => {
             group_permissions(data_dir, &conversation_id).await
         }
@@ -773,7 +832,11 @@ async fn group_rename(data_dir: PathBuf, conversation_id: &str, name: &str) -> a
     Ok(())
 }
 
-async fn group_add(data_dir: PathBuf, conversation_id: &str, members: Vec<String>) -> anyhow::Result<()> {
+async fn group_add(
+    data_dir: PathBuf,
+    conversation_id: &str,
+    members: Vec<String>,
+) -> anyhow::Result<()> {
     let result = daemon_group_add(&data_dir, conversation_id, members).await?;
     print_action_result("group-add", &result);
     Ok(())
@@ -1125,12 +1188,19 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
             DaemonEventData::DaemonError { message } => {
                 println!("{}", render_event_row("error", &message));
             }
-            DaemonEventData::HistoryItem { conversation_id, item } => {
+            DaemonEventData::HistoryItem {
+                conversation_id,
+                item,
+            } => {
                 println!(
                     "{}",
                     render_event_row(
                         "history",
-                        &format!("{} {}", short_id(&conversation_id), short_id(&item.message_id)),
+                        &format!(
+                            "{} {}",
+                            short_id(&conversation_id),
+                            short_id(&item.message_id)
+                        ),
                     )
                 );
             }
@@ -1301,7 +1371,11 @@ async fn daemon_group_permissions(
     data_dir: &Path,
     conversation_id: &str,
 ) -> anyhow::Result<GroupPermissionsResponse> {
-    http_get(data_dir, &format!("/v1/groups/{conversation_id}/permissions")).await
+    http_get(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/permissions"),
+    )
+    .await
 }
 
 async fn daemon_update_group_permissions(
@@ -1372,11 +1446,13 @@ async fn daemon_unreact(
     .await
 }
 
-async fn daemon_leave(
-    data_dir: &Path,
-    conversation_id: &str,
-) -> anyhow::Result<ActionResponse> {
-    http_post(data_dir, &format!("/v1/conversations/{conversation_id}/leave"), &()).await
+async fn daemon_leave(data_dir: &Path, conversation_id: &str) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/conversations/{conversation_id}/leave"),
+        &(),
+    )
+    .await
 }
 
 async fn daemon_conversation_info(
@@ -1504,10 +1580,7 @@ where
         anyhow::bail!("daemon http status: {status}");
     }
 
-    response
-        .json()
-        .await
-        .context("decode daemon http response")
+    response.json().await.context("decode daemon http response")
 }
 
 async fn decode_empty_response(response: reqwest::Response) -> anyhow::Result<()> {
@@ -1593,9 +1666,7 @@ fn read_pid(data_dir: &Path) -> anyhow::Result<Option<i32>> {
     }
     let pid = std::fs::read_to_string(&pid_file).context("read daemon pid file")?;
     Ok(Some(
-        pid.trim()
-            .parse::<i32>()
-            .context("parse daemon pid file")?,
+        pid.trim().parse::<i32>().context("parse daemon pid file")?,
     ))
 }
 
@@ -1716,7 +1787,10 @@ fn render_history_entry(entry: &HistoryEntry) -> String {
 }
 
 fn history_header() -> String {
-    format!("{:<16} {:<20} {:<20} {}", "time", "message_id", "sender", "content")
+    format!(
+        "{:<16} {:<20} {:<20} {}",
+        "time", "message_id", "sender", "content"
+    )
 }
 
 fn conversation_list_header() -> String {
@@ -1780,20 +1854,38 @@ fn render_group_info_row(info: &GroupInfoResponse) -> String {
 fn print_group_permissions(info: &GroupPermissionsResponse) {
     println!("{}", render_status_row("Preset:", &info.preset));
     println!("{}", render_status_row("Add members:", &info.add_member));
-    println!("{}", render_status_row("Remove members:", &info.remove_member));
+    println!(
+        "{}",
+        render_status_row("Remove members:", &info.remove_member)
+    );
     println!("{}", render_status_row("Add admins:", &info.add_admin));
-    println!("{}", render_status_row("Remove admins:", &info.remove_admin));
-    println!("{}", render_status_row("Update name:", &info.update_group_name));
+    println!(
+        "{}",
+        render_status_row("Remove admins:", &info.remove_admin)
+    );
+    println!(
+        "{}",
+        render_status_row("Update name:", &info.update_group_name)
+    );
     println!(
         "{}",
         render_status_row("Update description:", &info.update_group_description)
     );
-    println!("{}", render_status_row("Update image:", &info.update_group_image));
-    println!("{}", render_status_row("Update app data:", &info.update_app_data));
+    println!(
+        "{}",
+        render_status_row("Update image:", &info.update_group_image)
+    );
+    println!(
+        "{}",
+        render_status_row("Update app data:", &info.update_app_data)
+    );
 }
 
 fn action_result_header() -> String {
-    format!("{:<16} {:<20} {}", "action", "conversation_id", "message_id")
+    format!(
+        "{:<16} {:<20} {}",
+        "action", "conversation_id", "message_id"
+    )
 }
 
 fn render_action_result(action: &str, result: &ActionResponse) -> String {
@@ -1819,26 +1911,31 @@ fn render_event_row(label: &str, value: &str) -> String {
 }
 
 fn bool_label(value: bool) -> &'static str {
-    if value {
-        "yes"
-    } else {
-        "no"
-    }
+    if value { "yes" } else { "no" }
 }
 
 fn print_conversation_info(info: &ConversationInfoResponse) {
-    println!("{}", render_status_row("conversation_id", &short_id(&info.conversation_id)));
+    println!(
+        "{}",
+        render_status_row("conversation_id", &short_id(&info.conversation_id))
+    );
     println!("{}", render_status_row("type", &info.conversation_type));
     println!(
         "{}",
         render_status_row("created_at", &format_sent_at(info.created_at_ns))
     );
-    println!("{}", render_status_row("active", &info.is_active.to_string()));
+    println!(
+        "{}",
+        render_status_row("active", &info.is_active.to_string())
+    );
     println!(
         "{}",
         render_status_row("membership", &info.membership_state)
     );
-    println!("{}", render_status_row("members", &info.member_count.to_string()));
+    println!(
+        "{}",
+        render_status_row("members", &info.member_count.to_string())
+    );
     println!(
         "{}",
         render_status_row("messages", &info.message_count.to_string())
@@ -1852,20 +1949,23 @@ fn print_conversation_info(info: &ConversationInfoResponse) {
 }
 
 fn print_message_info(info: &MessageInfoResponse) {
-    println!("{}", render_status_row("message_id", &short_id(&info.message_id)));
+    println!(
+        "{}",
+        render_status_row("message_id", &short_id(&info.message_id))
+    );
     println!(
         "{}",
         render_status_row("conversation_id", &short_id(&info.conversation_id))
     );
-    println!("{}", render_status_row("sender", &short_id(&info.sender_inbox_id)));
+    println!(
+        "{}",
+        render_status_row("sender", &short_id(&info.sender_inbox_id))
+    );
     println!(
         "{}",
         render_status_row("sent_at", &format_sent_at(info.sent_at_ns))
     );
-    println!(
-        "{}",
-        render_status_row("delivery", &info.delivery_status)
-    );
+    println!("{}", render_status_row("delivery", &info.delivery_status));
     println!(
         "{}",
         render_status_row("replies", &info.reply_count.to_string())
@@ -1884,8 +1984,8 @@ fn print_message_info(info: &MessageInfoResponse) {
 mod tests {
     use super::{
         Cli, Command, DaemonCommand, GroupCommand, InfoCommand, action_result_header,
-        conversation_list_header, format_sent_at, group_info_header, group_members_header, history_header,
-        render_action_result, render_conversation_row, render_group_info_row,
+        conversation_list_header, format_sent_at, group_info_header, group_members_header,
+        history_header, render_action_result, render_conversation_row, render_group_info_row,
         render_group_member_row, render_history_line, render_status_row, short_id,
     };
     use clap::Parser;
@@ -1925,16 +2025,14 @@ mod tests {
             reaction_emoji: None,
             reaction_action: None,
             attached_reactions: Vec::new(),
+            read_by: Vec::new(),
         });
 
         assert_eq!(
             line,
             format!(
                 "{:<16} {:<20} {:<20} {}",
-                "03-09 16:00",
-                "1234....wxyz",
-                "abcd....6789",
-                "hello [replies:2 reactions:3]"
+                "03-09 16:00", "1234....wxyz", "abcd....6789", "hello [replies:2 reactions:3]"
             )
         );
     }
@@ -1954,21 +2052,13 @@ mod tests {
     fn conversation_list_header_uses_expected_columns() {
         assert_eq!(
             conversation_list_header(),
-            format!(
-                "{:<20} {:<12} {}",
-                "conversation_id", "type", "name"
-            )
+            format!("{:<20} {:<12} {}", "conversation_id", "type", "name")
         );
     }
 
     #[test]
     fn direct_message_accepts_dm_alias() {
-        let cli = Cli::parse_from([
-            "xmtp-cli",
-            "dm",
-            "recipient-1",
-            "hello",
-        ]);
+        let cli = Cli::parse_from(["xmtp-cli", "dm", "recipient-1", "hello"]);
 
         match cli.command {
             Command::DirectMessage { recipient, message } => {
@@ -2053,10 +2143,11 @@ mod tests {
 
         match cli.command {
             Command::Group {
-                command: GroupCommand::History {
-                    conversation_id,
-                    watch,
-                },
+                command:
+                    GroupCommand::History {
+                        conversation_id,
+                        watch,
+                    },
             } => {
                 assert_eq!(conversation_id, "Andelf");
                 assert!(!watch);
@@ -2071,10 +2162,11 @@ mod tests {
 
         match cli.command {
             Command::Group {
-                command: GroupCommand::History {
-                    conversation_id,
-                    watch,
-                },
+                command:
+                    GroupCommand::History {
+                        conversation_id,
+                        watch,
+                    },
             } => {
                 assert_eq!(conversation_id, "Andelf");
                 assert!(watch);
@@ -2089,10 +2181,11 @@ mod tests {
 
         match cli.command {
             Command::Group {
-                command: GroupCommand::Send {
-                    conversation_id,
-                    message,
-                },
+                command:
+                    GroupCommand::Send {
+                        conversation_id,
+                        message,
+                    },
             } => {
                 assert_eq!(conversation_id, "conv-1");
                 assert_eq!(message, "hello-group");
@@ -2161,10 +2254,11 @@ mod tests {
 
         match cli.command {
             Command::Group {
-                command: GroupCommand::Rename {
-                    conversation_id,
-                    name,
-                },
+                command:
+                    GroupCommand::Rename {
+                        conversation_id,
+                        name,
+                    },
             } => {
                 assert_eq!(conversation_id, "conv-4");
                 assert_eq!(name, "renamed-group");
@@ -2176,22 +2270,16 @@ mod tests {
     #[test]
     fn group_add_parses_members() {
         let cli = Cli::parse_from([
-            "xmtp-cli",
-            "group",
-            "add",
-            "conv-5",
-            "--member",
-            "member-1",
-            "--member",
-            "member-2",
+            "xmtp-cli", "group", "add", "conv-5", "--member", "member-1", "--member", "member-2",
         ]);
 
         match cli.command {
             Command::Group {
-                command: GroupCommand::Add {
-                    conversation_id,
-                    members,
-                },
+                command:
+                    GroupCommand::Add {
+                        conversation_id,
+                        members,
+                    },
             } => {
                 assert_eq!(conversation_id, "conv-5");
                 assert_eq!(members, vec!["member-1", "member-2"]);
@@ -2203,20 +2291,16 @@ mod tests {
     #[test]
     fn group_remove_parses_members() {
         let cli = Cli::parse_from([
-            "xmtp-cli",
-            "group",
-            "remove",
-            "conv-6",
-            "--member",
-            "member-9",
+            "xmtp-cli", "group", "remove", "conv-6", "--member", "member-9",
         ]);
 
         match cli.command {
             Command::Group {
-                command: GroupCommand::Remove {
-                    conversation_id,
-                    members,
-                },
+                command:
+                    GroupCommand::Remove {
+                        conversation_id,
+                        members,
+                    },
             } => {
                 assert_eq!(conversation_id, "conv-6");
                 assert_eq!(members, vec!["member-9"]);
@@ -2338,12 +2422,7 @@ mod tests {
 
     #[test]
     fn login_parses_private_key_argument() {
-        let cli = Cli::parse_from([
-            "xmtp-cli",
-            "login",
-            "--private-key",
-            "0x1234abcd",
-        ]);
+        let cli = Cli::parse_from(["xmtp-cli", "login", "--private-key", "0x1234abcd"]);
 
         match cli.command {
             Command::Login { private_key, .. } => {
@@ -2386,10 +2465,7 @@ mod tests {
 
         assert_eq!(
             rendered,
-            format!(
-                "{:<16} {:<20} {}",
-                "reply", "1234....wxyz", "abcd....6789"
-            )
+            format!("{:<16} {:<20} {}", "reply", "1234....wxyz", "abcd....6789")
         );
     }
 
@@ -2486,16 +2562,14 @@ mod tests {
             reaction_emoji: None,
             reaction_action: None,
             attached_reactions: Vec::new(),
+            read_by: Vec::new(),
         });
 
         assert_eq!(
             line,
             format!(
                 "{:<16} {:<20} {:<20} {}",
-                "03-09 16:00",
-                "1234....wxyz",
-                "abcd....6789",
-                "hello"
+                "03-09 16:00", "1234....wxyz", "abcd....6789", "hello"
             )
         );
     }

@@ -70,7 +70,7 @@ pub struct GroupInfoResponse {
     pub conversation_type: String,
     pub permission_preset: String,
     pub member_count: usize,
- }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GroupPermissionsResponse {
@@ -143,6 +143,8 @@ pub struct HistoryItem {
     pub reaction_action: Option<String>,
     #[serde(default)]
     pub attached_reactions: Vec<ReactionDetail>,
+    #[serde(default)]
+    pub read_by: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -206,6 +208,11 @@ pub struct EmojiRequest {
     pub emoji: String,
     pub action: Option<String>,
     pub conversation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReadReceiptConfig {
+    pub auto_send: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -3,18 +3,18 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use axum::Router;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::Json;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
-use axum::Router;
 use futures_util::stream::Stream;
 use prost::Message as ProstMessage;
 use rusqlite::Connection;
@@ -186,9 +186,7 @@ impl XmtpRuntimeAdapter for RealXmtpAdapter {
 
         Ok(RuntimeInfo {
             inbox_id: client.inbox_id().context("get inbox id")?,
-            installation_id: client
-                .installation_id()
-                .context("get installation id")?,
+            installation_id: client.installation_id().context("get installation id")?,
         })
     }
 }
@@ -201,7 +199,11 @@ fn parse_env(value: &str) -> Env {
     }
 }
 
-fn build_client(config: &AppConfig, signer: &AlloySigner, data_dir: &Path) -> anyhow::Result<Client> {
+fn build_client(
+    config: &AppConfig,
+    signer: &AlloySigner,
+    data_dir: &Path,
+) -> anyhow::Result<Client> {
     let mut builder = Client::builder()
         .env(parse_env(&config.xmtp_env))
         .db_path(data_dir.join("xmtp.db3").display().to_string());
@@ -279,6 +281,7 @@ pub struct HistoryEntry {
     pub reaction_emoji: Option<String>,
     pub reaction_action: Option<String>,
     pub attached_reactions: Vec<ReactionDetail>,
+    pub read_by: Vec<String>,
 }
 
 pub fn list_conversations(data_dir: &Path) -> anyhow::Result<Vec<ConversationSummary>> {
@@ -324,11 +327,7 @@ pub fn resolve_conversation_id(
     Ok(conversation.id())
 }
 
-pub fn watch_history<F>(
-    data_dir: &Path,
-    conversation_id: &str,
-    on_item: F,
-) -> anyhow::Result<()>
+pub fn watch_history<F>(data_dir: &Path, conversation_id: &str, on_item: F) -> anyhow::Result<()>
 where
     F: FnMut(HistoryItem),
 {
@@ -346,8 +345,8 @@ where
 {
     let client = open_existing_client(data_dir)?;
     let conversation = find_conversation_by_id_with_kind(&client, conversation_id, kind)?;
-    let subscription =
-        xmtp::stream::conversation_messages(&conversation).context("watch conversation messages")?;
+    let subscription = xmtp::stream::conversation_messages(&conversation)
+        .context("watch conversation messages")?;
 
     for event in subscription {
         let item = history_item_by_message_id_with_client(&client, &event.message_id)?;
@@ -521,7 +520,9 @@ fn send_dm_with_client(
     let recipient = Recipient::parse(recipient);
     let conversation = client.dm(&recipient).context("create or find DM")?;
     let message_id = match content_type {
-        Some("markdown") => conversation.send_markdown(text).context("send DM markdown")?,
+        Some("markdown") => conversation
+            .send_markdown(text)
+            .context("send DM markdown")?,
         _ => conversation.send_text(text).context("send DM text")?,
     };
     Ok(SendMessageResult {
@@ -545,7 +546,10 @@ fn create_group_with_client(
     members: &[String],
     permission_preset: Option<&str>,
 ) -> anyhow::Result<SendMessageResult> {
-    let recipients: Vec<Recipient> = members.iter().map(|member| Recipient::parse(member)).collect();
+    let recipients: Vec<Recipient> = members
+        .iter()
+        .map(|member| Recipient::parse(member))
+        .collect();
     let permissions = match permission_preset {
         Some("all_members") => Some(GroupPermissionsPreset::AllMembers),
         Some("admin_only") => Some(GroupPermissionsPreset::AdminOnly),
@@ -661,7 +665,10 @@ fn add_group_members_with_client(
     members: &[String],
 ) -> anyhow::Result<SendMessageResult> {
     let conversation = find_conversation_by_id(client, conversation_id)?;
-    let recipients: Vec<Recipient> = members.iter().map(|member| Recipient::parse(member)).collect();
+    let recipients: Vec<Recipient> = members
+        .iter()
+        .map(|member| Recipient::parse(member))
+        .collect();
     client
         .add_members(&conversation, &recipients)
         .context("add group members")?;
@@ -677,7 +684,10 @@ fn remove_group_members_with_client(
     members: &[String],
 ) -> anyhow::Result<SendMessageResult> {
     let conversation = find_conversation_by_id(client, conversation_id)?;
-    let recipients: Vec<Recipient> = members.iter().map(|member| Recipient::parse(member)).collect();
+    let recipients: Vec<Recipient> = members
+        .iter()
+        .map(|member| Recipient::parse(member))
+        .collect();
     client
         .remove_members(&conversation, &recipients)
         .context("remove group members")?;
@@ -707,7 +717,10 @@ fn group_members_with_client(
         .collect())
 }
 
-fn group_info_with_client(client: &Client, conversation_id: &str) -> anyhow::Result<GroupInfoResponse> {
+fn group_info_with_client(
+    client: &Client,
+    conversation_id: &str,
+) -> anyhow::Result<GroupInfoResponse> {
     let conversation = find_conversation_by_id(client, conversation_id)?;
     let members = conversation.members().context("list group members")?;
     Ok(GroupInfoResponse {
@@ -716,7 +729,9 @@ fn group_info_with_client(client: &Client, conversation_id: &str) -> anyhow::Res
         description: conversation.description(),
         creator_inbox_id: members
             .iter()
-            .find(|member| format!("{:?}", member.permission_level).eq_ignore_ascii_case("superadmin"))
+            .find(|member| {
+                format!("{:?}", member.permission_level).eq_ignore_ascii_case("superadmin")
+            })
             .map(|member| member.inbox_id.clone())
             .or_else(|| members.first().map(|member| member.inbox_id.clone()))
             .unwrap_or_default(),
@@ -764,7 +779,9 @@ fn group_permissions_with_client(
     conversation_id: &str,
 ) -> anyhow::Result<GroupPermissionsResponse> {
     let conversation = find_conversation_by_id(client, conversation_id)?;
-    let permissions = conversation.permissions().context("get group permissions")?;
+    let permissions = conversation
+        .permissions()
+        .context("get group permissions")?;
     let preset = format!("{:?}", permissions.preset).to_lowercase();
     Ok(GroupPermissionsResponse {
         preset: permission_preset_to_str(&preset).to_owned(),
@@ -774,8 +791,10 @@ fn group_permissions_with_client(
         remove_admin: permission_policy_to_str(permissions.policies.remove_admin).to_owned(),
         update_group_name: permission_policy_to_str(permissions.policies.update_group_name)
             .to_owned(),
-        update_group_description:
-            permission_policy_to_str(permissions.policies.update_group_description).to_owned(),
+        update_group_description: permission_policy_to_str(
+            permissions.policies.update_group_description,
+        )
+        .to_owned(),
         update_group_image: permission_policy_to_str(permissions.policies.update_group_image_url)
             .to_owned(),
         update_app_data: permission_policy_to_str(permissions.policies.update_app_data).to_owned(),
@@ -794,12 +813,22 @@ fn update_group_permissions_with_client(
         "remove_member" => (PermissionUpdateType::RemoveMember, None),
         "add_admin" => (PermissionUpdateType::AddAdmin, None),
         "remove_admin" => (PermissionUpdateType::RemoveAdmin, None),
-        "update_group_name" => (PermissionUpdateType::UpdateMetadata, Some(MetadataField::GroupName)),
-        "update_group_description" => {
-            (PermissionUpdateType::UpdateMetadata, Some(MetadataField::Description))
-        }
-        "update_group_image" => (PermissionUpdateType::UpdateMetadata, Some(MetadataField::ImageUrl)),
-        "update_app_data" => (PermissionUpdateType::UpdateMetadata, Some(MetadataField::AppData)),
+        "update_group_name" => (
+            PermissionUpdateType::UpdateMetadata,
+            Some(MetadataField::GroupName),
+        ),
+        "update_group_description" => (
+            PermissionUpdateType::UpdateMetadata,
+            Some(MetadataField::Description),
+        ),
+        "update_group_image" => (
+            PermissionUpdateType::UpdateMetadata,
+            Some(MetadataField::ImageUrl),
+        ),
+        "update_app_data" => (
+            PermissionUpdateType::UpdateMetadata,
+            Some(MetadataField::AppData),
+        ),
         other => anyhow::bail!("unsupported permission update type: {other}"),
     };
     conversation
@@ -877,7 +906,10 @@ fn conversation_info_with_client(
     conversation_id: &str,
 ) -> anyhow::Result<ConversationInfoResponse> {
     let conversation = find_conversation_by_id(client, conversation_id)?;
-    let member_count = conversation.members().map(|members| members.len()).unwrap_or(0);
+    let member_count = conversation
+        .members()
+        .map(|members| members.len())
+        .unwrap_or(0);
     let message_count = conversation.count_messages(&xmtp::ListMessagesOptions::default());
 
     Ok(ConversationInfoResponse {
@@ -899,7 +931,10 @@ fn conversation_info_with_client(
     })
 }
 
-fn message_info_with_client(client: &Client, message_id: &str) -> anyhow::Result<MessageInfoResponse> {
+fn message_info_with_client(
+    client: &Client,
+    message_id: &str,
+) -> anyhow::Result<MessageInfoResponse> {
     let (_conversation, resolved_message_id) = find_message_conversation(client, message_id)?;
     let message = client
         .message_by_id(&resolved_message_id)
@@ -930,6 +965,10 @@ fn history_with_client(
 ) -> anyhow::Result<Vec<HistoryEntry>> {
     let conversation = find_conversation_by_id_with_kind(client, conversation_id, kind)?;
     conversation.sync().context("sync conversation")?;
+    let all_messages = conversation
+        .messages()
+        .context("list conversation messages")?;
+    let latest_read_receipts = latest_read_receipts_by_sender(&all_messages);
     let messages = conversation
         .list_messages(&xmtp::ListMessagesOptions {
             sent_before_ns: before_ns.unwrap_or_default(),
@@ -940,7 +979,7 @@ fn history_with_client(
         .context("list messages")?;
     let mut entries = Vec::with_capacity(messages.len());
     for message in messages {
-        entries.push(history_entry_from_message(&message));
+        entries.push(history_entry_from_message(&message, &latest_read_receipts));
     }
     let message_ids = entries
         .iter()
@@ -954,7 +993,10 @@ fn history_with_client(
             .cloned()
             .unwrap_or_default();
     }
-    let reaction_count: usize = entries.iter().map(|entry| entry.attached_reactions.len()).sum();
+    let reaction_count: usize = entries
+        .iter()
+        .map(|entry| entry.attached_reactions.len())
+        .sum();
     for entry in &entries {
         tracing::debug!(
             message_id = %entry.message_id,
@@ -980,7 +1022,7 @@ fn history_item_by_message_id_with_client(
             .message_by_id(message_id)
             .context("load message by id")?
         {
-            return Ok(history_item_from_message(&message));
+            return Ok(history_item_from_message(&message, &HashMap::new()));
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
@@ -988,8 +1030,11 @@ fn history_item_by_message_id_with_client(
     anyhow::bail!("message not found for id {message_id}")
 }
 
-fn history_entry_from_message(message: &xmtp::conversation::Message) -> HistoryEntry {
-    let item = history_item_from_message(message);
+fn history_entry_from_message(
+    message: &xmtp::conversation::Message,
+    latest_read_receipts: &HashMap<String, i64>,
+) -> HistoryEntry {
+    let item = history_item_from_message(message, latest_read_receipts);
     HistoryEntry {
         message_id: item.message_id,
         sender_inbox_id: item.sender_inbox_id,
@@ -1003,10 +1048,14 @@ fn history_entry_from_message(message: &xmtp::conversation::Message) -> HistoryE
         reaction_emoji: item.reaction_emoji,
         reaction_action: item.reaction_action,
         attached_reactions: item.attached_reactions,
+        read_by: item.read_by,
     }
 }
 
-fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryItem {
+fn history_item_from_message(
+    message: &xmtp::conversation::Message,
+    latest_read_receipts: &HashMap<String, i64>,
+) -> HistoryItem {
     let (
         content_kind,
         content,
@@ -1016,7 +1065,9 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
         reaction_action,
     ) = match message.decode() {
         Ok(Content::Text(text)) => ("text".to_owned(), text, None, None, None, None),
-        Ok(Content::Markdown(markdown)) => ("markdown".to_owned(), markdown, None, None, None, None),
+        Ok(Content::Markdown(markdown)) => {
+            ("markdown".to_owned(), markdown, None, None, None, None)
+        }
         Ok(Content::Reaction(reaction)) => (
             "reaction".to_owned(),
             summarize_decoded_content(&Content::Reaction(reaction.clone())),
@@ -1062,7 +1113,12 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
             None,
         ),
         Ok(Content::Unknown { content_type, raw }) => {
-            log_unknown_message_type(Some(&message.id), &content_type, &raw, message.fallback.as_ref());
+            log_unknown_message_type(
+                Some(&message.id),
+                &content_type,
+                &raw,
+                message.fallback.as_ref(),
+            );
             (
                 "unknown".to_owned(),
                 message
@@ -1089,6 +1145,17 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
         ),
     };
 
+    let read_by = latest_read_receipts
+        .iter()
+        .filter_map(|(sender_inbox_id, sent_at_ns)| {
+            if message.sent_at_ns <= *sent_at_ns && sender_inbox_id != &message.sender_inbox_id {
+                Some(sender_inbox_id.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
     HistoryItem {
         message_id: message.id.clone(),
         sender_inbox_id: message.sender_inbox_id.clone(),
@@ -1102,7 +1169,23 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
         reaction_emoji,
         reaction_action,
         attached_reactions: Vec::new(),
+        read_by,
     }
+}
+
+fn latest_read_receipts_by_sender(
+    messages: &[xmtp::conversation::Message],
+) -> HashMap<String, i64> {
+    let mut latest = HashMap::new();
+    for message in messages {
+        if matches!(message.decode(), Ok(Content::ReadReceipt)) {
+            latest
+                .entry(message.sender_inbox_id.clone())
+                .and_modify(|current: &mut i64| *current = (*current).max(message.sent_at_ns))
+                .or_insert(message.sent_at_ns);
+        }
+    }
+    latest
 }
 
 fn summarize_message_content(message: &xmtp::conversation::Message) -> String {
@@ -1160,8 +1243,8 @@ fn fetch_reactions_from_db(
 
         let encoded = xmtp::content::EncodedContent::decode(decrypted_message_bytes.as_slice())
             .context("decode reaction encoded content")?;
-        let reaction = ReactionV2::decode(encoded.content.as_slice())
-            .context("decode reaction payload")?;
+        let reaction =
+            ReactionV2::decode(encoded.content.as_slice()).context("decode reaction payload")?;
 
         reaction_map
             .entry(reference_id)
@@ -1247,7 +1330,10 @@ fn resolve_conversation_lookup_id(
         .filter(|conversation| kind.is_none_or(|expected| conversation.kind == expected))
         .collect();
 
-    if let Some(conversation) = candidates.iter().find(|conversation| conversation.id == query) {
+    if let Some(conversation) = candidates
+        .iter()
+        .find(|conversation| conversation.id == query)
+    {
         return Ok(conversation.id.clone());
     }
 
@@ -1316,16 +1402,14 @@ fn summarize_decoded_content(content: &Content) -> String {
                 short_id(&reaction.reference)
             )
         }
-        Content::Reply(reply) => {
-            reply
-                .content
-                .r#type
-                .as_ref()
-                .filter(|t| t.type_id == "text" || t.type_id == "markdown")
-                .and_then(|_| String::from_utf8(reply.content.content.clone()).ok())
-                .or_else(|| reply.content.fallback.clone())
-                .unwrap_or_else(|| "(reply)".to_owned())
-        }
+        Content::Reply(reply) => reply
+            .content
+            .r#type
+            .as_ref()
+            .filter(|t| t.type_id == "text" || t.type_id == "markdown")
+            .and_then(|_| String::from_utf8(reply.content.content.clone()).ok())
+            .or_else(|| reply.content.fallback.clone())
+            .unwrap_or_else(|| "(reply)".to_owned()),
         Content::ReadReceipt => "read receipt".to_owned(),
         Content::Attachment(attachment) => format!(
             "attachment {}",
@@ -1353,15 +1437,24 @@ fn summarize_unknown_content(content_type: &str, raw: &[u8]) -> String {
 
         if !group_updated.added_inboxes.is_empty() {
             let count = group_updated.added_inboxes.len();
-            parts.push(format!("added {count} member{}", if count == 1 { "" } else { "s" }));
+            parts.push(format!(
+                "added {count} member{}",
+                if count == 1 { "" } else { "s" }
+            ));
         }
         if !group_updated.removed_inboxes.is_empty() {
             let count = group_updated.removed_inboxes.len();
-            parts.push(format!("removed {count} member{}", if count == 1 { "" } else { "s" }));
+            parts.push(format!(
+                "removed {count} member{}",
+                if count == 1 { "" } else { "s" }
+            ));
         }
         if !group_updated.left_inboxes.is_empty() {
             let count = group_updated.left_inboxes.len();
-            parts.push(format!("{count} member{} left", if count == 1 { "" } else { "s" }));
+            parts.push(format!(
+                "{count} member{} left",
+                if count == 1 { "" } else { "s" }
+            ));
         }
         if let Some(rename) = group_updated
             .metadata_field_changes
@@ -1453,7 +1546,10 @@ fn short_id(value: &str) -> String {
     format!("{}....{}", &value[..4], &value[value.len() - 4..])
 }
 
-fn find_message_conversation(client: &Client, message_id: &str) -> anyhow::Result<(xmtp::conversation::Conversation, String)> {
+fn find_message_conversation(
+    client: &Client,
+    message_id: &str,
+) -> anyhow::Result<(xmtp::conversation::Conversation, String)> {
     client.sync_welcomes().context("sync welcomes")?;
     client.sync_all(&[]).context("sync conversations")?;
     let conversations = client.conversations().context("list conversations")?;
@@ -1531,16 +1627,17 @@ impl DaemonApp {
     }
 
     fn conversation_list(&mut self) -> anyhow::Result<ConversationListResponse> {
-        let items: Vec<ConversationItem> = list_conversations_with_client(self.ensure_client()?, None)?
-            .into_iter()
-            .map(|item| ConversationItem {
-                id: item.id,
-                kind: item.kind,
-                name: item.name,
-                dm_peer_inbox_id: item.dm_peer_inbox_id,
-                last_message_ns: item.last_message_ns,
-            })
-            .collect();
+        let items: Vec<ConversationItem> =
+            list_conversations_with_client(self.ensure_client()?, None)?
+                .into_iter()
+                .map(|item| ConversationItem {
+                    id: item.id,
+                    kind: item.kind,
+                    name: item.name,
+                    dm_peer_inbox_id: item.dm_peer_inbox_id,
+                    last_message_ns: item.last_message_ns,
+                })
+                .collect();
         self.remember_conversation_items(&items);
         Ok(ConversationListResponse { items })
     }
@@ -1605,24 +1702,31 @@ impl DaemonApp {
         self.status()
     }
 
-    fn list_conversations(&mut self, kind: Option<String>) -> anyhow::Result<ConversationListResponse> {
-        let items: Vec<ConversationItem> = list_conversations_with_client(self.ensure_client()?, kind.as_deref())?
-            .into_iter()
-            .map(|item| ConversationItem {
-                id: item.id,
-                kind: item.kind,
-                name: item.name,
-                dm_peer_inbox_id: item.dm_peer_inbox_id,
-                last_message_ns: item.last_message_ns,
-            })
-            .collect();
+    fn list_conversations(
+        &mut self,
+        kind: Option<String>,
+    ) -> anyhow::Result<ConversationListResponse> {
+        let items: Vec<ConversationItem> =
+            list_conversations_with_client(self.ensure_client()?, kind.as_deref())?
+                .into_iter()
+                .map(|item| ConversationItem {
+                    id: item.id,
+                    kind: item.kind,
+                    name: item.name,
+                    dm_peer_inbox_id: item.dm_peer_inbox_id,
+                    last_message_ns: item.last_message_ns,
+                })
+                .collect();
         if kind.is_none() {
             self.remember_conversation_items(&items);
         }
         Ok(ConversationListResponse { items })
     }
 
-    fn conversation_info(&mut self, conversation_id: String) -> anyhow::Result<ConversationInfoResponse> {
+    fn conversation_info(
+        &mut self,
+        conversation_id: String,
+    ) -> anyhow::Result<ConversationInfoResponse> {
         conversation_info_with_client(self.ensure_client()?, &conversation_id)
     }
 
@@ -1634,31 +1738,52 @@ impl DaemonApp {
     ) -> anyhow::Result<HistoryResponse> {
         let data_dir = self.data_dir.clone();
         let client = self.ensure_client()?;
-        let items = history_with_client(
-            &data_dir,
-            client,
-            &conversation_id,
-            None,
-            before_ns,
-            limit,
-        )?
-            .into_iter()
-            .map(|item| HistoryItem {
-                message_id: item.message_id,
-                sender_inbox_id: item.sender_inbox_id,
-                sent_at_ns: item.sent_at_ns,
-                content_kind: item.content_kind,
-                content: item.content,
-                reply_count: item.reply_count,
-                reaction_count: item.reaction_count,
-                reply_target_message_id: item.reply_target_message_id,
-                reaction_target_message_id: item.reaction_target_message_id,
-                reaction_emoji: item.reaction_emoji,
-                reaction_action: item.reaction_action,
-                attached_reactions: item.attached_reactions,
-            })
-            .collect();
+        let items =
+            history_with_client(&data_dir, client, &conversation_id, None, before_ns, limit)?
+                .into_iter()
+                .map(|item| HistoryItem {
+                    message_id: item.message_id,
+                    sender_inbox_id: item.sender_inbox_id,
+                    sent_at_ns: item.sent_at_ns,
+                    content_kind: item.content_kind,
+                    content: item.content,
+                    reply_count: item.reply_count,
+                    reaction_count: item.reaction_count,
+                    reply_target_message_id: item.reply_target_message_id,
+                    reaction_target_message_id: item.reaction_target_message_id,
+                    reaction_emoji: item.reaction_emoji,
+                    reaction_action: item.reaction_action,
+                    attached_reactions: item.attached_reactions,
+                    read_by: item.read_by,
+                })
+                .collect();
         Ok(HistoryResponse { items })
+    }
+
+    fn send_read_receipt(&mut self, conversation_id: String) -> anyhow::Result<ActionResponse> {
+        let resolved_conversation_id = self
+            .resolve_cached_conversation_id(&conversation_id, None)
+            .unwrap_or_else(|| conversation_id.clone());
+        let conversation = find_conversation_by_id_with_kind(
+            self.ensure_client()?,
+            &resolved_conversation_id,
+            None,
+        )?;
+        let message_id = match conversation.send_read_receipt() {
+            Ok(message_id) => message_id,
+            Err(err) => {
+                error!(
+                    conversation_id = %resolved_conversation_id,
+                    error = %err,
+                    "send read receipt failed"
+                );
+                String::new()
+            }
+        };
+        Ok(ActionResponse {
+            conversation_id: resolved_conversation_id,
+            message_id,
+        })
     }
 
     fn open_dm(&mut self, recipient: String) -> anyhow::Result<ActionResponse> {
@@ -1826,11 +1951,16 @@ impl DaemonApp {
         })
     }
 
-    fn rename_group(&mut self, conversation_id: String, name: String) -> anyhow::Result<ActionResponse> {
+    fn rename_group(
+        &mut self,
+        conversation_id: String,
+        name: String,
+    ) -> anyhow::Result<ActionResponse> {
         let resolved_conversation_id = self
             .resolve_cached_conversation_id(&conversation_id, Some("group"))
             .unwrap_or(conversation_id);
-        let result = rename_group_with_client(self.ensure_client()?, &resolved_conversation_id, &name)?;
+        let result =
+            rename_group_with_client(self.ensure_client()?, &resolved_conversation_id, &name)?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1845,8 +1975,11 @@ impl DaemonApp {
         let resolved_conversation_id = self
             .resolve_cached_conversation_id(&conversation_id, Some("group"))
             .unwrap_or(conversation_id);
-        let result =
-            add_group_members_with_client(self.ensure_client()?, &resolved_conversation_id, &members)?;
+        let result = add_group_members_with_client(
+            self.ensure_client()?,
+            &resolved_conversation_id,
+            &members,
+        )?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1876,7 +2009,8 @@ impl DaemonApp {
         let resolved_conversation_id = self
             .resolve_cached_conversation_id(&conversation_id, None)
             .unwrap_or(conversation_id);
-        let result = leave_conversation_with_client(self.ensure_client()?, &resolved_conversation_id)?;
+        let result =
+            leave_conversation_with_client(self.ensure_client()?, &resolved_conversation_id)?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -2042,7 +2176,11 @@ async fn login_handler(
 async fn shutdown_handler(
     State(state): State<HttpState>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    daemon_log(&state.app.lock().expect("lock daemon app").data_dir, "info", "shutdown requested by client");
+    daemon_log(
+        &state.app.lock().expect("lock daemon app").data_dir,
+        "info",
+        "shutdown requested by client",
+    );
     let _ = state.shutdown_tx.send(());
     Ok(StatusCode::NO_CONTENT)
 }
@@ -2050,9 +2188,11 @@ async fn shutdown_handler(
 async fn status_handler(
     State(state): State<HttpState>,
 ) -> Result<Json<StatusResponse>, ApiErrorResponse> {
-    let status = run_app(&state, "get status".to_owned(), false, false, |app| app.status())
-        .await
-        .map_err(internal_error)?;
+    let status = run_app(&state, "get status".to_owned(), false, false, |app| {
+        app.status()
+    })
+    .await
+    .map_err(internal_error)?;
     Ok(Json(status))
 }
 
@@ -2193,6 +2333,22 @@ async fn send_conversation_handler(
     Ok(Json(result))
 }
 
+async fn send_read_receipt_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
+    let result = run_app(
+        &state,
+        format!("send read receipt id={conversation_id}"),
+        false,
+        false,
+        move |app| app.send_read_receipt(conversation_id),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
 async fn reply_handler(
     State(state): State<HttpState>,
     AxumPath(message_id): AxumPath<String>,
@@ -2235,7 +2391,9 @@ async fn react_handler(
         format!("react message_id={message_id} action={action:?}"),
         false,
         true,
-        move |app| app.react_with_action(message_id, request.emoji, action, request.conversation_id),
+        move |app| {
+            app.react_with_action(message_id, request.emoji, action, request.conversation_id)
+        },
     )
     .await
     .map_err(internal_error)?;
@@ -2456,7 +2614,10 @@ fn sse_event_from_envelope(envelope: &DaemonEventEnvelope) -> Event {
         })
         .to_string()
     });
-    Event::default().event("daemon_event").id(envelope.event_id.clone()).data(data)
+    Event::default()
+        .event("daemon_event")
+        .id(envelope.event_id.clone())
+        .data(data)
 }
 
 async fn app_events_handler(
@@ -2536,11 +2697,8 @@ async fn history_events_handler(
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Result<Event, std::convert::Infallible>>();
     let data_dir_for_thread = data_dir.clone();
     std::thread::spawn(move || {
-        let stream_result = watch_history_with_kind(
-            &data_dir_for_thread,
-            &conversation_id,
-            None,
-            |item| {
+        let stream_result =
+            watch_history_with_kind(&data_dir_for_thread, &conversation_id, None, |item| {
                 let envelope = DaemonEventEnvelope {
                     event_id: next_event_id(),
                     payload: DaemonEventData::HistoryItem {
@@ -2550,8 +2708,7 @@ async fn history_events_handler(
                 };
                 let event = sse_event_from_envelope(&envelope);
                 let _ = event_tx.send(Ok(event));
-            },
-        );
+            });
         if let Err(err) = stream_result {
             let envelope = DaemonEventEnvelope {
                 event_id: next_event_id(),
@@ -2580,7 +2737,9 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
         ),
     );
     fs::write(pid_path(data_dir), std::process::id().to_string()).context("write daemon pid")?;
-    let listener = TcpListener::bind("127.0.0.1:0").await.context("bind daemon tcp listener")?;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .context("bind daemon tcp listener")?;
     let addr: SocketAddr = listener.local_addr().context("read daemon local addr")?;
     fs::write(addr_path(data_dir), addr.to_string()).context("write daemon addr")?;
     let _cleanup = DaemonFilesGuard::new(None, addr_path(data_dir), pid_path(data_dir));
@@ -2633,12 +2792,22 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
         .route("/v1/shutdown", post(shutdown_handler))
         .route("/v1/status", get(status_handler))
         .route("/v1/conversations", get(conversations_handler))
-        .route("/v1/conversations/{conversation_id}", get(conversation_info_handler))
+        .route(
+            "/v1/conversations/{conversation_id}",
+            get(conversation_info_handler),
+        )
         .route(
             "/v1/conversations/{conversation_id}/history",
             get(conversation_history_handler),
         )
-        .route("/v1/conversations/{conversation_id}/send", post(send_conversation_handler))
+        .route(
+            "/v1/conversations/{conversation_id}/read-receipt",
+            post(send_read_receipt_handler),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}/send",
+            post(send_conversation_handler),
+        )
         .route("/v1/direct-message/open", post(open_dm_handler))
         .route("/v1/direct-message/send", post(send_dm_handler))
         .route("/v1/groups", post(create_group_handler))
@@ -2657,12 +2826,18 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
                 .delete(remove_group_members_handler),
         )
         .route("/v1/groups/{group_id}/send", post(send_group_handler))
-        .route("/v1/conversations/{conversation_id}/leave", post(leave_conversation_handler))
+        .route(
+            "/v1/conversations/{conversation_id}/leave",
+            post(leave_conversation_handler),
+        )
         .route("/v1/messages/{message_id}", get(message_info_handler))
         .route("/v1/messages/{message_id}/reply", post(reply_handler))
         .route("/v1/messages/{message_id}/react", post(react_handler))
         .route("/v1/events", get(app_events_handler))
-        .route("/v1/conversations/{conversation_id}/events", get(history_events_handler))
+        .route(
+            "/v1/conversations/{conversation_id}/events",
+            get(history_events_handler),
+        )
         .with_state(HttpState {
             app,
             shutdown_tx: shutdown_tx.clone(),
@@ -2737,8 +2912,8 @@ mod tests {
             },
         ];
 
-        let resolved =
-            resolve_conversation_lookup_id(&ids, "12345678....66667777", None).expect("resolved id");
+        let resolved = resolve_conversation_lookup_id(&ids, "12345678....66667777", None)
+            .expect("resolved id");
 
         assert_eq!(resolved, ids[0].id);
     }
@@ -2800,7 +2975,11 @@ mod tests {
 
         let error = resolve_conversation_lookup_id(&ids, "dup", None).expect_err("ambiguous name");
 
-        assert!(error.to_string().contains("conversation name dup is ambiguous"));
+        assert!(
+            error
+                .to_string()
+                .contains("conversation name dup is ambiguous")
+        );
     }
 
     #[test]

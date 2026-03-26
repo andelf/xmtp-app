@@ -12,10 +12,8 @@ use xmtp_daemon::addr_path;
 use xmtp_ipc::{
     ActionResponse, ApiErrorBody, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope,
     EmojiRequest, GroupCreateRequest, GroupInfoResponse, GroupMembersResponse,
-    GroupPermissionsResponse,
-    GroupMembersUpdateRequest, HistoryResponse, RecipientMessageRequest, RecipientRequest,
-    RenameGroupRequest, SendMessageRequest,
-    UpdatePermissionRequest,
+    GroupMembersUpdateRequest, GroupPermissionsResponse, HistoryResponse, RecipientMessageRequest,
+    RecipientRequest, RenameGroupRequest, SendMessageRequest, UpdatePermissionRequest,
 };
 
 use crate::event::{ActionOutcome, AppEvent, Effect};
@@ -56,6 +54,9 @@ impl Runtime {
                     self.spawn_conversation_info(conversation_id.clone());
                     self.spawn_history(conversation_id.clone());
                     self.watch_conversation(conversation_id);
+                }
+                Effect::SendReadReceipt { conversation_id } => {
+                    self.spawn_send_read_receipt(conversation_id)
                 }
                 Effect::OpenDm { recipient } => self.spawn_open_dm(recipient),
                 Effect::CreateGroup { name, members } => self.spawn_create_group(name, members),
@@ -140,7 +141,10 @@ impl Runtime {
         tokio::spawn(async move {
             match load_history(&data_dir, &conversation_id).await {
                 Ok(items) => {
-                    let _ = tx.send(AppEvent::HistoryLoaded { conversation_id, items });
+                    let _ = tx.send(AppEvent::HistoryLoaded {
+                        conversation_id,
+                        items,
+                    });
                 }
                 Err(err) => {
                     let _ = tx.send(AppEvent::Error(err.to_string()));
@@ -177,13 +181,24 @@ impl Runtime {
         });
     }
 
+    fn spawn_send_read_receipt(&self, conversation_id: String) {
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            if let Err(err) = send_read_receipt(&data_dir, &conversation_id).await {
+                eprintln!("send read receipt failed: {err}");
+            }
+        });
+    }
+
     fn spawn_create_group(&self, name: Option<String>, members: Vec<String>) {
         let tx = self.tx.clone();
         let data_dir = self.data_dir.clone();
         tokio::spawn(async move {
             match create_group(&data_dir, name, members).await {
                 Ok(result) => {
-                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::CreatedGroup(result)));
+                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::CreatedGroup(
+                        result,
+                    )));
                 }
                 Err(err) => {
                     let _ = tx.send(AppEvent::Error(err.to_string()));
@@ -338,10 +353,12 @@ impl Runtime {
             let result: anyhow::Result<ActionResponse> = if kind == "group" {
                 send_group(&data_dir, &conversation_id, &text).await
             } else if let Some(target) = target {
-                send_dm(&data_dir, &target, &text).await.map(|response| ActionResponse {
-                    conversation_id: response.conversation_id,
-                    message_id: response.message_id,
-                })
+                send_dm(&data_dir, &target, &text)
+                    .await
+                    .map(|response| ActionResponse {
+                        conversation_id: response.conversation_id,
+                        message_id: response.message_id,
+                    })
             } else {
                 Err(anyhow::anyhow!("dm peer target unavailable"))
             };
@@ -429,7 +446,10 @@ async fn ensure_daemon(data_dir: &Path) -> anyhow::Result<()> {
     anyhow::bail!("daemon addr not ready")
 }
 
-async fn conversation_info(data_dir: &Path, conversation_id: &str) -> anyhow::Result<ConversationInfoResponse> {
+async fn conversation_info(
+    data_dir: &Path,
+    conversation_id: &str,
+) -> anyhow::Result<ConversationInfoResponse> {
     http_get(data_dir, &format!("/v1/conversations/{conversation_id}")).await
 }
 
@@ -437,7 +457,10 @@ async fn group_info(data_dir: &Path, conversation_id: &str) -> anyhow::Result<Gr
     http_get(data_dir, &format!("/v1/groups/{conversation_id}")).await
 }
 
-async fn group_members(data_dir: &Path, conversation_id: &str) -> anyhow::Result<GroupMembersResponse> {
+async fn group_members(
+    data_dir: &Path,
+    conversation_id: &str,
+) -> anyhow::Result<GroupMembersResponse> {
     http_get(data_dir, &format!("/v1/groups/{conversation_id}/members")).await
 }
 
@@ -445,7 +468,11 @@ async fn group_permissions(
     data_dir: &Path,
     conversation_id: &str,
 ) -> anyhow::Result<GroupPermissionsResponse> {
-    http_get(data_dir, &format!("/v1/groups/{conversation_id}/permissions")).await
+    http_get(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/permissions"),
+    )
+    .await
 }
 
 async fn update_group_permission(
@@ -465,10 +492,28 @@ async fn update_group_permission(
     .await
 }
 
-async fn load_history(data_dir: &Path, conversation_id: &str) -> anyhow::Result<Vec<xmtp_ipc::HistoryItem>> {
-    let response: HistoryResponse =
-        http_get(data_dir, &format!("/v1/conversations/{conversation_id}/history")).await?;
+async fn load_history(
+    data_dir: &Path,
+    conversation_id: &str,
+) -> anyhow::Result<Vec<xmtp_ipc::HistoryItem>> {
+    let response: HistoryResponse = http_get(
+        data_dir,
+        &format!("/v1/conversations/{conversation_id}/history"),
+    )
+    .await?;
     Ok(response.items)
+}
+
+async fn send_read_receipt(
+    data_dir: &Path,
+    conversation_id: &str,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/conversations/{conversation_id}/read-receipt"),
+        &(),
+    )
+    .await
 }
 
 async fn watch_history(
@@ -494,7 +539,9 @@ async fn watch_history(
             }
         };
         let response = match http_client()
-            .get(format!("{base_url}/v1/conversations/{conversation_id}/events"))
+            .get(format!(
+                "{base_url}/v1/conversations/{conversation_id}/events"
+            ))
             .send()
             .await
             .context("open history sse stream")
@@ -534,7 +581,10 @@ async fn watch_history(
                     }
                 };
             match envelope.payload {
-                DaemonEventData::HistoryItem { conversation_id, item } => {
+                DaemonEventData::HistoryItem {
+                    conversation_id,
+                    item,
+                } => {
                     let _ = tx.send(AppEvent::HistoryEvent {
                         conversation_id,
                         item,
@@ -657,7 +707,11 @@ async fn watch_app_events(
     }
 }
 
-async fn send_dm(data_dir: &Path, recipient: &str, message: &str) -> anyhow::Result<xmtp_ipc::SendDmResponse> {
+async fn send_dm(
+    data_dir: &Path,
+    recipient: &str,
+    message: &str,
+) -> anyhow::Result<xmtp_ipc::SendDmResponse> {
     http_post(
         data_dir,
         "/v1/direct-message/send",
@@ -670,7 +724,11 @@ async fn send_dm(data_dir: &Path, recipient: &str, message: &str) -> anyhow::Res
     .await
 }
 
-async fn send_group(data_dir: &Path, conversation_id: &str, message: &str) -> anyhow::Result<ActionResponse> {
+async fn send_group(
+    data_dir: &Path,
+    conversation_id: &str,
+    message: &str,
+) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
         &format!("/v1/groups/{conversation_id}/send"),
@@ -683,7 +741,11 @@ async fn send_group(data_dir: &Path, conversation_id: &str, message: &str) -> an
     .await
 }
 
-async fn create_group(data_dir: &Path, name: Option<String>, members: Vec<String>) -> anyhow::Result<ActionResponse> {
+async fn create_group(
+    data_dir: &Path,
+    name: Option<String>,
+    members: Vec<String>,
+) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
         "/v1/groups",
@@ -722,7 +784,11 @@ async fn remove_group_members(
     .await
 }
 
-async fn rename_group(data_dir: &Path, conversation_id: &str, name: &str) -> anyhow::Result<ActionResponse> {
+async fn rename_group(
+    data_dir: &Path,
+    conversation_id: &str,
+    name: &str,
+) -> anyhow::Result<ActionResponse> {
     http_patch(
         data_dir,
         &format!("/v1/groups/{conversation_id}"),
@@ -733,7 +799,10 @@ async fn rename_group(data_dir: &Path, conversation_id: &str, name: &str) -> any
     .await
 }
 
-async fn leave_conversation(data_dir: &Path, conversation_id: &str) -> anyhow::Result<ActionResponse> {
+async fn leave_conversation(
+    data_dir: &Path,
+    conversation_id: &str,
+) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
         &format!("/v1/conversations/{conversation_id}/leave"),
