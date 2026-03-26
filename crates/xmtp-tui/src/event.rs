@@ -1,7 +1,8 @@
 use crossterm::event::Event as TerminalEvent;
 use xmtp_ipc::{
     ActionResponse, ConversationInfoResponse, ConversationItem, ConversationUpdatedEvent,
-    GroupInfoResponse, GroupMemberItem, GroupMembersUpdatedEvent, HistoryItem, StatusResponse,
+    GroupInfoResponse, GroupMemberItem, GroupMembersUpdatedEvent, GroupPermissionsResponse,
+    HistoryItem, StatusResponse,
 };
 
 #[derive(Debug, Clone)]
@@ -14,6 +15,7 @@ pub enum AppEvent {
     ConversationInfoLoaded(ConversationInfoResponse),
     GroupInfoLoaded(GroupInfoResponse),
     GroupMembersLoaded(Vec<GroupMemberItem>),
+    GroupPermissionsLoaded(GroupPermissionsResponse),
     HistoryLoaded {
         conversation_id: String,
         items: Vec<HistoryItem>,
@@ -48,6 +50,7 @@ pub enum Effect {
     CreateGroup { name: Option<String>, members: Vec<String> },
     LoadGroupInfo { conversation_id: String },
     LoadGroupMembers { conversation_id: String },
+    LoadGroupPermissions { conversation_id: String },
     AddGroupMembers { conversation_id: String, members: Vec<String> },
     RemoveGroupMembers { conversation_id: String, members: Vec<String> },
     RenameGroup { conversation_id: String, name: String },

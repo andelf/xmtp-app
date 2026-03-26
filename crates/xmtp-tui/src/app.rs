@@ -3,8 +3,8 @@ use ratatui::style::Color;
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use xmtp_ipc::{
-    ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem, HistoryItem,
-    ReactionDetail, StatusResponse,
+    ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem,
+    GroupPermissionsResponse, HistoryItem, ReactionDetail, StatusResponse,
 };
 
 use crate::event::{ActionOutcome, AppEvent, Effect};
@@ -44,6 +44,7 @@ pub enum Modal {
     CreateGroup,
     GroupManagement,
     GroupInfo,
+    GroupPermissions,
     GroupAddMembers,
     GroupRemoveMembers,
     GroupRename,
@@ -82,16 +83,18 @@ pub enum GroupManagementAction {
     RemoveMembers,
     Rename,
     LeaveGroup,
+    Permissions,
 }
 
 impl GroupManagementAction {
-    pub fn all() -> [Self; 5] {
+    pub fn all() -> [Self; 6] {
         [
             Self::ViewInfo,
             Self::AddMembers,
             Self::RemoveMembers,
             Self::Rename,
             Self::LeaveGroup,
+            Self::Permissions,
         ]
     }
 
@@ -102,6 +105,7 @@ impl GroupManagementAction {
             Self::RemoveMembers => "remove members",
             Self::Rename => "rename",
             Self::LeaveGroup => "leave group",
+            Self::Permissions => "permissions",
         }
     }
 }
@@ -122,6 +126,8 @@ pub struct CreateGroupDialog {
 pub struct GroupManagementState {
     pub menu_index: usize,
     pub info: Option<GroupInfoResponse>,
+    pub permissions: Option<GroupPermissionsResponse>,
+    pub permissions_loading: bool,
     pub members: Vec<GroupMemberItem>,
     pub selected_member: usize,
     pub info_member_scroll: usize,
@@ -243,6 +249,11 @@ impl App {
                     .group_management
                     .info_member_scroll
                     .min(self.group_management.members.len().saturating_sub(1));
+                Vec::new()
+            }
+            AppEvent::GroupPermissionsLoaded(permissions) => {
+                self.group_management.permissions = Some(permissions);
+                self.group_management.permissions_loading = false;
                 Vec::new()
             }
             AppEvent::HistoryLoaded {
@@ -551,6 +562,7 @@ impl App {
             Modal::CreateGroup => self.handle_create_group_key(key),
             Modal::GroupManagement => self.handle_group_management_key(key),
             Modal::GroupInfo => self.handle_group_info_key(key),
+            Modal::GroupPermissions => self.handle_group_permissions_key(key),
             Modal::GroupAddMembers => self.handle_group_add_members_key(key),
             Modal::GroupRemoveMembers => self.handle_group_remove_members_key(key),
             Modal::GroupRename => self.handle_group_rename_key(key),
@@ -567,6 +579,7 @@ impl App {
             | Modal::CreateGroup
             | Modal::GroupManagement
             | Modal::GroupInfo
+            | Modal::GroupPermissions
             | Modal::GroupAddMembers
             | Modal::GroupRemoveMembers
             | Modal::GroupRename
@@ -984,6 +997,12 @@ impl App {
                 self.modal = Modal::GroupLeaveConfirm;
                 Vec::new()
             }
+            GroupManagementAction::Permissions => {
+                self.modal = Modal::GroupPermissions;
+                self.group_management.permissions_loading = true;
+                self.group_management.permissions = None;
+                vec![Effect::LoadGroupPermissions { conversation_id }]
+            }
         }
     }
 
@@ -1003,6 +1022,13 @@ impl App {
                 self.modal = Modal::GroupManagement;
             }
             _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_group_permissions_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        if key.code == KeyCode::Esc {
+            self.modal = Modal::GroupManagement;
         }
         Vec::new()
     }

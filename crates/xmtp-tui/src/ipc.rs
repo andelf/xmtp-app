@@ -12,6 +12,7 @@ use xmtp_daemon::addr_path;
 use xmtp_ipc::{
     ActionResponse, ApiErrorBody, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope,
     EmojiRequest, GroupCreateRequest, GroupInfoResponse, GroupMembersResponse,
+    GroupPermissionsResponse,
     GroupMembersUpdateRequest, HistoryResponse, RecipientMessageRequest, RecipientRequest,
     RenameGroupRequest, SendMessageRequest,
 };
@@ -60,6 +61,9 @@ impl Runtime {
                 Effect::LoadGroupInfo { conversation_id } => self.spawn_group_info(conversation_id),
                 Effect::LoadGroupMembers { conversation_id } => {
                     self.spawn_group_members(conversation_id)
+                }
+                Effect::LoadGroupPermissions { conversation_id } => {
+                    self.spawn_group_permissions(conversation_id)
                 }
                 Effect::AddGroupMembers {
                     conversation_id,
@@ -204,6 +208,21 @@ impl Runtime {
             match group_members(&data_dir, &conversation_id).await {
                 Ok(response) => {
                     let _ = tx.send(AppEvent::GroupMembersLoaded(response.items));
+                }
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    fn spawn_group_permissions(&self, conversation_id: String) {
+        let tx = self.tx.clone();
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            match group_permissions(&data_dir, &conversation_id).await {
+                Ok(response) => {
+                    let _ = tx.send(AppEvent::GroupPermissionsLoaded(response));
                 }
                 Err(err) => {
                     let _ = tx.send(AppEvent::Error(err.to_string()));
@@ -394,6 +413,13 @@ async fn group_info(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result
 
 async fn group_members(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<GroupMembersResponse> {
     http_get(data_dir, &format!("/v1/groups/{conversation_id}/members")).await
+}
+
+async fn group_permissions(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+) -> anyhow::Result<GroupPermissionsResponse> {
+    http_get(data_dir, &format!("/v1/groups/{conversation_id}/permissions")).await
 }
 
 async fn load_history(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<Vec<xmtp_ipc::HistoryItem>> {

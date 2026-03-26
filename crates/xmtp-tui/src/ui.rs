@@ -12,6 +12,7 @@ use crate::app::{
     reaction_choices,
 };
 use crate::format::{format_clock, format_day_tag, short_display_id};
+use xmtp_ipc::GroupPermissionsResponse;
 
 enum MessageRowKind {
     DateSeparator,
@@ -55,6 +56,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Modal::CreateGroup => render_create_group(frame, app),
         Modal::GroupManagement => render_group_management(frame, app),
         Modal::GroupInfo => render_group_info(frame, app),
+        Modal::GroupPermissions => render_group_permissions(frame, app),
         Modal::GroupAddMembers => render_group_add_members(frame, app),
         Modal::GroupRemoveMembers => render_group_remove_members(frame, app),
         Modal::GroupRename => render_group_rename(frame, app),
@@ -690,6 +692,68 @@ fn render_group_management(frame: &mut Frame<'_>, app: &App) {
         .block(Block::default().title(title).borders(Borders::ALL))
         .highlight_style(Style::default().reversed());
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_group_permissions(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_rect(68, 18, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title("Group Permissions")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let body = if app.group_management.permissions_loading {
+        vec![Line::from(Span::styled(
+            "loading...",
+            Style::default().dark_gray(),
+        ))]
+    } else if let Some(info) = &app.group_management.permissions {
+        group_permissions_lines(info)
+    } else {
+        vec![Line::from(Span::styled(
+            "no permission data",
+            Style::default().dark_gray(),
+        ))]
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(8), Constraint::Length(1)])
+        .split(inner);
+
+    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "Esc closes",
+            Style::default().dark_gray(),
+        ))),
+        chunks[1],
+    );
+}
+
+fn group_permissions_lines(info: &GroupPermissionsResponse) -> Vec<Line<'static>> {
+    vec![
+        Line::from(render_group_permission_row("Preset:", &info.preset)),
+        Line::from(render_group_permission_row("Add members:", &info.add_member)),
+        Line::from(render_group_permission_row("Remove members:", &info.remove_member)),
+        Line::from(render_group_permission_row("Add admins:", &info.add_admin)),
+        Line::from(render_group_permission_row("Remove admins:", &info.remove_admin)),
+        Line::from(render_group_permission_row("Update name:", &info.update_group_name)),
+        Line::from(render_group_permission_row(
+            "Update description:",
+            &info.update_group_description,
+        )),
+        Line::from(render_group_permission_row("Update image:", &info.update_group_image)),
+        Line::from(render_group_permission_row("Update app data:", &info.update_app_data)),
+    ]
+}
+
+fn render_group_permission_row(label: &str, value: &str) -> Span<'static> {
+    Span::raw(format!("{:<20} {}", label, value))
 }
 
 fn render_group_info(frame: &mut Frame<'_>, app: &App) {
