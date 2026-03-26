@@ -63,6 +63,7 @@ fn group_and_message_requests_roundtrip_as_json() {
     let emoji = EmojiRequest {
         emoji: "👍".to_owned(),
         action: Some("add".to_owned()),
+        conversation_id: None,
     };
 
     let group_json = serde_json::to_string(&group).expect("serialize group request");
