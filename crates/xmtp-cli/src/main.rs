@@ -386,6 +386,9 @@ async fn login(
     api_url: Option<&str>,
     gateway_url: Option<&str>,
 ) -> anyhow::Result<()> {
+    if !data_dir.join("config.json").exists() || !data_dir.join("state.json").exists() {
+        init(data_dir.clone())?;
+    }
     let defaults = login_network_defaults(network)?;
     let resolved_env = env.unwrap_or(defaults.env);
     let resolved_api_url = api_url.or(defaults.api_url);
