@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use futures_util::stream::Stream;
 use prost::Message as ProstMessage;
+use rusqlite::Connection;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -66,6 +68,20 @@ struct GroupUpdated {
     metadata_field_changes: Vec<MetadataFieldChange>,
     #[prost(message, repeated, tag = "5")]
     left_inboxes: Vec<GroupUpdatedInbox>,
+}
+
+#[derive(Clone, prost::Message)]
+struct ReactionV2 {
+    #[prost(string, tag = "1")]
+    reference: String,
+    #[prost(string, tag = "2")]
+    reference_inbox_id: String,
+    #[prost(int32, tag = "3")]
+    action: i32,
+    #[prost(string, tag = "4")]
+    content: String,
+    #[prost(int32, tag = "5")]
+    schema: i32,
 }
 
 fn init_tracing() {
@@ -276,7 +292,7 @@ pub fn history_with_kind(
     kind: Option<&str>,
 ) -> anyhow::Result<Vec<HistoryEntry>> {
     let client = open_existing_client(data_dir)?;
-    history_with_client(&client, conversation_id, kind, None, 50)
+    history_with_client(data_dir, &client, conversation_id, kind, None, 50)
 }
 
 pub fn resolve_conversation_id(
@@ -741,6 +757,7 @@ fn message_info_with_client(client: &Client, message_id: &str) -> anyhow::Result
 }
 
 fn history_with_client(
+    data_dir: &Path,
     client: &Client,
     conversation_id: &str,
     kind: Option<&str>,
@@ -761,6 +778,31 @@ fn history_with_client(
     for message in messages {
         entries.push(history_entry_from_message(&message));
     }
+    let message_ids = entries
+        .iter()
+        .map(|entry| entry.message_id.clone())
+        .collect::<Vec<_>>();
+    let reaction_map = fetch_reactions_from_db(data_dir, &conversation.id(), &message_ids)
+        .context("fetch reactions from sqlite")?;
+    for entry in &mut entries {
+        entry.attached_reactions = reaction_map
+            .get(&entry.message_id.to_lowercase())
+            .cloned()
+            .unwrap_or_default();
+    }
+    let reaction_count: usize = entries.iter().map(|entry| entry.attached_reactions.len()).sum();
+    for entry in &entries {
+        tracing::debug!(
+            message_id = %entry.message_id,
+            attached_reactions = entry.attached_reactions.len(),
+            "history message"
+        );
+    }
+    tracing::debug!(
+        total_messages = entries.len(),
+        total_reactions = reaction_count,
+        "history loaded"
+    );
     entries.reverse();
     Ok(entries)
 }
@@ -895,15 +937,7 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
         reaction_target_message_id,
         reaction_emoji,
         reaction_action,
-        attached_reactions: message
-            .reactions
-            .iter()
-            .map(|reaction| ReactionDetail {
-                sender_inbox_id: reaction.sender_inbox_id.clone(),
-                emoji: reaction.emoji.clone(),
-                action: reaction.action.clone(),
-            })
-            .collect(),
+        attached_reactions: Vec::new(),
     }
 }
 
@@ -923,6 +957,63 @@ fn summarize_message_content(message: &xmtp::conversation::Message) -> String {
             .clone()
             .unwrap_or_else(|| "<undecodable>".to_owned()),
     }
+}
+
+fn fetch_reactions_from_db(
+    data_dir: &Path,
+    conversation_id: &str,
+    message_ids: &[String],
+) -> anyhow::Result<HashMap<String, Vec<ReactionDetail>>> {
+    if message_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let db_path = data_dir.join("xmtp.db3");
+    let conn = Connection::open(&db_path)
+        .with_context(|| format!("open sqlite db {}", db_path.display()))?;
+    let mut stmt = conn.prepare(
+        "SELECT lower(hex(reference_id)), sender_inbox_id, decrypted_message_bytes
+         FROM group_messages
+         WHERE lower(hex(group_id)) = ?1
+           AND content_type = 4
+           AND reference_id IS NOT NULL",
+    )?;
+
+    let wanted_ids: HashSet<String> = message_ids.iter().map(|id| id.to_lowercase()).collect();
+    let rows = stmt.query_map([conversation_id.to_lowercase()], |row| {
+        let reference_id: String = row.get(0)?;
+        let sender_inbox_id: String = row.get(1)?;
+        let decrypted_message_bytes: Vec<u8> = row.get(2)?;
+        Ok((reference_id, sender_inbox_id, decrypted_message_bytes))
+    })?;
+
+    let mut reaction_map: HashMap<String, Vec<ReactionDetail>> = HashMap::new();
+    for row in rows {
+        let (reference_id, sender_inbox_id, decrypted_message_bytes) = row?;
+        if !wanted_ids.contains(&reference_id) {
+            continue;
+        }
+
+        let encoded = xmtp::content::EncodedContent::decode(decrypted_message_bytes.as_slice())
+            .context("decode reaction encoded content")?;
+        let reaction = ReactionV2::decode(encoded.content.as_slice())
+            .context("decode reaction payload")?;
+
+        reaction_map
+            .entry(reference_id)
+            .or_default()
+            .push(ReactionDetail {
+                sender_inbox_id,
+                emoji: reaction.content,
+                action: match reaction.action {
+                    1 => "added".to_owned(),
+                    2 => "removed".to_owned(),
+                    _ => "unspecified".to_owned(),
+                },
+            });
+    }
+
+    Ok(reaction_map)
 }
 
 fn find_conversation_by_id(
@@ -1378,7 +1469,16 @@ impl DaemonApp {
         before_ns: Option<i64>,
         limit: usize,
     ) -> anyhow::Result<HistoryResponse> {
-        let items = history_with_client(self.ensure_client()?, &conversation_id, None, before_ns, limit)?
+        let data_dir = self.data_dir.clone();
+        let client = self.ensure_client()?;
+        let items = history_with_client(
+            &data_dir,
+            client,
+            &conversation_id,
+            None,
+            before_ns,
+            limit,
+        )?
             .into_iter()
             .map(|item| HistoryItem {
                 message_id: item.message_id,
