@@ -302,6 +302,9 @@ impl App {
                                     .min(self.messages.len().saturating_sub(1))
                             })
                     };
+                    if self.read_receipt_auto_send && self.should_send_read_receipt() {
+                        return vec![Effect::SendReadReceipt { conversation_id }];
+                    }
                 }
                 Vec::new()
             }
@@ -892,7 +895,13 @@ impl App {
                         }
                         MessageMenuAction::SendReadReceipt => {
                             self.modal = Modal::None;
-                            if let Some(conversation_id) = self.active_conversation_id.clone() {
+                            if self
+                                .selected_history_item()
+                                .is_some_and(|item| {
+                                    self.self_inbox_id() != Some(item.sender_inbox_id.as_str())
+                                })
+                                && let Some(conversation_id) = self.active_conversation_id.clone()
+                            {
                                 return vec![Effect::SendReadReceipt { conversation_id }];
                             }
                         }
@@ -1334,6 +1343,16 @@ impl App {
         self.messages.is_empty() || self.selected_message + 1 >= self.messages.len()
     }
 
+    fn should_send_read_receipt(&self) -> bool {
+        match self.self_inbox_id() {
+            Some(self_inbox_id) => self
+                .messages
+                .iter()
+                .any(|item| item.sender_inbox_id != self_inbox_id),
+            None => !self.messages.is_empty(),
+        }
+    }
+
     fn activate_conversation(&mut self, conversation: ConversationItem) -> Vec<Effect> {
         if self.active_conversation_id.as_deref() == Some(conversation.id.as_str()) {
             self.active_conversation = Some(conversation);
@@ -1365,14 +1384,9 @@ impl App {
         self.group_management.selected_member = 0;
         self.messages.clear();
         self.selected_message = self.messages.len().saturating_sub(1);
-        let conversation_id = conversation.id;
-        let mut effects = vec![Effect::SwitchConversation {
-            conversation_id: conversation_id.clone(),
-        }];
-        if self.read_receipt_auto_send {
-            effects.push(Effect::SendReadReceipt { conversation_id });
-        }
-        effects
+        vec![Effect::SwitchConversation {
+            conversation_id: conversation.id,
+        }]
     }
 
     fn reset_selected_message_to_end(&mut self) {
@@ -1991,10 +2005,7 @@ mod tests {
         assert!(app.messages.is_empty());
         assert!(matches!(
             effects.as_slice(),
-            [
-                Effect::SwitchConversation { conversation_id: switch_id },
-                Effect::SendReadReceipt { conversation_id: receipt_id }
-            ] if switch_id == "two" && receipt_id == "two"
+            [Effect::SwitchConversation { conversation_id }] if conversation_id == "two"
         ));
     }
 
@@ -2366,6 +2377,124 @@ mod tests {
     }
 
     #[test]
+    fn history_loaded_auto_sends_read_receipt_when_remote_message_exists() {
+        let (mut app, _) = App::new();
+        app.active_conversation_id = Some("conv-1".into());
+        app.status = Some(
+            serde_json::from_value(serde_json::json!({
+                "daemon_state": "running",
+                "connection_state": "connected",
+                "inbox_id": "self-1",
+                "installation_id": null
+            }))
+            .expect("build status response"),
+        );
+
+        let effects = app.handle_event(crate::event::AppEvent::HistoryLoaded {
+            conversation_id: "conv-1".into(),
+            items: vec![xmtp_ipc::HistoryItem {
+                message_id: "msg-1".into(),
+                sender_inbox_id: "peer-1".into(),
+                sent_at_ns: 1,
+                content_kind: "text".into(),
+                content: "hello".into(),
+                reply_count: 0,
+                reaction_count: 0,
+                reply_target_message_id: None,
+                reaction_target_message_id: None,
+                reaction_emoji: None,
+                reaction_action: None,
+                attached_reactions: Vec::new(),
+                read_by: Vec::new(),
+            }],
+        });
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::SendReadReceipt { conversation_id }] if conversation_id == "conv-1"
+        ));
+    }
+
+    #[test]
+    fn history_loaded_skips_read_receipt_when_all_messages_are_from_self() {
+        let (mut app, _) = App::new();
+        app.active_conversation_id = Some("conv-1".into());
+        app.status = Some(
+            serde_json::from_value(serde_json::json!({
+                "daemon_state": "running",
+                "connection_state": "connected",
+                "inbox_id": "self-1",
+                "installation_id": null
+            }))
+            .expect("build status response"),
+        );
+
+        let effects = app.handle_event(crate::event::AppEvent::HistoryLoaded {
+            conversation_id: "conv-1".into(),
+            items: vec![xmtp_ipc::HistoryItem {
+                message_id: "msg-1".into(),
+                sender_inbox_id: "self-1".into(),
+                sent_at_ns: 1,
+                content_kind: "text".into(),
+                content: "hello".into(),
+                reply_count: 0,
+                reaction_count: 0,
+                reply_target_message_id: None,
+                reaction_target_message_id: None,
+                reaction_emoji: None,
+                reaction_action: None,
+                attached_reactions: Vec::new(),
+                read_by: Vec::new(),
+            }],
+        });
+
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn message_menu_send_read_receipt_skips_self_message() {
+        let (mut app, _) = App::new();
+        app.active_conversation_id = Some("conv-1".into());
+        app.status = Some(
+            serde_json::from_value(serde_json::json!({
+                "daemon_state": "running",
+                "connection_state": "connected",
+                "inbox_id": "self-1",
+                "installation_id": null
+            }))
+            .expect("build status response"),
+        );
+        app.modal = Modal::MessageMenu;
+        app.messages.push(xmtp_ipc::HistoryItem {
+            message_id: "msg-1".into(),
+            sender_inbox_id: "self-1".into(),
+            sent_at_ns: 1,
+            content_kind: "text".into(),
+            content: "hello".into(),
+            reply_count: 0,
+            reaction_count: 0,
+            reply_target_message_id: None,
+            reaction_target_message_id: None,
+            reaction_emoji: None,
+            reaction_action: None,
+            attached_reactions: Vec::new(),
+            read_by: Vec::new(),
+        });
+        app.message_menu_index = app
+            .message_menu_actions()
+            .iter()
+            .position(|action| *action == MessageMenuAction::SendReadReceipt)
+            .expect("send read receipt action");
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.modal, Modal::None);
+    }
+
+    #[test]
     fn app_starts_with_app_event_subscription_effect() {
         let (_, effects) = App::new();
         assert_eq!(effects.len(), 1);
@@ -2420,10 +2549,7 @@ mod tests {
 
         assert!(matches!(
             effects.as_slice(),
-            [
-                Effect::SwitchConversation { conversation_id: switch_id },
-                Effect::SendReadReceipt { conversation_id: receipt_id }
-            ] if switch_id == "conv-2" && receipt_id == "conv-2"
+            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-2"
         ));
         assert_eq!(app.active_conversation_id.as_deref(), Some("conv-2"));
         assert_eq!(app.unread_counts.get("conv-2"), None);
@@ -2805,10 +2931,7 @@ mod tests {
 
         assert!(matches!(
             effects.as_slice(),
-            [
-                Effect::SwitchConversation { conversation_id: switch_id },
-                Effect::SendReadReceipt { conversation_id: receipt_id }
-            ] if switch_id == "conv-2" && receipt_id == "conv-2"
+            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-2"
         ));
         assert!(app.reply_to_message_id.is_none());
         assert!(app.input.is_empty());
@@ -2828,10 +2951,7 @@ mod tests {
 
         assert!(matches!(
             effects.as_slice(),
-            [
-                Effect::SwitchConversation { conversation_id: switch_id },
-                Effect::SendReadReceipt { conversation_id: receipt_id }
-            ] if switch_id == "conv-1" && receipt_id == "conv-1"
+            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-1"
         ));
         assert_eq!(app.input, "draft message");
         assert!(app.reply_to_message_id.is_none());
@@ -2865,10 +2985,7 @@ mod tests {
 
         assert!(matches!(
             effects.as_slice(),
-            [
-                Effect::SwitchConversation { conversation_id: switch_id },
-                Effect::SendReadReceipt { conversation_id: receipt_id }
-            ] if switch_id == "conv-2" && receipt_id == "conv-2"
+            [Effect::SwitchConversation { conversation_id }] if conversation_id == "conv-2"
         ));
         assert_eq!(app.selected_message, 0);
     }
