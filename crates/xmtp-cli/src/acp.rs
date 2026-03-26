@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -7,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::{self as acp, Agent as _};
 use anyhow::{Context, anyhow};
+use chrono::Utc;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use tokio::process::Command;
@@ -115,6 +118,45 @@ fn acp_sessions_path(data_dir: &Path) -> PathBuf {
     data_dir.join("acp_sessions.json")
 }
 
+fn acp_log_path(data_dir: &Path, conversation_id: &str) -> PathBuf {
+    data_dir
+        .join("logs")
+        .join("acp")
+        .join(format!("{conversation_id}.jsonl"))
+}
+
+fn append_acp_log(
+    data_dir: &Path,
+    conversation_id: &str,
+    entry: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let path = acp_log_path(data_dir, conversation_id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("open {}", path.display()))?;
+    serde_json::to_writer(&mut file, entry).context("encode ACP log entry")?;
+    writeln!(&mut file).context("append ACP log newline")?;
+    Ok(())
+}
+
+fn log_acp_event(
+    data_dir: &Path,
+    conversation_id: &str,
+    mut entry: serde_json::Value,
+) {
+    if let Some(map) = entry.as_object_mut() {
+        map.insert("ts".to_owned(), serde_json::Value::String(Utc::now().to_rfc3339()));
+    }
+    if let Err(err) = append_acp_log(data_dir, conversation_id, &entry) {
+        eprintln!("ACP log write failed: {err:#}");
+    }
+}
+
 fn load_acp_sessions(data_dir: &Path) -> anyhow::Result<PersistedAcpSessions> {
     let path = acp_sessions_path(data_dir);
     if !path.exists() {
@@ -160,6 +202,15 @@ async fn ensure_acp_session(
         {
             Ok(_) => {
                 eprintln!("ACP session restored: {}", session_id_str(&session_id));
+                log_acp_event(
+                    data_dir,
+                    conversation_id,
+                    serde_json::json!({
+                        "event": "session_event",
+                        "action": "restored",
+                        "session_id": session_id_str(&session_id),
+                    }),
+                );
                 store_session_id(data_dir, conversation_id, &session_id)?;
                 return Ok(session_id);
             }
@@ -167,6 +218,14 @@ async fn ensure_acp_session(
                 eprintln!(
                     "ACP session restore failed for conversation {}: {err:#}",
                     conversation_id
+                );
+                log_acp_event(
+                    data_dir,
+                    conversation_id,
+                    serde_json::json!({
+                        "event": "error",
+                        "message": format!("ACP session restore failed: {err:#}"),
+                    }),
                 );
             }
         }
@@ -176,6 +235,15 @@ async fn ensure_acp_session(
         .new_session(acp::NewSessionRequest::new(cwd.to_path_buf()))
         .await
         .context("ACP new_session")?;
+    log_acp_event(
+        data_dir,
+        conversation_id,
+        serde_json::json!({
+            "event": "session_event",
+            "action": "created",
+            "session_id": session_id_str(&session.session_id),
+        }),
+    );
     store_session_id(data_dir, conversation_id, &session.session_id)?;
     Ok(session.session_id)
 }
@@ -212,12 +280,31 @@ async fn bridge_history_to_acp(
     chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
 ) -> anyhow::Result<()> {
     let mut retry_delay = Duration::from_millis(100);
+    let mut reconnect_attempt: u64 = 0;
 
     loop {
         let base_url = match daemon_base_url(data_dir) {
             Ok(base_url) => base_url,
             Err(err) => {
                 eprintln!("ACP history base URL error: {err:#}");
+                reconnect_attempt = reconnect_attempt.saturating_add(1);
+                log_acp_event(
+                    data_dir,
+                    conversation_id,
+                    serde_json::json!({
+                        "event": "error",
+                        "message": format!("ACP history base URL error: {err:#}"),
+                    }),
+                );
+                log_acp_event(
+                    data_dir,
+                    conversation_id,
+                    serde_json::json!({
+                        "event": "sse_reconnect",
+                        "attempt": reconnect_attempt,
+                        "delay_ms": retry_delay.as_millis() as u64,
+                    }),
+                );
                 tokio::select! {
                     signal = tokio::signal::ctrl_c() => {
                         signal.context("wait for ctrl-c")?;
@@ -235,6 +322,24 @@ async fn bridge_history_to_acp(
                 Ok(response) => response,
                 Err(err) => {
                     eprintln!("ACP history SSE status error: {err:#}");
+                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                    log_acp_event(
+                        data_dir,
+                        conversation_id,
+                        serde_json::json!({
+                            "event": "error",
+                            "message": format!("ACP history SSE status error: {err:#}"),
+                        }),
+                    );
+                    log_acp_event(
+                        data_dir,
+                        conversation_id,
+                        serde_json::json!({
+                            "event": "sse_reconnect",
+                            "attempt": reconnect_attempt,
+                            "delay_ms": retry_delay.as_millis() as u64,
+                        }),
+                    );
                     tokio::select! {
                         signal = tokio::signal::ctrl_c() => {
                             signal.context("wait for ctrl-c")?;
@@ -248,6 +353,24 @@ async fn bridge_history_to_acp(
             },
             Err(err) => {
                 eprintln!("ACP history SSE connect error: {err:#}");
+                reconnect_attempt = reconnect_attempt.saturating_add(1);
+                log_acp_event(
+                    data_dir,
+                    conversation_id,
+                    serde_json::json!({
+                        "event": "error",
+                        "message": format!("ACP history SSE connect error: {err:#}"),
+                    }),
+                );
+                log_acp_event(
+                    data_dir,
+                    conversation_id,
+                    serde_json::json!({
+                        "event": "sse_reconnect",
+                        "attempt": reconnect_attempt,
+                        "delay_ms": retry_delay.as_millis() as u64,
+                    }),
+                );
                 tokio::select! {
                     signal = tokio::signal::ctrl_c() => {
                         signal.context("wait for ctrl-c")?;
@@ -261,6 +384,7 @@ async fn bridge_history_to_acp(
         };
 
         retry_delay = Duration::from_millis(100);
+        reconnect_attempt = 0;
         let mut stream = response.bytes_stream().eventsource();
 
         loop {
@@ -271,30 +395,88 @@ async fn bridge_history_to_acp(
                 }
                 event = stream.next() => {
                     let Some(event) = event else {
+                        reconnect_attempt = reconnect_attempt.saturating_add(1);
+                        log_acp_event(
+                            data_dir,
+                            conversation_id,
+                            serde_json::json!({
+                                "event": "sse_reconnect",
+                                "attempt": reconnect_attempt,
+                                "delay_ms": retry_delay.as_millis() as u64,
+                            }),
+                        );
                         break;
                     };
                     let event = match event.context("read ACP history SSE event") {
                         Ok(event) => event,
                         Err(err) => {
                             eprintln!("ACP history SSE read error: {err:#}");
+                            reconnect_attempt = reconnect_attempt.saturating_add(1);
+                            log_acp_event(
+                                data_dir,
+                                conversation_id,
+                                serde_json::json!({
+                                    "event": "error",
+                                    "message": format!("ACP history SSE read error: {err:#}"),
+                                }),
+                            );
+                            log_acp_event(
+                                data_dir,
+                                conversation_id,
+                                serde_json::json!({
+                                    "event": "sse_reconnect",
+                                    "attempt": reconnect_attempt,
+                                    "delay_ms": retry_delay.as_millis() as u64,
+                                }),
+                            );
                             break;
                         }
                     };
 
                     retry_delay = Duration::from_millis(100);
+                    reconnect_attempt = 0;
                     let envelope: DaemonEventEnvelope =
                         match serde_json::from_str(&event.data).context("decode ACP SSE envelope") {
                             Ok(envelope) => envelope,
                             Err(err) => {
                                 eprintln!("ACP history SSE decode error: {err:#}");
+                                reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                log_acp_event(
+                                    data_dir,
+                                    conversation_id,
+                                    serde_json::json!({
+                                        "event": "error",
+                                        "message": format!("ACP history SSE decode error: {err:#}"),
+                                    }),
+                                );
+                                log_acp_event(
+                                    data_dir,
+                                    conversation_id,
+                                    serde_json::json!({
+                                        "event": "sse_reconnect",
+                                        "attempt": reconnect_attempt,
+                                        "delay_ms": retry_delay.as_millis() as u64,
+                                    }),
+                                );
                                 break;
                             }
                         };
                     if let DaemonEventData::HistoryItem { item, .. } = envelope.payload {
                         if should_forward_item(&item, self_inbox_id) {
-                            let reply = prompt_agent(conn, session_id, chunks, item).await?;
+                            log_acp_event(
+                                data_dir,
+                                conversation_id,
+                                serde_json::json!({
+                                    "event": "user_message",
+                                    "conversation_id": conversation_id,
+                                    "sender_inbox_id": item.sender_inbox_id.clone(),
+                                    "content": item.content.clone(),
+                                }),
+                            );
+                            let reply =
+                                prompt_agent(data_dir, conversation_id, conn, session_id, chunks, item).await?;
                             if !reply.trim().is_empty() {
-                                daemon_send_conversation(
+                                let sent = daemon_send_conversation(
                                     data_dir,
                                     conversation_id,
                                     &reply,
@@ -306,6 +488,15 @@ async fn bridge_history_to_acp(
                                         "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
                                     )
                                 })?;
+                                log_acp_event(
+                                    data_dir,
+                                    conversation_id,
+                                    serde_json::json!({
+                                        "event": "xmtp_sent",
+                                        "conversation_id": conversation_id,
+                                        "message_id": sent.message_id,
+                                    }),
+                                );
                             }
                         }
                     }
@@ -321,6 +512,8 @@ async fn bridge_history_to_acp(
 }
 
 async fn prompt_agent(
+    data_dir: &Path,
+    conversation_id: &str,
     conn: &acp::ClientSideConnection,
     session_id: &acp::SessionId,
     chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
@@ -328,9 +521,18 @@ async fn prompt_agent(
 ) -> anyhow::Result<String> {
     clear_session_chunks(chunks, session_id_str(session_id));
     let content = item.content;
+    log_acp_event(
+        data_dir,
+        conversation_id,
+        serde_json::json!({
+            "event": "agent_prompt",
+            "session_id": session_id_str(session_id),
+            "content": content,
+        }),
+    );
     conn.prompt(acp::PromptRequest::new(
         session_id.clone(),
-        vec![content.into()],
+        vec![content.clone().into()],
     ))
     .await
     .context("ACP prompt")?;
@@ -338,7 +540,17 @@ async fn prompt_agent(
     // Allow any final session notifications to land before we read the buffered chunks.
     sleep(Duration::from_millis(100)).await;
 
-    Ok(take_session_chunks(chunks, session_id_str(session_id)).join(""))
+    let reply = take_session_chunks(chunks, session_id_str(session_id)).join("");
+    log_acp_event(
+        data_dir,
+        conversation_id,
+        serde_json::json!({
+            "event": "agent_reply",
+            "session_id": session_id_str(session_id),
+            "content": reply,
+        }),
+    );
+    Ok(reply)
 }
 
 fn should_forward_item(item: &HistoryItem, self_inbox_id: Option<&str>) -> bool {
