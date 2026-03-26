@@ -45,8 +45,10 @@ struct Cli {
 enum Command {
     Init,
     Login {
+        #[arg(long)]
+        env: Option<String>,
         #[arg(long, default_value = "dev")]
-        env: String,
+        network: String,
         #[arg(long)]
         api_url: Option<String>,
         #[arg(long)]
@@ -193,9 +195,17 @@ async fn run() -> anyhow::Result<()> {
         Command::Init => init(data_dir),
         Command::Login {
             env,
+            network,
             api_url,
             gateway_url,
-        } => login(data_dir, &env, api_url.as_deref(), gateway_url.as_deref()).await,
+        } => login(
+            data_dir,
+            env.as_deref(),
+            &network,
+            api_url.as_deref(),
+            gateway_url.as_deref(),
+        )
+        .await,
         Command::Doctor => doctor(data_dir).await,
         Command::Status => status(data_dir),
         Command::Daemon { command } => daemon(data_dir, command).await,
@@ -371,13 +381,46 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
 
 async fn login(
     data_dir: PathBuf,
-    env: &str,
+    env: Option<&str>,
+    network: &str,
     api_url: Option<&str>,
     gateway_url: Option<&str>,
 ) -> anyhow::Result<()> {
-    let status = daemon_login(&data_dir, env, api_url, gateway_url).await?;
+    let defaults = login_network_defaults(network)?;
+    let resolved_env = env.unwrap_or(defaults.env);
+    let resolved_api_url = api_url.or(defaults.api_url);
+    let resolved_gateway_url = gateway_url.or(defaults.gateway_url);
+    let status =
+        daemon_login(&data_dir, resolved_env, resolved_api_url, resolved_gateway_url).await?;
     print_status_response(status)?;
     Ok(())
+}
+
+struct LoginNetworkDefaults<'a> {
+    env: &'a str,
+    api_url: Option<&'a str>,
+    gateway_url: Option<&'a str>,
+}
+
+fn login_network_defaults(network: &str) -> anyhow::Result<LoginNetworkDefaults<'static>> {
+    match network {
+        "dev" => Ok(LoginNetworkDefaults {
+            env: "dev",
+            api_url: None,
+            gateway_url: None,
+        }),
+        "testnet" => Ok(LoginNetworkDefaults {
+            env: "dev",
+            api_url: Some("https://grpc.testnet.xmtp.network:443"),
+            gateway_url: Some("https://payer.testnet-staging.xmtp.network"),
+        }),
+        "production" => Ok(LoginNetworkDefaults {
+            env: "production",
+            api_url: None,
+            gateway_url: None,
+        }),
+        other => anyhow::bail!("unknown network preset: {other}"),
+    }
 }
 
 async fn list(data_dir: PathBuf, kind: Option<&str>) -> anyhow::Result<()> {
