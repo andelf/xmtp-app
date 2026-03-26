@@ -35,6 +35,7 @@ tempfile = "3.20"
 thiserror = "2.0"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "sync", "net", "time", "io-util"] }
 tokio-stream = "0.1"
+textwrap = "0.16"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 xmtp = { version = "0.8.1", features = ["alloy"] }

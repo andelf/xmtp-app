@@ -15,6 +15,7 @@ ratatui.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+textwrap.workspace = true
 tokio.workspace = true
 xmtp-config = { path = "../xmtp-config" }
 xmtp-daemon = { path = "../xmtp-daemon" }

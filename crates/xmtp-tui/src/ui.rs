@@ -5,6 +5,7 @@ use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
 };
 use ratatui::{Frame, prelude::Alignment};
+use textwrap::wrap;
 
 use crate::app::{
     App, Focus, GroupDialogField, GroupManagementAction, MessageMenuAction, Modal,
@@ -25,11 +26,12 @@ struct MessageRow<'a> {
 }
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
+    let input_height = input_panel_height(app, frame.area().width);
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(8),
-            Constraint::Length(4),
+            Constraint::Length(input_height),
             Constraint::Length(2),
         ])
         .split(frame.area());
@@ -154,7 +156,7 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
         return;
     }
 
-    let rows = build_message_rows(app);
+    let rows = build_message_rows(app, area.width.saturating_sub(2));
     let selected_row = rows.iter().position(|row| match row.kind {
         MessageRowKind::Message(index) => index == app.selected_message,
         MessageRowKind::DateSeparator | MessageRowKind::ReplyContext | MessageRowKind::Reactions => false,
@@ -168,9 +170,10 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn build_message_rows<'a>(app: &'a App) -> Vec<MessageRow<'a>> {
+fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
     let mut rows = Vec::new();
     let mut last_day: Option<String> = None;
+    let wrap_width = width.max(1) as usize;
 
     for (index, item) in app.messages.iter().enumerate() {
         let day_tag = format_day_tag(item.sent_at_ns);
@@ -211,7 +214,6 @@ fn build_message_rows<'a>(app: &'a App) -> Vec<MessageRow<'a>> {
             });
         }
 
-        let mut lines = Vec::new();
         let content = item.content.replace('\n', " ");
         let sender_display = if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) {
             "You".to_owned()
@@ -224,12 +226,17 @@ fn build_message_rows<'a>(app: &'a App) -> Vec<MessageRow<'a>> {
             sender_display,
             content,
         );
-        lines.push(Line::from(Span::styled(
-            message_line,
-            Style::default()
-                .fg(app.color_for_message(item))
-                .bg(Color::Reset),
-        )));
+        let lines = wrap_text_lines(&message_line, wrap_width)
+            .into_iter()
+            .map(|segment| {
+                Line::from(Span::styled(
+                    segment,
+                    Style::default()
+                        .fg(app.color_for_message(item))
+                        .bg(Color::Reset),
+                ))
+            })
+            .collect::<Vec<_>>();
 
         rows.push(MessageRow {
             kind: MessageRowKind::Message(index),
@@ -282,6 +289,28 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .block(titled_block("Input", app.focus == Focus::Input))
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
+}
+
+fn input_panel_height(app: &App, total_width: u16) -> u16 {
+    let usable_width = total_width.saturating_sub(2).max(1) as usize;
+    let input_lines = input_visual_line_count(app, usable_width).clamp(1, 5) as u16;
+    let reply_lines = u16::from(app.reply_to_message_id.is_some());
+    input_lines + reply_lines + 2
+}
+
+fn input_visual_line_count(app: &App, usable_width: usize) -> usize {
+    if app.input.is_empty() {
+        return 1;
+    }
+
+    app.input
+        .split('\n')
+        .map(|segment| {
+            let wrapped = wrap(segment, usable_width.max(1));
+            wrapped.len().max(1)
+        })
+        .sum::<usize>()
+        .max(1)
 }
 
 fn render_input_lines(app: &App, focused: bool) -> Vec<Line<'static>> {
@@ -337,6 +366,22 @@ fn render_input_lines(app: &App, focused: bool) -> Vec<Line<'static>> {
     }
 
     lines.push(Line::from(spans));
+    lines
+}
+
+fn wrap_text_lines(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    for raw_line in text.split('\n') {
+        let wrapped = wrap(raw_line, width.max(1));
+        if wrapped.is_empty() {
+            lines.push(String::new());
+        } else {
+            lines.extend(wrapped.into_iter().map(|line| line.into_owned()));
+        }
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
     lines
 }
 
