@@ -362,6 +362,16 @@ pub fn send_group(
     send_group_with_client(&client, conversation_id, text, content_type)
 }
 
+pub fn send_conversation(
+    data_dir: &Path,
+    conversation_id: &str,
+    text: &str,
+    content_type: Option<&str>,
+) -> anyhow::Result<SendMessageResult> {
+    let client = open_existing_client(data_dir)?;
+    send_conversation_with_client(&client, conversation_id, text, content_type)
+}
+
 pub fn group_members(
     data_dir: &Path,
     conversation_id: &str,
@@ -542,6 +552,27 @@ fn send_group_with_client(
     content_type: Option<&str>,
 ) -> anyhow::Result<SendMessageResult> {
     send_group_with_client_logged(client, conversation_id, text, content_type, None)
+}
+
+fn send_conversation_with_client(
+    client: &Client,
+    conversation_id: &str,
+    text: &str,
+    content_type: Option<&str>,
+) -> anyhow::Result<SendMessageResult> {
+    let conversation = find_conversation_by_id(client, conversation_id)?;
+    let message_id = match content_type {
+        Some("markdown") => conversation
+            .send_markdown(text)
+            .context("send conversation markdown")?,
+        _ => conversation
+            .send_text(text)
+            .context("send conversation text")?,
+    };
+    Ok(SendMessageResult {
+        conversation_id: conversation.id(),
+        message_id,
+    })
 }
 
 fn send_group_with_client_logged(
@@ -1584,6 +1615,27 @@ impl DaemonApp {
         })
     }
 
+    fn send_conversation(
+        &mut self,
+        conversation_id: String,
+        message: String,
+        content_type: Option<String>,
+    ) -> anyhow::Result<ActionResponse> {
+        let resolved_conversation_id = self
+            .resolve_cached_conversation_id(&conversation_id, None)
+            .unwrap_or_else(|| conversation_id.clone());
+        let result = send_conversation_with_client(
+            self.ensure_client()?,
+            &resolved_conversation_id,
+            &message,
+            content_type.as_deref(),
+        )?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
     fn reply(
         &mut self,
         message_id: String,
@@ -1981,6 +2033,24 @@ async fn send_group_handler(
         false,
         false,
         move |app| app.send_group(group_id, request.message, request.content_type),
+    )
+    .await
+    .map_err(internal_error)?;
+    publish_conversation_snapshot_now(&state);
+    Ok(Json(result))
+}
+
+async fn send_conversation_handler(
+    State(state): State<HttpState>,
+    AxumPath(conversation_id): AxumPath<String>,
+    Json(request): Json<SendMessageRequest>,
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
+    let result = run_app(
+        &state,
+        format!("send conversation id={conversation_id}"),
+        false,
+        false,
+        move |app| app.send_conversation(conversation_id, request.message, request.content_type),
     )
     .await
     .map_err(internal_error)?;
@@ -2397,6 +2467,7 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
             "/v1/conversations/{conversation_id}/history",
             get(conversation_history_handler),
         )
+        .route("/v1/conversations/{conversation_id}/send", post(send_conversation_handler))
         .route("/v1/direct-message/open", post(open_dm_handler))
         .route("/v1/direct-message/send", post(send_dm_handler))
         .route("/v1/groups", post(create_group_handler))

@@ -1,3 +1,5 @@
+mod acp;
+
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::OnceLock;
@@ -28,7 +30,7 @@ use xmtp_store::{load_state, save_state};
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
-fn http_client() -> &'static reqwest::Client {
+pub(crate) fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(reqwest::Client::new)
 }
 
@@ -78,6 +80,13 @@ enum Command {
     Doctor,
     #[command(about = "Launch the interactive TUI")]
     Tui,
+    #[command(about = "Bridge an XMTP conversation to an ACP agent subprocess")]
+    Acp {
+        #[arg(long, help = "Conversation ID to bridge")]
+        conversation_id: String,
+        #[arg(last = true, required = true, help = "ACP agent command and arguments")]
+        command: Vec<String>,
+    },
     #[command(about = "Manage the daemon process")]
     Daemon {
         #[command(subcommand)]
@@ -285,6 +294,10 @@ async fn run() -> anyhow::Result<()> {
         } => login(data_dir, network, gateway_url.as_deref(), force).await,
         Command::Doctor => doctor(data_dir).await,
         Command::Tui => xmtp_tui::run(data_dir),
+        Command::Acp {
+            conversation_id,
+            command,
+        } => acp::run_acp(data_dir, conversation_id, command).await,
         Command::Daemon { command } => daemon(data_dir, command).await,
         Command::Logs { kind, follow } => logs(data_dir, &kind, follow).await,
         Command::Watch { command } => watch(data_dir, command).await,
@@ -885,7 +898,7 @@ async fn daemon_status_request(data_dir: &PathBuf) -> anyhow::Result<StatusRespo
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("daemon status unavailable")))
 }
 
-async fn wait_for_daemon_ready(data_dir: &PathBuf, timeout_ms: u64) -> anyhow::Result<()> {
+pub(crate) async fn wait_for_daemon_ready(data_dir: &PathBuf, timeout_ms: u64) -> anyhow::Result<()> {
     let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
     let mut last_error = None;
     loop {
@@ -1096,6 +1109,24 @@ async fn daemon_send_group(
     .await
 }
 
+pub(crate) async fn daemon_send_conversation(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+    message: &str,
+    content_type: Option<&str>,
+) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/conversations/{conversation_id}/send"),
+        &SendMessageRequest {
+            message: message.to_owned(),
+            conversation_id: None,
+            content_type: content_type.map(str::to_owned),
+        },
+    )
+    .await
+}
+
 async fn daemon_group_members(
     data_dir: &PathBuf,
     conversation_id: &str,
@@ -1223,7 +1254,7 @@ async fn daemon_message_info(
     http_get(data_dir, &format!("/v1/messages/{message_id}")).await
 }
 
-async fn http_get<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
+pub(crate) async fn http_get<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -1260,7 +1291,7 @@ where
     decode_json_response(response).await
 }
 
-async fn http_post<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+pub(crate) async fn http_post<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,
@@ -1355,7 +1386,7 @@ async fn decode_empty_response(response: reqwest::Response) -> anyhow::Result<()
     Ok(())
 }
 
-async fn ensure_daemon_running(data_dir: &PathBuf) -> anyhow::Result<()> {
+pub(crate) async fn ensure_daemon_running(data_dir: &PathBuf) -> anyhow::Result<()> {
     if !addr_path(data_dir).exists() {
         daemon_start(data_dir.clone()).await?;
         return Ok(());
@@ -1405,7 +1436,7 @@ async fn stop_existing_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn daemon_base_url(data_dir: &PathBuf) -> anyhow::Result<String> {
+pub(crate) fn daemon_base_url(data_dir: &PathBuf) -> anyhow::Result<String> {
     let addr = std::fs::read_to_string(addr_path(data_dir)).context("read daemon addr file")?;
     Ok(format!("http://{}", addr.trim()))
 }

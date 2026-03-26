@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+agent-client-protocol = "0.10.3"
 chrono.workspace = true
 clap.workspace = true
 eventsource-stream.workspace = true
