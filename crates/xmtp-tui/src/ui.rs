@@ -14,6 +14,7 @@ use crate::format::{format_clock, format_day_tag, short_display_id};
 
 enum MessageRowKind {
     DateSeparator,
+    Reactions,
     Message(usize),
 }
 
@@ -155,7 +156,7 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let rows = build_message_rows(app);
     let selected_row = rows.iter().position(|row| match row.kind {
         MessageRowKind::Message(index) => index == app.selected_message,
-        MessageRowKind::DateSeparator => false,
+        MessageRowKind::DateSeparator | MessageRowKind::Reactions => false,
     });
     let mut state = ListState::default().with_selected(selected_row);
     let items: Vec<ListItem<'_>> = rows.into_iter().map(|row| row.item).collect();
@@ -226,17 +227,21 @@ fn build_message_rows<'a>(app: &'a App) -> Vec<MessageRow<'a>> {
                 .bg(Color::Reset),
         )));
 
-        if let Some(reactions_line) = format_reactions_line(item) {
-            lines.push(Line::from(Span::styled(
-                format!("  reactions: {reactions_line}"),
-                Style::default().dark_gray().bg(Color::Reset),
-            )));
-        }
-
         rows.push(MessageRow {
             kind: MessageRowKind::Message(index),
             item: ListItem::new(lines).style(Style::default().bg(Color::Reset)),
         });
+
+        if let Some(reactions_line) = format_reactions_line(item) {
+            rows.push(MessageRow {
+                kind: MessageRowKind::Reactions,
+                item: ListItem::new(Line::from(Span::styled(
+                    format!("  reactions: {reactions_line}"),
+                    Style::default().fg(Color::Gray).bg(Color::Reset),
+                )))
+                .style(Style::default().bg(Color::Reset)),
+            });
+        }
     }
 
     rows
