@@ -752,6 +752,7 @@ fn history_with_client(
         .list_messages(&xmtp::ListMessagesOptions {
             sent_before_ns: before_ns.unwrap_or_default(),
             limit: limit as i64,
+            direction: Some(xmtp::SortDirection::Descending),
             ..Default::default()
         })
         .context("list messages")?;
@@ -759,6 +760,7 @@ fn history_with_client(
     for message in messages {
         entries.push(history_entry_from_message(&message));
     }
+    entries.reverse();
     Ok(entries)
 }
 
