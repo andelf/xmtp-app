@@ -1065,6 +1065,7 @@ async fn daemon_send_dm(
         &RecipientMessageRequest {
             recipient: recipient.to_owned(),
             message: message.to_owned(),
+            content_type: None,
         },
     )
     .await
@@ -1089,6 +1090,7 @@ async fn daemon_send_group(
         &SendMessageRequest {
             message: message.to_owned(),
             conversation_id: None,
+            content_type: None,
         },
     )
     .await
@@ -1160,6 +1162,7 @@ async fn daemon_reply(
         &SendMessageRequest {
             message: message.to_owned(),
             conversation_id: None,
+            content_type: None,
         },
     )
     .await

@@ -32,6 +32,7 @@ fn direct_message_requests_roundtrip_as_json() {
     let send = RecipientMessageRequest {
         recipient: "inbox-123".to_owned(),
         message: "hello".to_owned(),
+        content_type: Some("markdown".to_owned()),
     };
 
     let open_json = serde_json::to_string(&open).expect("serialize open request");
@@ -45,6 +46,7 @@ fn direct_message_requests_roundtrip_as_json() {
     assert_eq!(decoded_open.recipient, "inbox-123");
     assert_eq!(decoded_send.recipient, "inbox-123");
     assert_eq!(decoded_send.message, "hello");
+    assert_eq!(decoded_send.content_type.as_deref(), Some("markdown"));
 }
 
 #[test]
@@ -55,6 +57,8 @@ fn group_and_message_requests_roundtrip_as_json() {
     };
     let send = SendMessageRequest {
         message: "hi".to_owned(),
+        conversation_id: None,
+        content_type: Some("markdown".to_owned()),
     };
     let emoji = EmojiRequest {
         emoji: "👍".to_owned(),
@@ -75,6 +79,7 @@ fn group_and_message_requests_roundtrip_as_json() {
     assert_eq!(decoded_group.name.as_deref(), Some("team"));
     assert_eq!(decoded_group.members.len(), 2);
     assert_eq!(decoded_send.message, "hi");
+    assert_eq!(decoded_send.content_type.as_deref(), Some("markdown"));
     assert_eq!(decoded_emoji.emoji, "👍");
     assert_eq!(decoded_emoji.action.as_deref(), Some("add"));
 }

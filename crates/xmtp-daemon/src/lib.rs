@@ -272,9 +272,14 @@ pub fn list_conversations(data_dir: &Path) -> anyhow::Result<Vec<ConversationSum
     list_conversations_with_client(&client, None)
 }
 
-pub fn send_dm(data_dir: &Path, recipient: &str, text: &str) -> anyhow::Result<SendMessageResult> {
+pub fn send_dm(
+    data_dir: &Path,
+    recipient: &str,
+    text: &str,
+    content_type: Option<&str>,
+) -> anyhow::Result<SendMessageResult> {
     let client = open_existing_client(data_dir)?;
-    send_dm_with_client(&client, recipient, text)
+    send_dm_with_client(&client, recipient, text, content_type)
 }
 
 pub fn open_dm(data_dir: &Path, recipient: &str) -> anyhow::Result<SendMessageResult> {
@@ -351,9 +356,10 @@ pub fn send_group(
     data_dir: &Path,
     conversation_id: &str,
     text: &str,
+    content_type: Option<&str>,
 ) -> anyhow::Result<SendMessageResult> {
     let client = open_existing_client(data_dir)?;
-    send_group_with_client(&client, conversation_id, text)
+    send_group_with_client(&client, conversation_id, text, content_type)
 }
 
 pub fn group_members(
@@ -485,10 +491,14 @@ fn send_dm_with_client(
     client: &Client,
     recipient: &str,
     text: &str,
+    content_type: Option<&str>,
 ) -> anyhow::Result<SendMessageResult> {
     let recipient = Recipient::parse(recipient);
     let conversation = client.dm(&recipient).context("create or find DM")?;
-    let message_id = conversation.send_text(text).context("send DM text")?;
+    let message_id = match content_type {
+        Some("markdown") => conversation.send_markdown(text).context("send DM markdown")?,
+        _ => conversation.send_text(text).context("send DM text")?,
+    };
     Ok(SendMessageResult {
         conversation_id: conversation.id(),
         message_id,
@@ -529,14 +539,16 @@ fn send_group_with_client(
     client: &Client,
     conversation_id: &str,
     text: &str,
+    content_type: Option<&str>,
 ) -> anyhow::Result<SendMessageResult> {
-    send_group_with_client_logged(client, conversation_id, text, None)
+    send_group_with_client_logged(client, conversation_id, text, content_type, None)
 }
 
 fn send_group_with_client_logged(
     client: &Client,
     conversation_id: &str,
     text: &str,
+    content_type: Option<&str>,
     data_dir: Option<&Path>,
 ) -> anyhow::Result<SendMessageResult> {
     let resolve_started = Instant::now();
@@ -554,7 +566,12 @@ fn send_group_with_client_logged(
         );
     }
     let send_started = Instant::now();
-    let message_id = conversation.send_text(text).context("send group text")?;
+    let message_id = match content_type {
+        Some("markdown") => conversation
+            .send_markdown(text)
+            .context("send group markdown")?,
+        _ => conversation.send_text(text).context("send group text")?,
+    };
     if let Some(data_dir) = data_dir {
         daemon_log(
             data_dir,
@@ -1518,8 +1535,18 @@ impl DaemonApp {
         })
     }
 
-    fn send_dm(&mut self, recipient: String, message: String) -> anyhow::Result<SendDmResponse> {
-        let result = send_dm_with_client(self.ensure_client()?, &recipient, &message)?;
+    fn send_dm(
+        &mut self,
+        recipient: String,
+        message: String,
+        content_type: Option<String>,
+    ) -> anyhow::Result<SendDmResponse> {
+        let result = send_dm_with_client(
+            self.ensure_client()?,
+            &recipient,
+            &message,
+            content_type.as_deref(),
+        )?;
         Ok(SendDmResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1534,7 +1561,12 @@ impl DaemonApp {
         })
     }
 
-    fn send_group(&mut self, conversation_id: String, message: String) -> anyhow::Result<ActionResponse> {
+    fn send_group(
+        &mut self,
+        conversation_id: String,
+        message: String,
+        content_type: Option<String>,
+    ) -> anyhow::Result<ActionResponse> {
         let resolved_conversation_id = self
             .resolve_cached_conversation_id(&conversation_id, Some("group"))
             .unwrap_or_else(|| conversation_id.clone());
@@ -1543,6 +1575,7 @@ impl DaemonApp {
             self.ensure_client()?,
             &resolved_conversation_id,
             &message,
+            content_type.as_deref(),
             Some(data_dir.as_path()),
         )?;
         Ok(ActionResponse {
@@ -1912,7 +1945,7 @@ async fn send_dm_handler(
         format!("send dm recipient={}", request.recipient),
         false,
         false,
-        move |app| app.send_dm(request.recipient, request.message),
+        move |app| app.send_dm(request.recipient, request.message, request.content_type),
     )
     .await
     .map_err(internal_error)?;
@@ -1947,7 +1980,7 @@ async fn send_group_handler(
         format!("send group id={group_id}"),
         false,
         false,
-        move |app| app.send_group(group_id, request.message),
+        move |app| app.send_group(group_id, request.message, request.content_type),
     )
     .await
     .map_err(internal_error)?;

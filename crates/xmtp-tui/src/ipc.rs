@@ -595,6 +595,7 @@ async fn send_dm(data_dir: &PathBuf, recipient: &str, message: &str) -> anyhow::
         &RecipientMessageRequest {
             recipient: recipient.to_owned(),
             message: message.to_owned(),
+            content_type: None,
         },
     )
     .await
@@ -607,6 +608,7 @@ async fn send_group(data_dir: &PathBuf, conversation_id: &str, message: &str) ->
         &SendMessageRequest {
             message: message.to_owned(),
             conversation_id: None,
+            content_type: None,
         },
     )
     .await
@@ -674,6 +676,7 @@ async fn reply(
         &SendMessageRequest {
             message: message.to_owned(),
             conversation_id: Some(conversation_id.to_owned()),
+            content_type: None,
         },
     )
     .await

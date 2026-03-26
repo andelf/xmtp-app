@@ -155,12 +155,14 @@ pub struct RecipientRequest {
 pub struct SendMessageRequest {
     pub message: String,
     pub conversation_id: Option<String>,
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecipientMessageRequest {
     pub recipient: String,
     pub message: String,
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

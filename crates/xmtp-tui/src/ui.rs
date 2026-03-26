@@ -229,23 +229,66 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
         } else {
             short_display_id(&item.sender_inbox_id)
         };
-        let message_line = format!(
-            "{} [{}] {}",
-            format_clock(item.sent_at_ns),
-            sender_display,
-            content,
-        );
-        let lines = wrap_text_lines(&message_line, wrap_width)
-            .into_iter()
-            .map(|segment| {
-                Line::from(Span::styled(
-                    segment,
-                    Style::default()
-                        .fg(app.color_for_message(item))
-                        .bg(Color::Reset),
-                ))
-            })
-            .collect::<Vec<_>>();
+        let header = format!("{} [{}] ", format_clock(item.sent_at_ns), sender_display);
+        let lines = if item.content_kind == "markdown" {
+            let first_width = wrap_width.saturating_sub(header.chars().count() + 5).max(1);
+            let rest_width = wrap_width.saturating_sub(5).max(1);
+            let wrapped = wrap_text_with_widths(&content, first_width, rest_width);
+            let mut lines = Vec::with_capacity(wrapped.len().max(1));
+            if let Some((first, rest)) = wrapped.split_first() {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        header.clone(),
+                        Style::default()
+                            .fg(app.color_for_message(item))
+                            .bg(Color::Reset),
+                    ),
+                    Span::styled("[md] ", Style::default().fg(Color::Gray).bg(Color::Reset)),
+                    Span::styled(
+                        first.clone(),
+                        Style::default()
+                            .fg(app.color_for_message(item))
+                            .bg(Color::Reset),
+                    ),
+                ]));
+                for segment in rest {
+                    lines.push(Line::from(vec![
+                        Span::raw(" ".repeat(header.chars().count())),
+                        Span::styled("[md] ", Style::default().fg(Color::Gray).bg(Color::Reset)),
+                        Span::styled(
+                            segment.clone(),
+                            Style::default()
+                                .fg(app.color_for_message(item))
+                                .bg(Color::Reset),
+                        ),
+                    ]));
+                }
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        header.clone(),
+                        Style::default()
+                            .fg(app.color_for_message(item))
+                            .bg(Color::Reset),
+                    ),
+                    Span::styled("[md] ", Style::default().fg(Color::Gray).bg(Color::Reset)),
+                ]));
+            }
+            lines
+        } else {
+            let message_line = format!("{}{}", header, content);
+            wrap_text_lines(&message_line, wrap_width)
+                .into_iter()
+                .map(|segment| {
+                    Line::from(Span::styled(
+                        segment,
+                        Style::default()
+                            .fg(app.color_for_message(item))
+                            .bg(Color::Reset),
+                    ))
+                })
+                .collect::<Vec<_>>()
+        };
 
         rows.push(MessageRow {
             kind: MessageRowKind::Message(index),
@@ -265,6 +308,32 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
     }
 
     rows
+}
+
+fn wrap_text_with_widths(text: &str, first_width: usize, rest_width: usize) -> Vec<String> {
+    let normalized = if text.is_empty() { " " } else { text };
+    let first = wrap(normalized, first_width)
+        .into_iter()
+        .map(|line| line.into_owned())
+        .collect::<Vec<_>>();
+    if first.is_empty() {
+        return vec![String::new()];
+    }
+    if first.len() == 1 || first_width == rest_width {
+        return first;
+    }
+    let flattened = first.join(" ");
+    let mut result = Vec::new();
+    let mut wrapped = wrap(&flattened, rest_width)
+        .into_iter()
+        .map(|line| line.into_owned())
+        .collect::<Vec<_>>();
+    if let Some(first_line) = wrapped.first().cloned() {
+        result.push(first_line);
+        wrapped.remove(0);
+    }
+    result.extend(wrapped);
+    result
 }
 
 fn message_panel_title(app: &App) -> String {
