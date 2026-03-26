@@ -17,6 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 textwrap.workspace = true
 tokio.workspace = true
+pulldown-cmark = "0.10"
 xmtp-config = { path = "../xmtp-config" }
 xmtp-daemon = { path = "../xmtp-daemon" }
 xmtp-ipc = { path = "../xmtp-ipc" }

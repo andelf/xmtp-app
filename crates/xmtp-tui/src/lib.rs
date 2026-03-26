@@ -2,6 +2,7 @@ mod app;
 mod event;
 mod format;
 mod ipc;
+mod markdown;
 mod ui;
 
 use std::io;
