@@ -5,7 +5,7 @@ use std::os::unix::process::CommandExt;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use xmtp_config::{AppConfig, load_config, save_config};
@@ -33,9 +33,18 @@ fn http_client() -> &'static reqwest::Client {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "xmtp-cli")]
+#[command(
+    name = "xmtp-cli",
+    about = "XMTP command-line client",
+    long_about = "XMTP command-line client for setup, messaging, daemon management, and the interactive TUI."
+)]
 struct Cli {
-    #[arg(long, global = true, default_value = "./data")]
+    #[arg(
+        long,
+        global = true,
+        default_value = "./data",
+        help = "Path to the local data directory used for config, logs, and cached state"
+    )]
     data_dir: PathBuf,
     #[command(subcommand)]
     command: Command,
@@ -43,137 +52,210 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(about = "Initialize the local data directory")]
     Init,
+    #[command(about = "Login to an XMTP network")]
     Login {
-        #[arg(long, default_value = "dev")]
-        network: String,
-        #[arg(long)]
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = Network::Dev,
+            help = "Network preset to use"
+        )]
+        network: Network,
+        #[arg(
+            long,
+            help = "Advanced override for the XMTP payer or gateway endpoint"
+        )]
         gateway_url: Option<String>,
     },
+    #[command(about = "Check local setup, daemon reachability, and logs")]
     Doctor,
+    #[command(about = "Show current daemon and connection status")]
     Status,
+    #[command(about = "Launch the interactive TUI")]
     Tui,
+    #[command(about = "Manage the daemon process")]
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,
     },
+    #[command(about = "Read daemon logs")]
     Logs {
-        #[arg(long, default_value = "events")]
+        #[arg(long, default_value = "events", help = "Log stream to read: events, stdout, or stderr")]
         kind: String,
-        #[arg(long)]
+        #[arg(long, help = "Keep streaming new log entries")]
         follow: bool,
     },
+    #[command(about = "Watch live daemon events")]
     Watch {
         #[command(subcommand)]
         command: WatchCommand,
     },
+    #[command(about = "List DM and group conversations")]
     ListConversations {
-        #[arg(long, conflicts_with = "dm")]
+        #[arg(long, conflicts_with = "dm", help = "Show only group conversations")]
         group: bool,
-        #[arg(long, conflicts_with = "group")]
+        #[arg(long, conflicts_with = "group", help = "Show only direct-message conversations")]
         dm: bool,
     },
-    #[command(name = "direct-message", visible_alias = "dm")]
+    #[command(
+        name = "direct-message",
+        visible_alias = "dm",
+        about = "Send a direct message"
+    )]
     DirectMessage {
+        #[arg(help = "Recipient inbox ID, wallet address, or other supported recipient identifier")]
         recipient: String,
+        #[arg(help = "Message text to send")]
         message: String,
     },
+    #[command(about = "Manage group conversations")]
     Group {
         #[command(subcommand)]
         command: GroupCommand,
     },
+    #[command(about = "Reply to an existing message")]
     Reply {
+        #[arg(help = "Message ID to reply to")]
         message_id: String,
+        #[arg(help = "Reply text to send")]
         message: String,
     },
+    #[command(about = "Add a reaction to a message")]
     React {
+        #[arg(help = "Message ID to react to")]
         message_id: String,
+        #[arg(help = "Emoji reaction to send")]
         emoji: String,
     },
+    #[command(about = "Remove a reaction from a message")]
     Unreact {
+        #[arg(help = "Message ID to remove the reaction from")]
         message_id: String,
+        #[arg(help = "Emoji reaction to remove")]
         emoji: String,
     },
+    #[command(about = "Leave a conversation or group")]
     Leave {
+        #[arg(help = "Conversation ID or supported conversation reference")]
         conversation_id: String,
     },
+    #[command(about = "Inspect conversations and messages")]
     Info {
         #[command(subcommand)]
         command: InfoCommand,
     },
+    #[command(about = "Show conversation history")]
     History {
+        #[arg(help = "Conversation ID, conversation name, or supported conversation reference")]
         conversation_id: String,
-        #[arg(long)]
+        #[arg(long, help = "Keep watching for new messages")]
         watch: bool,
-        #[arg(long, conflicts_with = "dm")]
+        #[arg(long, conflicts_with = "dm", help = "Treat the target as a group conversation")]
         group: bool,
-        #[arg(long, conflicts_with = "group")]
+        #[arg(long, conflicts_with = "group", help = "Treat the target as a direct-message conversation")]
         dm: bool,
     },
 }
 
 #[derive(Debug, Subcommand)]
 enum DaemonCommand {
+    #[command(about = "Start the daemon in the background")]
     Start,
+    #[command(about = "Restart the daemon")]
     Restart,
+    #[command(about = "Show daemon status")]
     Status,
+    #[command(about = "Stop the daemon")]
     Stop,
+    #[command(about = "Run the daemon in the foreground")]
     Run,
 }
 
 #[derive(Debug, Subcommand)]
 enum WatchCommand {
+    #[command(about = "Watch application-level SSE events")]
     App,
 }
 
 #[derive(Debug, Subcommand)]
 enum GroupCommand {
+    #[command(about = "List group conversations")]
     List,
+    #[command(about = "Show group history")]
     History {
+        #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
-        #[arg(long)]
+        #[arg(long, help = "Keep watching for new group messages")]
         watch: bool,
     },
+    #[command(about = "Create a new group conversation")]
     Create {
-        #[arg(long)]
+        #[arg(long, help = "Optional group display name")]
         name: Option<String>,
-        #[arg(long = "member", required = true)]
+        #[arg(long = "member", required = true, help = "Initial member inbox ID; repeat for multiple members")]
         members: Vec<String>,
     },
+    #[command(about = "Send a message to a group")]
     Send {
+        #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
+        #[arg(help = "Message text to send")]
         message: String,
     },
+    #[command(about = "Rename a group")]
     Rename {
+        #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
+        #[arg(help = "New group name")]
         name: String,
     },
+    #[command(about = "Add members to a group")]
     Add {
+        #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
-        #[arg(long = "member", required = true)]
+        #[arg(long = "member", required = true, help = "Member inbox ID to add; repeat for multiple members")]
         members: Vec<String>,
     },
+    #[command(about = "Remove members from a group")]
     Remove {
+        #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
-        #[arg(long = "member", required = true)]
+        #[arg(long = "member", required = true, help = "Member inbox ID to remove; repeat for multiple members")]
         members: Vec<String>,
     },
+    #[command(about = "Show group members")]
     Members {
+        #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
     },
+    #[command(about = "Show group metadata")]
     Info {
+        #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
     },
 }
 
 #[derive(Debug, Subcommand)]
 enum InfoCommand {
+    #[command(about = "Show conversation details")]
     Conversation {
+        #[arg(help = "Conversation ID, conversation name, or supported conversation reference")]
         conversation_id: String,
     },
+    #[command(about = "Show message details")]
     Message {
+        #[arg(help = "Message ID")]
         message_id: String,
     },
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum Network {
+    Dev,
+    Testnet,
+    Production,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -193,7 +275,7 @@ async fn run() -> anyhow::Result<()> {
         Command::Login {
             network,
             gateway_url,
-        } => login(data_dir, &network, gateway_url.as_deref()).await,
+        } => login(data_dir, network, gateway_url.as_deref()).await,
         Command::Doctor => doctor(data_dir).await,
         Command::Status => status(data_dir),
         Command::Tui => xmtp_tui::run(data_dir),
@@ -363,13 +445,13 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
 
 async fn login(
     data_dir: PathBuf,
-    network: &str,
+    network: Network,
     gateway_url: Option<&str>,
 ) -> anyhow::Result<()> {
     if !data_dir.join("config.json").exists() || !data_dir.join("state.json").exists() {
         init(data_dir.clone())?;
     }
-    let defaults = login_network_defaults(network)?;
+    let defaults = login_network_defaults(network);
     let resolved_env = defaults.env;
     let resolved_api_url = defaults.api_url;
     let resolved_gateway_url = gateway_url.or(defaults.gateway_url);
@@ -385,24 +467,23 @@ struct LoginNetworkDefaults<'a> {
     gateway_url: Option<&'a str>,
 }
 
-fn login_network_defaults(network: &str) -> anyhow::Result<LoginNetworkDefaults<'static>> {
+fn login_network_defaults(network: Network) -> LoginNetworkDefaults<'static> {
     match network {
-        "dev" => Ok(LoginNetworkDefaults {
+        Network::Dev => LoginNetworkDefaults {
             env: "dev",
             api_url: None,
             gateway_url: None,
-        }),
-        "testnet" => Ok(LoginNetworkDefaults {
+        },
+        Network::Testnet => LoginNetworkDefaults {
             env: "dev",
             api_url: Some("https://grpc.testnet.xmtp.network:443"),
             gateway_url: Some("https://payer.testnet-staging.xmtp.network"),
-        }),
-        "production" => Ok(LoginNetworkDefaults {
+        },
+        Network::Production => LoginNetworkDefaults {
             env: "production",
             api_url: None,
             gateway_url: None,
-        }),
-        other => anyhow::bail!("unknown network preset: {other}"),
+        },
     }
 }
 
