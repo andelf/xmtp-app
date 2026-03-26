@@ -819,18 +819,27 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
             None,
             None,
         ),
-        Ok(Content::Unknown { content_type, .. }) => (
-            "unknown".to_owned(),
-            message
-                .fallback
-                .clone()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| format!("type=unknown content_type={content_type}")),
-            None,
-            None,
-            None,
-            None,
-        ),
+        Ok(Content::Unknown { content_type, raw }) => {
+            debug!(
+                message_id = %message.id,
+                content_type = %content_type,
+                raw_len = raw.len(),
+                fallback = ?message.fallback,
+                "unknown message type stored in history"
+            );
+            (
+                "unknown".to_owned(),
+                message
+                    .fallback
+                    .clone()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| format!("type=unknown content_type={content_type}")),
+                None,
+                None,
+                None,
+                None,
+            )
+        }
         Err(_) => (
             "unknown".to_owned(),
             message
@@ -862,11 +871,19 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
 
 fn summarize_message_content(message: &xmtp::conversation::Message) -> String {
     match message.decode() {
-        Ok(Content::Unknown { content_type, .. }) => message
-            .fallback
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| format!("type=unknown content_type={content_type}")),
+        Ok(Content::Unknown { content_type, raw }) => {
+            debug!(
+                content_type = %content_type,
+                raw_len = raw.len(),
+                fallback = ?message.fallback,
+                "unknown message type received"
+            );
+            message
+                .fallback
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| format!("type=unknown content_type={content_type}"))
+        }
         Ok(decoded) => summarize_decoded_content(&decoded),
         Err(_) => message
             .fallback
