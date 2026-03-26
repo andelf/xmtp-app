@@ -393,6 +393,8 @@ fn render_help(frame: &mut Frame<'_>) {
         Line::from("Enter          select / send"),
         Line::from("Enter on group group management"),
         Line::from("Left/Right     move cursor"),
+        Line::from("Ctrl/Alt+←/→   jump word"),
+        Line::from("Bksp/Del       delete char"),
         Line::from("Ctrl+A/E       line start/end"),
         Line::from("Ctrl+K         delete to end"),
         Line::from("Ctrl+W         delete word"),
