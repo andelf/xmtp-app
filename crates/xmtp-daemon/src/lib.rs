@@ -36,7 +36,7 @@ use xmtp_ipc::{
     GroupMembersUpdateRequest, GroupMembersUpdatedEvent, GroupPermissionsResponse, HistoryItem,
     HistoryResponse, LoginRequest, MessageInfoResponse, ReactionDetail, RecipientMessageRequest,
     RecipientRequest, RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
-    UpdatePermissionRequest,
+    UpdatePermissionRequest, short_display_id,
 };
 use xmtp_logging::append_daemon_event;
 use xmtp_store::{load_state, save_state};
@@ -965,10 +965,8 @@ fn history_with_client(
 ) -> anyhow::Result<Vec<HistoryEntry>> {
     let conversation = find_conversation_by_id_with_kind(client, conversation_id, kind)?;
     conversation.sync().context("sync conversation")?;
-    let all_messages = conversation
-        .messages()
-        .context("list conversation messages")?;
-    let latest_read_receipts = latest_read_receipts_by_sender(&all_messages);
+    let latest_read_receipts = fetch_latest_read_receipts_from_db(data_dir, &conversation.id())
+        .context("fetch read receipts from sqlite")?;
     let messages = conversation
         .list_messages(&xmtp::ListMessagesOptions {
             sent_before_ns: before_ns.unwrap_or_default(),
@@ -1173,19 +1171,35 @@ fn history_item_from_message(
     }
 }
 
-fn latest_read_receipts_by_sender(
-    messages: &[xmtp::conversation::Message],
-) -> HashMap<String, i64> {
+fn fetch_latest_read_receipts_from_db(
+    data_dir: &Path,
+    conversation_id: &str,
+) -> anyhow::Result<HashMap<String, i64>> {
+    let db_path = data_dir.join("xmtp.db3");
+    let conn = Connection::open(&db_path)
+        .with_context(|| format!("open sqlite db {}", db_path.display()))?;
+    let mut stmt = conn.prepare(
+        "SELECT sender_inbox_id, sent_at_ns
+         FROM group_messages
+         WHERE lower(hex(group_id)) = ?1
+           AND content_type = 5",
+    )?;
+
     let mut latest = HashMap::new();
-    for message in messages {
-        if matches!(message.decode(), Ok(Content::ReadReceipt)) {
-            latest
-                .entry(message.sender_inbox_id.clone())
-                .and_modify(|current: &mut i64| *current = (*current).max(message.sent_at_ns))
-                .or_insert(message.sent_at_ns);
-        }
+    let rows = stmt.query_map([conversation_id.to_lowercase()], |row| {
+        let sender_inbox_id: String = row.get(0)?;
+        let sent_at_ns: i64 = row.get(1)?;
+        Ok((sender_inbox_id, sent_at_ns))
+    })?;
+
+    for row in rows {
+        let (sender_inbox_id, sent_at_ns) = row?;
+        latest
+            .entry(sender_inbox_id)
+            .and_modify(|current: &mut i64| *current = (*current).max(sent_at_ns))
+            .or_insert(sent_at_ns);
     }
-    latest
+    Ok(latest)
 }
 
 fn summarize_message_content(message: &xmtp::conversation::Message) -> String {
@@ -1399,7 +1413,7 @@ fn summarize_decoded_content(content: &Content) -> String {
                     ReactionAction::Unspecified => "reaction",
                 },
                 reaction.content,
-                short_id(&reaction.reference)
+                short_display_id(&reaction.reference)
             )
         }
         Content::Reply(reply) => reply
@@ -1534,16 +1548,6 @@ fn log_unknown_message_type(
 fn decode_group_updated(raw: &[u8]) -> Option<GroupUpdated> {
     let encoded = xmtp::content::EncodedContent::decode(raw).ok()?;
     GroupUpdated::decode(encoded.content.as_slice()).ok()
-}
-
-fn short_id(value: &str) -> String {
-    if value.starts_with("0x") && value.len() > 10 {
-        return format!("{}....{}", &value[..6], &value[value.len() - 4..]);
-    }
-    if value.len() <= 8 {
-        return value.to_owned();
-    }
-    format!("{}....{}", &value[..4], &value[value.len() - 4..])
 }
 
 fn find_message_conversation(

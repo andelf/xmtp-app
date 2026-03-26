@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -19,9 +20,20 @@ use xmtp_ipc::{
 use crate::event::{ActionOutcome, AppEvent, Effect};
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static BASE_URL_CACHE: OnceLock<Mutex<Option<(String, SystemTime)>>> = OnceLock::new();
 
 fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
+
+fn base_url_cache() -> &'static Mutex<Option<(String, SystemTime)>> {
+    BASE_URL_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn reset_base_url_cache() {
+    if let Ok(mut cache) = base_url_cache().lock() {
+        *cache = None;
+    }
 }
 
 #[derive(Debug)]
@@ -417,6 +429,7 @@ async fn ensure_daemon(data_dir: &Path) -> anyhow::Result<()> {
     if addr.exists() {
         return Ok(());
     }
+    reset_base_url_cache();
     let current_exe = std::env::current_exe().context("resolve current exe")?;
     let cli_path = current_exe.with_file_name("xmtp-cli");
     let data_dir = data_dir.to_path_buf();
@@ -439,6 +452,7 @@ async fn ensure_daemon(data_dir: &Path) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < deadline {
         if addr.exists() {
+            reset_base_url_cache();
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -605,8 +619,25 @@ async fn watch_history(
 }
 
 fn daemon_base_url(data_dir: &Path) -> anyhow::Result<String> {
-    let addr = std::fs::read_to_string(addr_path(data_dir)).context("read daemon addr file")?;
-    Ok(format!("http://{}", addr.trim()))
+    let path = addr_path(data_dir);
+    let modified = std::fs::metadata(&path)
+        .context("stat daemon addr file")?
+        .modified()
+        .context("read daemon addr mtime")?;
+
+    if let Ok(cache) = base_url_cache().lock()
+        && let Some((base_url, cached_modified)) = cache.as_ref()
+        && *cached_modified == modified
+    {
+        return Ok(base_url.clone());
+    }
+
+    let addr = std::fs::read_to_string(&path).context("read daemon addr file")?;
+    let base_url = format!("http://{}", addr.trim());
+    if let Ok(mut cache) = base_url_cache().lock() {
+        *cache = Some((base_url.clone(), modified));
+    }
+    Ok(base_url)
 }
 
 async fn open_dm(data_dir: &Path, recipient: &str) -> anyhow::Result<ActionResponse> {

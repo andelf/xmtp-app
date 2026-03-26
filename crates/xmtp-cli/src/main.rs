@@ -23,7 +23,7 @@ use xmtp_ipc::{
     GroupCreateRequest, GroupInfoResponse, GroupMemberItem, GroupMembersResponse,
     GroupMembersUpdateRequest, GroupPermissionsResponse, LoginRequest, MessageInfoResponse,
     RecipientMessageRequest, RenameGroupRequest, SendDmResponse, SendMessageRequest,
-    StatusResponse, UpdatePermissionRequest,
+    StatusResponse, UpdatePermissionRequest, short_display_id,
 };
 use xmtp_logging::{
     daemon_events_log_path, daemon_stderr_log_path, daemon_stdout_log_path, ensure_logs_dir,
@@ -914,7 +914,7 @@ async fn watch_history(
 ) -> anyhow::Result<()> {
     wait_for_daemon_ready(&data_dir, 4_000).await?;
     let resolved_conversation_id = resolve_conversation_id(&data_dir, conversation_id, kind)?;
-    let client = reqwest::Client::new();
+    let client = http_client();
     let base_url = daemon_base_url(&data_dir)?;
     let url = format!("{base_url}/v1/conversations/{resolved_conversation_id}/events");
     let response = client
@@ -1146,7 +1146,7 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                             status
                                 .inbox_id
                                 .as_deref()
-                                .map(short_id)
+                                .map(short_display_id)
                                 .unwrap_or_else(|| "-".to_owned())
                         ),
                     )
@@ -1165,7 +1165,7 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                         "conversation_updated",
                         &format!(
                             "{} name={} members={}",
-                            short_id(&update.conversation_id),
+                            short_display_id(&update.conversation_id),
                             update.name.unwrap_or_else(|| "-".to_owned()),
                             update.member_count
                         ),
@@ -1179,7 +1179,7 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                         "group_members_updated",
                         &format!(
                             "{} members={}",
-                            short_id(&update.conversation_id),
+                            short_display_id(&update.conversation_id),
                             update.members.len()
                         ),
                     )
@@ -1198,8 +1198,8 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                         "history",
                         &format!(
                             "{} {}",
-                            short_id(&conversation_id),
-                            short_id(&item.message_id)
+                            short_display_id(&conversation_id),
+                            short_display_id(&item.message_id)
                         ),
                     )
                 );
@@ -1703,25 +1703,15 @@ fn print_status_response(status: StatusResponse) -> anyhow::Result<()> {
         render_status_row("connection_state", &status.connection_state.to_string())
     );
     if let Some(inbox_id) = status.inbox_id {
-        println!("{}", render_status_row("inbox_id", &short_id(&inbox_id)));
+        println!("{}", render_status_row("inbox_id", &short_display_id(&inbox_id)));
     }
     if let Some(installation_id) = status.installation_id {
         println!(
             "{}",
-            render_status_row("installation_id", &short_id(&installation_id))
+            render_status_row("installation_id", &short_display_id(&installation_id))
         );
     }
     Ok(())
-}
-
-fn short_id(value: &str) -> String {
-    if value.starts_with("0x") && value.len() > 10 {
-        return format!("{}....{}", &value[..6], &value[value.len() - 4..]);
-    }
-    if value.len() <= 8 {
-        return value.to_owned();
-    }
-    format!("{}....{}", &value[..4], &value[value.len() - 4..])
 }
 
 fn format_sent_at(sent_at_ns: i64) -> String {
@@ -1757,8 +1747,8 @@ fn render_history_line(entry: &xmtp_ipc::HistoryItem) -> String {
     format!(
         "{:<16} {:<20} {:<20} {}",
         format_sent_at(entry.sent_at_ns),
-        short_id(&entry.message_id),
-        short_id(&entry.sender_inbox_id),
+        short_display_id(&entry.message_id),
+        short_display_id(&entry.sender_inbox_id),
         content
     )
 }
@@ -1780,8 +1770,8 @@ fn render_history_entry(entry: &HistoryEntry) -> String {
     format!(
         "{:<16} {:<20} {:<20} {}",
         format_sent_at(entry.sent_at_ns),
-        short_id(&entry.message_id),
-        short_id(&entry.sender_inbox_id),
+        short_display_id(&entry.message_id),
+        short_display_id(&entry.sender_inbox_id),
         content
     )
 }
@@ -1802,14 +1792,14 @@ fn render_conversation_row(conversation: &ConversationItem) -> String {
         conversation
             .dm_peer_inbox_id
             .as_deref()
-            .map(short_id)
-            .unwrap_or_else(|| short_id(&conversation.id))
+            .map(short_display_id)
+            .unwrap_or_else(|| short_display_id(&conversation.id))
     } else {
         conversation.name.clone().unwrap_or_default()
     };
     format!(
         "{:<20} {:<12} {}",
-        short_id(&conversation.id),
+        short_display_id(&conversation.id),
         conversation.kind,
         display_name
     )
@@ -1825,7 +1815,7 @@ fn group_members_header() -> String {
 fn render_group_member_row(member: &GroupMemberItem) -> String {
     format!(
         "{:<20} {:<12} {:<12} {:<6} {}",
-        short_id(&member.inbox_id),
+        short_display_id(&member.inbox_id),
         member.permission_level,
         member.consent_state,
         member.installation_count,
@@ -1843,7 +1833,7 @@ fn group_info_header() -> String {
 fn render_group_info_row(info: &GroupInfoResponse) -> String {
     format!(
         "{:<20} {:<12} {:<12} {:<20} {}",
-        short_id(&info.conversation_id),
+        short_display_id(&info.conversation_id),
         info.conversation_type,
         info.member_count,
         info.permission_preset,
@@ -1892,12 +1882,12 @@ fn render_action_result(action: &str, result: &ActionResponse) -> String {
     let message_id = if result.message_id.is_empty() {
         "-".to_owned()
     } else {
-        short_id(&result.message_id)
+        short_display_id(&result.message_id)
     };
     format!(
         "{:<16} {:<20} {}",
         action,
-        short_id(&result.conversation_id),
+        short_display_id(&result.conversation_id),
         message_id
     )
 }
@@ -1917,7 +1907,7 @@ fn bool_label(value: bool) -> &'static str {
 fn print_conversation_info(info: &ConversationInfoResponse) {
     println!(
         "{}",
-        render_status_row("conversation_id", &short_id(&info.conversation_id))
+        render_status_row("conversation_id", &short_display_id(&info.conversation_id))
     );
     println!("{}", render_status_row("type", &info.conversation_type));
     println!(
@@ -1944,22 +1934,22 @@ fn print_conversation_info(info: &ConversationInfoResponse) {
         println!("{}", render_status_row("name", name));
     }
     if let Some(peer) = &info.dm_peer_inbox_id {
-        println!("{}", render_status_row("dm_peer", &short_id(peer)));
+        println!("{}", render_status_row("dm_peer", &short_display_id(peer)));
     }
 }
 
 fn print_message_info(info: &MessageInfoResponse) {
     println!(
         "{}",
-        render_status_row("message_id", &short_id(&info.message_id))
+        render_status_row("message_id", &short_display_id(&info.message_id))
     );
     println!(
         "{}",
-        render_status_row("conversation_id", &short_id(&info.conversation_id))
+        render_status_row("conversation_id", &short_display_id(&info.conversation_id))
     );
     println!(
         "{}",
-        render_status_row("sender", &short_id(&info.sender_inbox_id))
+        render_status_row("sender", &short_display_id(&info.sender_inbox_id))
     );
     println!(
         "{}",
@@ -1986,23 +1976,24 @@ mod tests {
         Cli, Command, DaemonCommand, GroupCommand, InfoCommand, action_result_header,
         conversation_list_header, format_sent_at, group_info_header, group_members_header,
         history_header, render_action_result, render_conversation_row, render_group_info_row,
-        render_group_member_row, render_history_line, render_status_row, short_id,
+        render_group_member_row, render_history_line, render_status_row,
     };
     use clap::Parser;
     use xmtp_ipc::{
         ActionResponse, ConversationItem, GroupInfoResponse, GroupMemberItem, HistoryItem,
+        short_display_id,
     };
 
     #[test]
     fn short_id_truncates_long_values_in_the_middle() {
         let value = "1234567890abcdefghijklmnopqrstuvwxyz";
-        assert_eq!(short_id(value), "1234....wxyz");
+        assert_eq!(short_display_id(value), "1234....wxyz");
     }
 
     #[test]
     fn short_id_preserves_hex_address_shape() {
         let value = "0x1234567890abcdef";
-        assert_eq!(short_id(value), "0x1234....cdef");
+        assert_eq!(short_display_id(value), "0x1234....cdef");
     }
 
     #[test]

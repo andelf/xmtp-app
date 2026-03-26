@@ -19,7 +19,6 @@ enum MessageRowKind {
 
 struct MessageRow<'a> {
     kind: MessageRowKind,
-    is_collapsed: bool,
     item: ListItem<'a>,
 }
 
@@ -171,8 +170,6 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
         | MessageRowKind::ReplyContext
         | MessageRowKind::Reactions => false,
     });
-    let _selected_row_is_collapsed =
-        selected_row.and_then(|index| rows.get(index).map(|row| row.is_collapsed));
     let mut items = Vec::with_capacity(rows.len());
     for row in &rows {
         items.push(row.item.clone());
@@ -208,7 +205,6 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             last_day = Some(day_tag.clone());
             rows.push(MessageRow {
                 kind: MessageRowKind::DateSeparator,
-                is_collapsed: false,
                 item: ListItem::new(Line::from(Span::styled(
                     format!("----- {} ----", day_tag),
                     Style::default().dark_gray().bg(Color::Reset),
@@ -234,7 +230,6 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             };
             rows.push(MessageRow {
                 kind: MessageRowKind::ReplyContext,
-                is_collapsed: false,
                 item: ListItem::new(Line::from(Span::styled(
                     reply_line,
                     Style::default().fg(Color::Gray).bg(Color::Reset),
@@ -265,7 +260,8 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
         let header_line = Line::from(header_spans);
 
         let mut content_lines = if item.content_kind == "markdown" {
-            let rendered = render_markdown(&item.content, wrap_width.max(1));
+            let rendered =
+                app.cached_markdown_lines(&item.message_id, &item.content, wrap_width.max(1));
             if rendered.iter().all(|line| {
                 line.spans
                     .iter()
@@ -334,14 +330,12 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
 
         rows.push(MessageRow {
             kind: MessageRowKind::Message(index),
-            is_collapsed,
             item: ListItem::new(lines).style(Style::default().bg(Color::Reset)),
         });
 
         if let Some(reactions_line) = format_reactions_line(item) {
             rows.push(MessageRow {
                 kind: MessageRowKind::Reactions,
-                is_collapsed: false,
                 item: ListItem::new(Line::from(Span::styled(
                     format!("  reactions: {reactions_line}"),
                     Style::default().fg(Color::Gray).bg(Color::Reset),

@@ -1,6 +1,16 @@
 use serde::{Deserialize, Serialize};
 use xmtp_core::{ConnectionState, DaemonState};
 
+pub fn short_display_id(value: &str) -> String {
+    if value.starts_with("0x") && value.len() > 10 {
+        return format!("{}....{}", &value[..6], &value[value.len() - 4..]);
+    }
+    if value.len() <= 8 {
+        return value.to_owned();
+    }
+    format!("{}....{}", &value[..4], &value[value.len() - 4..])
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StatusResponse {
     pub daemon_state: DaemonState,

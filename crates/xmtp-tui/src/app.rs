@@ -1,6 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::Color;
-use std::cell::Cell;
+use ratatui::text::Line;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use textwrap::wrap;
@@ -160,7 +161,9 @@ pub struct App {
     pub active_info: Option<ConversationInfoResponse>,
     pub active_history_loading: bool,
     pub messages: Vec<HistoryItem>,
+    pub markdown_cache: RefCell<HashMap<(String, usize), Vec<Line<'static>>>>,
     pub read_receipt_auto_send: bool,
+    pub last_read_receipt_sent: HashMap<String, Instant>,
     pub selected_message: usize,
     pub detail_scroll: usize,
     pub detail_message_id: Option<String>,
@@ -198,7 +201,9 @@ impl App {
                 active_info: None,
                 active_history_loading: false,
                 messages: Vec::new(),
+                markdown_cache: RefCell::new(HashMap::new()),
                 read_receipt_auto_send: true,
+                last_read_receipt_sent: HashMap::new(),
                 selected_message: 0,
                 detail_scroll: 0,
                 detail_message_id: None,
@@ -239,14 +244,15 @@ impl App {
             AppEvent::GroupMembersUpdated(update) => {
                 if self.active_group_id() == Some(update.conversation_id.as_str()) {
                     self.group_management.members = update.members;
-                    self.group_management.selected_member = self
-                        .group_management
-                        .selected_member
-                        .min(self.group_management.members.len().saturating_sub(1));
-                    self.group_management.info_member_scroll = self
-                        .group_management
-                        .info_member_scroll
-                        .min(self.group_management.members.len().saturating_sub(1));
+                    self.group_management.self_permission_level =
+                        self.self_inbox_id().and_then(|self_inbox_id| {
+                            self.group_management
+                                .members
+                                .iter()
+                                .find(|member| member.inbox_id == self_inbox_id)
+                                .map(|member| member.permission_level.clone())
+                        });
+                    self.clamp_group_member_indices();
                 }
                 Vec::new()
             }
@@ -269,14 +275,7 @@ impl App {
                             .find(|member| member.inbox_id == self_inbox_id)
                             .map(|member| member.permission_level.clone())
                     });
-                self.group_management.selected_member = self
-                    .group_management
-                    .selected_member
-                    .min(self.group_management.members.len().saturating_sub(1));
-                self.group_management.info_member_scroll = self
-                    .group_management
-                    .info_member_scroll
-                    .min(self.group_management.members.len().saturating_sub(1));
+                self.clamp_group_member_indices();
                 Vec::new()
             }
             AppEvent::GroupPermissionsLoaded(permissions) => {
@@ -312,8 +311,10 @@ impl App {
                                     .min(self.messages.len().saturating_sub(1))
                             })
                     };
-                    if self.read_receipt_auto_send && self.should_send_read_receipt() {
-                        return vec![Effect::SendReadReceipt { conversation_id }];
+                    if self.read_receipt_auto_send
+                        && self.should_send_read_receipt(&conversation_id)
+                    {
+                        return self.enqueue_read_receipt_effect(conversation_id);
                     }
                 }
                 Vec::new()
@@ -921,7 +922,7 @@ impl App {
                                 })
                                 && let Some(conversation_id) = self.active_conversation_id.clone()
                             {
-                                return vec![Effect::SendReadReceipt { conversation_id }];
+                                return self.enqueue_read_receipt_effect(conversation_id);
                             }
                         }
                     }
@@ -1370,11 +1371,29 @@ impl App {
         self.focus != Focus::Messages
     }
 
+    fn clamp_group_member_indices(&mut self) {
+        self.group_management.selected_member = self
+            .group_management
+            .selected_member
+            .min(self.group_management.members.len().saturating_sub(1));
+        self.group_management.info_member_scroll = self
+            .group_management
+            .info_member_scroll
+            .min(self.group_management.members.len().saturating_sub(1));
+    }
+
     fn is_selected_message_at_end(&self) -> bool {
         self.messages.is_empty() || self.selected_message + 1 >= self.messages.len()
     }
 
-    fn should_send_read_receipt(&self) -> bool {
+    fn should_send_read_receipt(&self, conversation_id: &str) -> bool {
+        if self
+            .last_read_receipt_sent
+            .get(conversation_id)
+            .is_some_and(|last_sent| last_sent.elapsed() < Duration::from_secs(30))
+        {
+            return false;
+        }
         match self.self_inbox_id() {
             Some(self_inbox_id) => self
                 .messages
@@ -1382,6 +1401,29 @@ impl App {
                 .any(|item| item.sender_inbox_id != self_inbox_id),
             None => !self.messages.is_empty(),
         }
+    }
+
+    fn enqueue_read_receipt_effect(&mut self, conversation_id: String) -> Vec<Effect> {
+        self.last_read_receipt_sent
+            .insert(conversation_id.clone(), Instant::now());
+        vec![Effect::SendReadReceipt { conversation_id }]
+    }
+
+    pub fn cached_markdown_lines(
+        &self,
+        message_id: &str,
+        content: &str,
+        wrap_width: usize,
+    ) -> Vec<Line<'static>> {
+        let key = (message_id.to_owned(), wrap_width);
+        if let Some(lines) = self.markdown_cache.borrow().get(&key) {
+            return lines.clone();
+        }
+        let lines = render_markdown(content, wrap_width);
+        self.markdown_cache
+            .borrow_mut()
+            .insert(key, lines.clone());
+        lines
     }
 
     pub fn can_manage_group_members(&self, action: GroupManagementAction) -> bool {
@@ -1434,6 +1476,7 @@ impl App {
         self.group_management.info = None;
         self.group_management.members.clear();
         self.group_management.selected_member = 0;
+        self.markdown_cache.borrow_mut().clear();
         self.messages.clear();
         self.selected_message = self.messages.len().saturating_sub(1);
         vec![Effect::SwitchConversation {
@@ -1489,7 +1532,8 @@ impl App {
         let wrap_width = self.last_detail_wrap_width.get().max(1);
         let visible_height = self.last_detail_visible_height.get();
         let content_lines = if message.content_kind == "markdown" {
-            render_markdown(&message.content, wrap_width).len()
+            self.cached_markdown_lines(&message.message_id, &message.content, wrap_width)
+                .len()
         } else {
             wrap(&message.content, wrap_width).len().max(1)
         };
@@ -1510,7 +1554,8 @@ impl App {
         };
 
         let line_count = if item.content_kind == "markdown" {
-            let rendered = render_markdown(&item.content, PREVIEW_WIDTH);
+            let rendered =
+                self.cached_markdown_lines(&item.message_id, &item.content, PREVIEW_WIDTH);
             let non_empty = rendered
                 .iter()
                 .filter(|line| {
