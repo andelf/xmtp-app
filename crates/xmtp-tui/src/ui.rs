@@ -102,12 +102,7 @@ fn render_conversations(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let block = titled_block("Conversations", app.focus == Focus::Conversations);
     let list = List::new(items)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(Style::default().reversed().add_modifier(Modifier::BOLD));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -217,12 +212,7 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
     let list = List::new(items)
         .block(titled_block(&title, app.focus == Focus::Messages))
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(Style::default().reversed().add_modifier(Modifier::BOLD));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
