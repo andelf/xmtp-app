@@ -1685,7 +1685,7 @@ fn merge_history_item(visible: &mut Vec<HistoryItem>, item: HistoryItem) {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Focus, GroupDialogField, Modal};
+    use super::{App, Focus, GroupDialogField, MessageMenuAction, Modal};
     use crate::event::Effect;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use xmtp_ipc::{ConversationItem, HistoryItem};
@@ -2105,6 +2105,37 @@ mod tests {
         ))));
         assert!(effects.is_empty());
         assert_eq!(app.modal, Modal::MessageMenu);
+    }
+
+    #[test]
+    fn short_message_hides_view_full_menu_action() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Messages;
+        app.messages.push(sample_history_item("msg-1", "hello"));
+
+        assert_eq!(
+            app.message_menu_actions(),
+            vec![MessageMenuAction::Reply, MessageMenuAction::Reaction]
+        );
+    }
+
+    #[test]
+    fn long_message_shows_view_full_menu_action() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Messages;
+        app.messages.push(sample_history_item(
+            "msg-1",
+            &"this is a very long message that should wrap into many lines when shown in the message list and therefore expose the view full action in the menu ".repeat(4),
+        ));
+
+        assert_eq!(
+            app.message_menu_actions(),
+            vec![
+                MessageMenuAction::ViewFull,
+                MessageMenuAction::Reply,
+                MessageMenuAction::Reaction,
+            ]
+        );
     }
 
     #[test]

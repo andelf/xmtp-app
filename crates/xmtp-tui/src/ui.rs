@@ -633,10 +633,14 @@ fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
         Style::default().dark_gray(),
     )));
 
+    let visible_height = area.height.saturating_sub(2) as usize;
+    let max_scroll = lines.len().saturating_sub(visible_height);
+    let scroll = app.detail_scroll.min(max_scroll) as u16;
+
     let paragraph = Paragraph::new(lines)
         .block(Block::default().title("Message Detail").borders(Borders::ALL))
         .wrap(Wrap { trim: false })
-        .scroll((app.detail_scroll as u16, 0));
+        .scroll((scroll, 0));
     frame.render_widget(paragraph, area);
 }
 
