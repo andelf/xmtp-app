@@ -1,5 +1,6 @@
 mod acp;
 
+use std::fs;
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::OnceLock;
@@ -12,8 +13,8 @@ use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_daemon::{
-    HistoryEntry, addr_path, history_with_kind as load_history_direct, pid_path,
-    resolve_conversation_id, serve,
+    HistoryEntry, addr_path, history_with_kind as load_history_direct,
+    normalize_signer_key_hex, pid_path, resolve_conversation_id, serve,
 };
 use xmtp_core::{ConnectionState, DaemonState, StateSnapshot, SyncPhase, SyncState};
 use xmtp_ipc::{
@@ -74,6 +75,11 @@ enum Command {
             help = "Advanced override for the XMTP payer or gateway endpoint"
         )]
         gateway_url: Option<String>,
+        #[arg(
+            long,
+            help = "Import existing secp256k1 private key (hex, with or without 0x prefix). WARNING: handle with care."
+        )]
+        private_key: Option<String>,
         #[arg(long, help = "Force a network switch even if the current data directory is tied to a different network")]
         force: bool,
     },
@@ -305,8 +311,16 @@ async fn run() -> anyhow::Result<()> {
         Command::Login {
             network,
             gateway_url,
+            private_key,
             force,
-        } => login(data_dir, network, gateway_url.as_deref(), force).await,
+        } => login(
+            data_dir,
+            network,
+            gateway_url.as_deref(),
+            private_key.as_deref(),
+            force,
+        )
+        .await,
         Command::Doctor => doctor(data_dir).await,
         Command::Tui => xmtp_tui::run(data_dir),
         Command::Acp {
@@ -487,6 +501,7 @@ async fn login(
     data_dir: PathBuf,
     network: Network,
     gateway_url: Option<&str>,
+    private_key: Option<&str>,
     force: bool,
 ) -> anyhow::Result<()> {
     if !data_dir.join("config.json").exists() || !data_dir.join("state.json").exists() {
@@ -523,9 +538,41 @@ async fn login(
     let resolved_env = defaults.env;
     let resolved_api_url = defaults.api_url;
     let resolved_gateway_url = gateway_url.or(defaults.gateway_url);
+    if let Some(key) = private_key {
+        import_private_key(&data_dir, key, force)?;
+    }
     let status =
         daemon_login(&data_dir, resolved_env, resolved_api_url, resolved_gateway_url).await?;
     print_status_response(status)?;
+    Ok(())
+}
+
+fn import_private_key(data_dir: &std::path::Path, key: &str, force: bool) -> anyhow::Result<()> {
+    let normalized_key = normalize_signer_key_hex(key)?;
+    let signer_path = data_dir.join("signer.key");
+
+    if signer_path.exists() {
+        let existing = fs::read_to_string(&signer_path)
+            .with_context(|| format!("read existing signer key at {}", signer_path.display()))?;
+        if existing.trim() != normalized_key && !force {
+            eprintln!(
+                "Warning: private key will be stored in plain text at {}",
+                signer_path.display()
+            );
+            anyhow::bail!(
+                "signer.key already exists with a different value; rerun login with --force to overwrite"
+            );
+        }
+    }
+
+    eprintln!(
+        "Warning: private key will be stored in plain text at {}",
+        signer_path.display()
+    );
+    fs::create_dir_all(data_dir)
+        .with_context(|| format!("create data dir {}", data_dir.display()))?;
+    fs::write(&signer_path, &normalized_key)
+        .with_context(|| format!("write signer key to {}", signer_path.display()))?;
     Ok(())
 }
 
@@ -2250,6 +2297,23 @@ mod tests {
                 assert_eq!(emoji, "👍");
             }
             _ => panic!("expected unreact command"),
+        }
+    }
+
+    #[test]
+    fn login_parses_private_key_argument() {
+        let cli = Cli::parse_from([
+            "xmtp-cli",
+            "login",
+            "--private-key",
+            "0x1234abcd",
+        ]);
+
+        match cli.command {
+            Command::Login { private_key, .. } => {
+                assert_eq!(private_key.as_deref(), Some("0x1234abcd"));
+            }
+            _ => panic!("expected login command"),
         }
     }
 
