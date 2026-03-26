@@ -45,12 +45,8 @@ struct Cli {
 enum Command {
     Init,
     Login {
-        #[arg(long)]
-        env: Option<String>,
         #[arg(long, default_value = "dev")]
         network: String,
-        #[arg(long)]
-        api_url: Option<String>,
         #[arg(long)]
         gateway_url: Option<String>,
     },
@@ -195,18 +191,9 @@ async fn run() -> anyhow::Result<()> {
     match cli.command {
         Command::Init => init(data_dir),
         Command::Login {
-            env,
             network,
-            api_url,
             gateway_url,
-        } => login(
-            data_dir,
-            env.as_deref(),
-            &network,
-            api_url.as_deref(),
-            gateway_url.as_deref(),
-        )
-        .await,
+        } => login(data_dir, &network, gateway_url.as_deref()).await,
         Command::Doctor => doctor(data_dir).await,
         Command::Status => status(data_dir),
         Command::Tui => xmtp_tui::run(data_dir),
@@ -278,7 +265,7 @@ fn init(data_dir: PathBuf) -> anyhow::Result<()> {
 fn status(data_dir: PathBuf) -> anyhow::Result<()> {
     let state = load_state(&data_dir.join("state.json"))?;
     if let Ok(config) = load_config(&data_dir.join("config.json")) {
-        println!("{}", render_status_row("xmtp_env", &config.xmtp_env));
+        println!("{}", render_status_row("network", infer_network_name(&config)));
     }
     println!("{}", render_status_row("daemon_state", &state.daemon_state.to_string()));
     println!(
@@ -321,14 +308,7 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
         render_status_row("signer_key", bool_label(signer_path.exists()))
     );
     if let Ok(config) = load_config(&config_path) {
-        println!("{}", render_status_row("xmtp_env", &config.xmtp_env));
-        println!(
-            "{}",
-            render_status_row(
-                "api_url",
-                config.api_url.as_deref().unwrap_or("(default)")
-            )
-        );
+        println!("{}", render_status_row("network", infer_network_name(&config)));
         println!(
             "{}",
             render_status_row(
@@ -383,17 +363,15 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
 
 async fn login(
     data_dir: PathBuf,
-    env: Option<&str>,
     network: &str,
-    api_url: Option<&str>,
     gateway_url: Option<&str>,
 ) -> anyhow::Result<()> {
     if !data_dir.join("config.json").exists() || !data_dir.join("state.json").exists() {
         init(data_dir.clone())?;
     }
     let defaults = login_network_defaults(network)?;
-    let resolved_env = env.unwrap_or(defaults.env);
-    let resolved_api_url = api_url.or(defaults.api_url);
+    let resolved_env = defaults.env;
+    let resolved_api_url = defaults.api_url;
     let resolved_gateway_url = gateway_url.or(defaults.gateway_url);
     let status =
         daemon_login(&data_dir, resolved_env, resolved_api_url, resolved_gateway_url).await?;
@@ -425,6 +403,21 @@ fn login_network_defaults(network: &str) -> anyhow::Result<LoginNetworkDefaults<
             gateway_url: None,
         }),
         other => anyhow::bail!("unknown network preset: {other}"),
+    }
+}
+
+fn infer_network_name(config: &AppConfig) -> &'static str {
+    if config.xmtp_env == "production" && config.api_url.is_none() && config.gateway_url.is_none() {
+        "production"
+    } else if config.xmtp_env == "dev"
+        && config.api_url.as_deref() == Some("https://grpc.testnet.xmtp.network:443")
+        && config.gateway_url.as_deref() == Some("https://payer.testnet-staging.xmtp.network")
+    {
+        "testnet"
+    } else if config.xmtp_env == "dev" && config.api_url.is_none() && config.gateway_url.is_none() {
+        "dev"
+    } else {
+        "custom"
     }
 }
 
