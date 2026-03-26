@@ -1683,15 +1683,15 @@ async fn create_group_handler(
 
 async fn send_group_handler(
     State(state): State<HttpState>,
-    AxumPath(conversation_id): AxumPath<String>,
+    AxumPath(group_id): AxumPath<String>,
     Json(request): Json<SendMessageRequest>,
 ) -> Result<Json<ActionResponse>, ApiErrorResponse> {
     let result = run_app(
         &state,
-        format!("send group id={conversation_id}"),
+        format!("send group id={group_id}"),
         false,
         false,
-        move |app| app.send_group(conversation_id, request.message),
+        move |app| app.send_group(group_id, request.message),
     )
     .await
     .map_err(internal_error)?;
@@ -1752,16 +1752,16 @@ async fn unreact_handler(
 
 async fn group_members_handler(
     State(state): State<HttpState>,
-    AxumPath(conversation_id): AxumPath<String>,
+    AxumPath(group_id): AxumPath<String>,
     Query(query): Query<MembersQuery>,
 ) -> Result<Json<GroupMembersResponse>, ApiErrorResponse> {
     let limit = query.limit.unwrap_or(200);
     let members = run_app(
         &state,
-        format!("group members id={conversation_id}"),
+        format!("group members id={group_id}"),
         false,
         false,
-        move |app| app.group_members(conversation_id, limit),
+        move |app| app.group_members(group_id, limit),
     )
     .await
     .map_err(internal_error)?;
@@ -1770,14 +1770,14 @@ async fn group_members_handler(
 
 async fn group_info_handler(
     State(state): State<HttpState>,
-    AxumPath(conversation_id): AxumPath<String>,
+    AxumPath(group_id): AxumPath<String>,
 ) -> Result<Json<GroupInfoResponse>, ApiErrorResponse> {
     let info = run_app(
         &state,
-        format!("group info id={conversation_id}"),
+        format!("group info id={group_id}"),
         false,
         false,
-        move |app| app.group_info(conversation_id),
+        move |app| app.group_info(group_id),
     )
     .await
     .map_err(internal_error)?;
@@ -1786,16 +1786,16 @@ async fn group_info_handler(
 
 async fn rename_group_handler(
     State(state): State<HttpState>,
-    AxumPath(conversation_id): AxumPath<String>,
+    AxumPath(group_id): AxumPath<String>,
     Json(request): Json<RenameGroupRequest>,
 ) -> Result<Json<ActionResponse>, ApiErrorResponse> {
-    let event_conversation_id = conversation_id.clone();
+    let event_conversation_id = group_id.clone();
     let result = run_app(
         &state,
-        format!("rename group id={conversation_id}"),
+        format!("rename group id={group_id}"),
         false,
         false,
-        move |app| app.rename_group(conversation_id, request.name),
+        move |app| app.rename_group(group_id, request.name),
     )
     .await
     .map_err(internal_error)?;
@@ -1807,16 +1807,16 @@ async fn rename_group_handler(
 
 async fn add_group_members_handler(
     State(state): State<HttpState>,
-    AxumPath(conversation_id): AxumPath<String>,
+    AxumPath(group_id): AxumPath<String>,
     Json(request): Json<GroupMembersUpdateRequest>,
 ) -> Result<Json<ActionResponse>, ApiErrorResponse> {
-    let event_conversation_id = conversation_id.clone();
+    let event_conversation_id = group_id.clone();
     let result = run_app(
         &state,
-        format!("add group members id={conversation_id}"),
+        format!("add group members id={group_id}"),
         false,
         false,
-        move |app| app.add_group_members(conversation_id, request.members),
+        move |app| app.add_group_members(group_id, request.members),
     )
     .await
     .map_err(internal_error)?;
@@ -1828,16 +1828,16 @@ async fn add_group_members_handler(
 
 async fn remove_group_members_handler(
     State(state): State<HttpState>,
-    AxumPath(conversation_id): AxumPath<String>,
+    AxumPath(group_id): AxumPath<String>,
     Json(request): Json<GroupMembersUpdateRequest>,
 ) -> Result<Json<ActionResponse>, ApiErrorResponse> {
-    let event_conversation_id = conversation_id.clone();
+    let event_conversation_id = group_id.clone();
     let result = run_app(
         &state,
-        format!("remove group members id={conversation_id}"),
+        format!("remove group members id={group_id}"),
         false,
         false,
-        move |app| app.remove_group_members(conversation_id, request.members),
+        move |app| app.remove_group_members(group_id, request.members),
     )
     .await
     .map_err(internal_error)?;
@@ -2114,16 +2114,16 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
         .route("/v1/direct-message/send", post(send_dm_handler))
         .route("/v1/groups", post(create_group_handler))
         .route(
-            "/v1/groups/{conversation_id}",
+            "/v1/groups/{group_id}",
             get(group_info_handler).patch(rename_group_handler),
         )
         .route(
-            "/v1/groups/{conversation_id}/members",
+            "/v1/groups/{group_id}/members",
             get(group_members_handler)
                 .post(add_group_members_handler)
                 .delete(remove_group_members_handler),
         )
-        .route("/v1/groups/{conversation_id}/send", post(send_group_handler))
+        .route("/v1/groups/{group_id}/send", post(send_group_handler))
         .route("/v1/conversations/{conversation_id}/leave", post(leave_conversation_handler))
         .route("/v1/messages/{message_id}", get(message_info_handler))
         .route("/v1/messages/{message_id}/reply", post(reply_handler))
