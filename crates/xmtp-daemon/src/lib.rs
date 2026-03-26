@@ -1030,17 +1030,15 @@ fn summarize_decoded_content(content: &Content) -> String {
             )
         }
         Content::Reply(reply) => {
-            let inner = xmtp::content::decode(&reply.content.content)
-                .map(|content| summarize_decoded_content(&content))
-                .map(|summary| {
-                    if summary.trim().is_empty() || summary == "unsupported " {
-                        "(reply)".to_owned()
-                    } else {
-                        summary
-                    }
-                })
-                .unwrap_or_else(|_| "(reply)".to_owned());
-            format!("{} (↩ {})", inner, short_id(&reply.reference))
+            let inner_text = reply
+                .content
+                .r#type
+                .as_ref()
+                .filter(|t| t.type_id == "text" || t.type_id == "markdown")
+                .and_then(|_| String::from_utf8(reply.content.content.clone()).ok())
+                .or_else(|| reply.content.fallback.clone())
+                .unwrap_or_else(|| "(reply)".to_owned());
+            format!("{} (↩ {})", inner_text, short_id(&reply.reference))
         }
         Content::ReadReceipt => "read receipt".to_owned(),
         Content::Attachment(attachment) => format!(
@@ -2183,7 +2181,9 @@ mod tests {
         ConversationLookup, ConversationSummary, resolve_conversation_lookup_id, resolve_message_id,
         sort_conversation_summaries, summarize_decoded_content,
     };
-    use xmtp::content::{Content, Reaction, ReactionAction, ReactionSchema, Reply, EncodedContent};
+    use xmtp::content::{
+        Content, ContentTypeId, EncodedContent, Reaction, ReactionAction, ReactionSchema, Reply,
+    };
 
     #[test]
     fn resolve_conversation_id_accepts_short_display_id() {
@@ -2323,11 +2323,20 @@ mod tests {
         let reply = summarize_decoded_content(&Content::Reply(Reply {
             reference: "dcba4321".to_owned(),
             reference_inbox_id: Some("inbox-2".to_owned()),
-            content: EncodedContent::default(),
+            content: EncodedContent {
+                r#type: Some(ContentTypeId {
+                    authority_id: "xmtp.org".to_owned(),
+                    type_id: "text".to_owned(),
+                    version_major: 1,
+                    version_minor: 0,
+                }),
+                content: b"hello world".to_vec(),
+                ..EncodedContent::default()
+            },
         }));
 
         assert_eq!(reaction, "reacted 👍 to abcd1234");
-        assert_eq!(reply, "(reply) (↩ dcba4321)");
+        assert_eq!(reply, "hello world (↩ dcba4321)");
     }
 
     #[test]
