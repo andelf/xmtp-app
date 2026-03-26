@@ -1213,11 +1213,45 @@ pub fn reaction_choices() -> [&'static str; 5] {
 }
 
 fn normalize_history(items: Vec<HistoryItem>) -> Vec<HistoryItem> {
-    let mut visible = Vec::new();
+    let mut visible: Vec<HistoryItem> = items
+        .iter()
+        .filter(|item| item.content_kind != "reaction")
+        .cloned()
+        .collect();
+
     for item in items {
-        merge_history_item(&mut visible, item);
+        if item.content_kind == "reaction" {
+            if let Some(target_id) = item.reaction_target_message_id.as_deref() {
+                if let Some(target) = visible.iter_mut().find(|m| m.message_id == target_id) {
+                    if let (Some(emoji), Some(action)) = (item.reaction_emoji, item.reaction_action)
+                    {
+                        target.attached_reactions.push(ReactionDetail {
+                            sender_inbox_id: item.sender_inbox_id,
+                            emoji,
+                            action,
+                        });
+                    }
+                }
+            }
+        }
     }
+
+    for item in &mut visible {
+        dedupe_reactions(&mut item.attached_reactions);
+    }
+
     visible
+}
+
+fn dedupe_reactions(reactions: &mut Vec<ReactionDetail>) {
+    let mut seen = std::collections::HashSet::new();
+    reactions.retain(|reaction| {
+        seen.insert((
+            reaction.sender_inbox_id.clone(),
+            reaction.emoji.clone(),
+            reaction.action.clone(),
+        ))
+    });
 }
 
 fn merge_history_item(visible: &mut Vec<HistoryItem>, item: HistoryItem) {
@@ -1716,6 +1750,50 @@ mod tests {
                     reaction_target_message_id: Some("msg-1".into()),
                     reaction_emoji: Some("👍".into()),
                     reaction_action: Some("added".into()),
+                    attached_reactions: Vec::new(),
+                },
+            ],
+        });
+
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages[0].message_id, "msg-1");
+        assert_eq!(app.messages[0].attached_reactions.len(), 1);
+        assert_eq!(app.messages[0].attached_reactions[0].emoji, "👍");
+    }
+
+    #[test]
+    fn history_load_merges_reaction_even_when_reaction_appears_first() {
+        let (mut app, _) = App::new();
+        app.active_conversation_id = Some("conv-1".into());
+        app.handle_event(crate::event::AppEvent::HistoryLoaded {
+            conversation_id: "conv-1".into(),
+            items: vec![
+                xmtp_ipc::HistoryItem {
+                    message_id: "msg-2".into(),
+                    sender_inbox_id: "sender-2".into(),
+                    sent_at_ns: 2,
+                    content_kind: "reaction".into(),
+                    content: "reacted 👍 to msg-1".into(),
+                    reply_count: 0,
+                    reaction_count: 0,
+                    reply_target_message_id: None,
+                    reaction_target_message_id: Some("msg-1".into()),
+                    reaction_emoji: Some("👍".into()),
+                    reaction_action: Some("added".into()),
+                    attached_reactions: Vec::new(),
+                },
+                xmtp_ipc::HistoryItem {
+                    message_id: "msg-1".into(),
+                    sender_inbox_id: "sender-1".into(),
+                    sent_at_ns: 1,
+                    content_kind: "text".into(),
+                    content: "hello".into(),
+                    reply_count: 0,
+                    reaction_count: 1,
+                    reply_target_message_id: None,
+                    reaction_target_message_id: None,
+                    reaction_emoji: None,
+                    reaction_action: None,
                     attached_reactions: Vec::new(),
                 },
             ],
