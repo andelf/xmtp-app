@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -395,14 +395,14 @@ impl Runtime {
     }
 }
 
-async fn ensure_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
+async fn ensure_daemon(data_dir: &Path) -> anyhow::Result<()> {
     let addr = addr_path(data_dir);
     if addr.exists() {
         return Ok(());
     }
     let current_exe = std::env::current_exe().context("resolve current exe")?;
     let cli_path = current_exe.with_file_name("xmtp-cli");
-    let data_dir = data_dir.clone();
+    let data_dir = data_dir.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let status = Command::new(cli_path)
             .arg("--data-dir")
@@ -429,27 +429,27 @@ async fn ensure_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
     anyhow::bail!("daemon addr not ready")
 }
 
-async fn conversation_info(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<ConversationInfoResponse> {
+async fn conversation_info(data_dir: &Path, conversation_id: &str) -> anyhow::Result<ConversationInfoResponse> {
     http_get(data_dir, &format!("/v1/conversations/{conversation_id}")).await
 }
 
-async fn group_info(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<GroupInfoResponse> {
+async fn group_info(data_dir: &Path, conversation_id: &str) -> anyhow::Result<GroupInfoResponse> {
     http_get(data_dir, &format!("/v1/groups/{conversation_id}")).await
 }
 
-async fn group_members(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<GroupMembersResponse> {
+async fn group_members(data_dir: &Path, conversation_id: &str) -> anyhow::Result<GroupMembersResponse> {
     http_get(data_dir, &format!("/v1/groups/{conversation_id}/members")).await
 }
 
 async fn group_permissions(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
 ) -> anyhow::Result<GroupPermissionsResponse> {
     http_get(data_dir, &format!("/v1/groups/{conversation_id}/permissions")).await
 }
 
 async fn update_group_permission(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     permission: &str,
     policy: &str,
@@ -465,14 +465,14 @@ async fn update_group_permission(
     .await
 }
 
-async fn load_history(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<Vec<xmtp_ipc::HistoryItem>> {
+async fn load_history(data_dir: &Path, conversation_id: &str) -> anyhow::Result<Vec<xmtp_ipc::HistoryItem>> {
     let response: HistoryResponse =
         http_get(data_dir, &format!("/v1/conversations/{conversation_id}/history")).await?;
     Ok(response.items)
 }
 
 async fn watch_history(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 ) -> anyhow::Result<()> {
@@ -554,12 +554,12 @@ async fn watch_history(
     }
 }
 
-fn daemon_base_url(data_dir: &PathBuf) -> anyhow::Result<String> {
+fn daemon_base_url(data_dir: &Path) -> anyhow::Result<String> {
     let addr = std::fs::read_to_string(addr_path(data_dir)).context("read daemon addr file")?;
     Ok(format!("http://{}", addr.trim()))
 }
 
-async fn open_dm(data_dir: &PathBuf, recipient: &str) -> anyhow::Result<ActionResponse> {
+async fn open_dm(data_dir: &Path, recipient: &str) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
         "/v1/direct-message/open",
@@ -571,7 +571,7 @@ async fn open_dm(data_dir: &PathBuf, recipient: &str) -> anyhow::Result<ActionRe
 }
 
 async fn watch_app_events(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 ) -> anyhow::Result<()> {
     let mut retry_delay = Duration::from_millis(100);
@@ -657,7 +657,7 @@ async fn watch_app_events(
     }
 }
 
-async fn send_dm(data_dir: &PathBuf, recipient: &str, message: &str) -> anyhow::Result<xmtp_ipc::SendDmResponse> {
+async fn send_dm(data_dir: &Path, recipient: &str, message: &str) -> anyhow::Result<xmtp_ipc::SendDmResponse> {
     http_post(
         data_dir,
         "/v1/direct-message/send",
@@ -670,7 +670,7 @@ async fn send_dm(data_dir: &PathBuf, recipient: &str, message: &str) -> anyhow::
     .await
 }
 
-async fn send_group(data_dir: &PathBuf, conversation_id: &str, message: &str) -> anyhow::Result<ActionResponse> {
+async fn send_group(data_dir: &Path, conversation_id: &str, message: &str) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
         &format!("/v1/groups/{conversation_id}/send"),
@@ -683,7 +683,7 @@ async fn send_group(data_dir: &PathBuf, conversation_id: &str, message: &str) ->
     .await
 }
 
-async fn create_group(data_dir: &PathBuf, name: Option<String>, members: Vec<String>) -> anyhow::Result<ActionResponse> {
+async fn create_group(data_dir: &Path, name: Option<String>, members: Vec<String>) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
         "/v1/groups",
@@ -697,7 +697,7 @@ async fn create_group(data_dir: &PathBuf, name: Option<String>, members: Vec<Str
 }
 
 async fn add_group_members(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     members: Vec<String>,
 ) -> anyhow::Result<ActionResponse> {
@@ -710,7 +710,7 @@ async fn add_group_members(
 }
 
 async fn remove_group_members(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     members: Vec<String>,
 ) -> anyhow::Result<ActionResponse> {
@@ -722,7 +722,7 @@ async fn remove_group_members(
     .await
 }
 
-async fn rename_group(data_dir: &PathBuf, conversation_id: &str, name: &str) -> anyhow::Result<ActionResponse> {
+async fn rename_group(data_dir: &Path, conversation_id: &str, name: &str) -> anyhow::Result<ActionResponse> {
     http_patch(
         data_dir,
         &format!("/v1/groups/{conversation_id}"),
@@ -733,7 +733,7 @@ async fn rename_group(data_dir: &PathBuf, conversation_id: &str, name: &str) -> 
     .await
 }
 
-async fn leave_conversation(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<ActionResponse> {
+async fn leave_conversation(data_dir: &Path, conversation_id: &str) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
         &format!("/v1/conversations/{conversation_id}/leave"),
@@ -743,7 +743,7 @@ async fn leave_conversation(data_dir: &PathBuf, conversation_id: &str) -> anyhow
 }
 
 async fn reply(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     message_id: &str,
     message: &str,
     conversation_id: &str,
@@ -761,7 +761,7 @@ async fn reply(
 }
 
 async fn react(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     message_id: &str,
     emoji: &str,
     conversation_id: &str,
@@ -778,7 +778,7 @@ async fn react(
     .await
 }
 
-async fn http_get<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
+async fn http_get<T>(data_dir: &Path, path: &str) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -793,7 +793,7 @@ where
     decode_json(response, "decode daemon http response").await
 }
 
-async fn http_post<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+async fn http_post<T, B>(data_dir: &Path, path: &str, body: &B) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,
@@ -810,7 +810,7 @@ where
     decode_json(response, "decode daemon http response").await
 }
 
-async fn http_patch<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+async fn http_patch<T, B>(data_dir: &Path, path: &str, body: &B) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,
@@ -827,7 +827,7 @@ where
     decode_json(response, "decode daemon http response").await
 }
 
-async fn http_delete<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+async fn http_delete<T, B>(data_dir: &Path, path: &str, body: &B) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,

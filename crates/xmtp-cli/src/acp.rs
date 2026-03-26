@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
@@ -248,7 +247,7 @@ async fn ensure_acp_session(
     Ok(session.session_id)
 }
 
-async fn ensure_acp_send_endpoint(data_dir: &PathBuf) -> anyhow::Result<()> {
+async fn ensure_acp_send_endpoint(data_dir: &Path) -> anyhow::Result<()> {
     let base_url = daemon_base_url(data_dir)?;
     let response = http_client()
         .post(format!("{base_url}/v1/conversations/__probe__/send"))
@@ -272,7 +271,7 @@ async fn ensure_acp_send_endpoint(data_dir: &PathBuf) -> anyhow::Result<()> {
 }
 
 async fn bridge_history_to_acp(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     self_inbox_id: Option<&str>,
     conn: &acp::ClientSideConnection,
@@ -461,43 +460,43 @@ async fn bridge_history_to_acp(
                                 break;
                             }
                         };
-                    if let DaemonEventData::HistoryItem { item, .. } = envelope.payload {
-                        if should_forward_item(&item, self_inbox_id) {
+                    if let DaemonEventData::HistoryItem { item, .. } = envelope.payload
+                        && should_forward_item(&item, self_inbox_id)
+                    {
+                        log_acp_event(
+                            data_dir,
+                            conversation_id,
+                            serde_json::json!({
+                                "event": "user_message",
+                                "conversation_id": conversation_id,
+                                "sender_inbox_id": item.sender_inbox_id.clone(),
+                                "content": item.content.clone(),
+                            }),
+                        );
+                        let reply =
+                            prompt_agent(data_dir, conversation_id, conn, session_id, chunks, item).await?;
+                        if !reply.trim().is_empty() {
+                            let sent = daemon_send_conversation(
+                                data_dir,
+                                conversation_id,
+                                &reply,
+                                Some("markdown"),
+                            )
+                            .await
+                            .with_context(|| {
+                                format!(
+                                    "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
+                                )
+                            })?;
                             log_acp_event(
                                 data_dir,
                                 conversation_id,
                                 serde_json::json!({
-                                    "event": "user_message",
+                                    "event": "xmtp_sent",
                                     "conversation_id": conversation_id,
-                                    "sender_inbox_id": item.sender_inbox_id.clone(),
-                                    "content": item.content.clone(),
+                                    "message_id": sent.message_id,
                                 }),
                             );
-                            let reply =
-                                prompt_agent(data_dir, conversation_id, conn, session_id, chunks, item).await?;
-                            if !reply.trim().is_empty() {
-                                let sent = daemon_send_conversation(
-                                    data_dir,
-                                    conversation_id,
-                                    &reply,
-                                    Some("markdown"),
-                                )
-                                .await
-                                .with_context(|| {
-                                    format!(
-                                        "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
-                                    )
-                                })?;
-                                log_acp_event(
-                                    data_dir,
-                                    conversation_id,
-                                    serde_json::json!({
-                                        "event": "xmtp_sent",
-                                        "conversation_id": conversation_id,
-                                        "message_id": sent.message_id,
-                                    }),
-                                );
-                            }
                         }
                     }
                 }

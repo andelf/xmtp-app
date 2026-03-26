@@ -1,7 +1,7 @@
 mod acp;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::OnceLock;
 use std::os::unix::process::CommandExt;
@@ -832,7 +832,7 @@ async fn history(
 }
 
 fn print_history_direct(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     kind: Option<&str>,
 ) -> anyhow::Result<()> {
@@ -989,7 +989,7 @@ async fn daemon_stop(data_dir: PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn daemon_status_request(data_dir: &PathBuf) -> anyhow::Result<StatusResponse> {
+async fn daemon_status_request(data_dir: &Path) -> anyhow::Result<StatusResponse> {
     let mut last_error = None;
     for _ in 0..20 {
         match daemon_get_status_without_autostart(data_dir).await {
@@ -1003,7 +1003,7 @@ async fn daemon_status_request(data_dir: &PathBuf) -> anyhow::Result<StatusRespo
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("daemon status unavailable")))
 }
 
-pub(crate) async fn wait_for_daemon_ready(data_dir: &PathBuf, timeout_ms: u64) -> anyhow::Result<()> {
+pub(crate) async fn wait_for_daemon_ready(data_dir: &Path, timeout_ms: u64) -> anyhow::Result<()> {
     let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
     let mut last_error = None;
     loop {
@@ -1139,12 +1139,12 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn daemon_get_status_without_autostart(data_dir: &PathBuf) -> anyhow::Result<StatusResponse> {
+async fn daemon_get_status_without_autostart(data_dir: &Path) -> anyhow::Result<StatusResponse> {
     http_get_without_autostart(data_dir, "/v1/status").await
 }
 
 async fn daemon_login(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     env: &str,
     api_url: Option<&str>,
     gateway_url: Option<&str>,
@@ -1162,7 +1162,7 @@ async fn daemon_login(
 }
 
 async fn daemon_list_conversations(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     kind: Option<&str>,
 ) -> anyhow::Result<ConversationListResponse> {
     #[derive(serde::Serialize)]
@@ -1173,7 +1173,7 @@ async fn daemon_list_conversations(
 }
 
 async fn daemon_send_dm(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     recipient: &str,
     message: &str,
 ) -> anyhow::Result<SendDmResponse> {
@@ -1190,7 +1190,7 @@ async fn daemon_send_dm(
 }
 
 async fn daemon_create_group(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     name: Option<String>,
     members: Vec<String>,
     permission_preset: Option<String>,
@@ -1208,7 +1208,7 @@ async fn daemon_create_group(
 }
 
 async fn daemon_send_group(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     message: &str,
 ) -> anyhow::Result<ActionResponse> {
@@ -1225,7 +1225,7 @@ async fn daemon_send_group(
 }
 
 pub(crate) async fn daemon_send_conversation(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     message: &str,
     content_type: Option<&str>,
@@ -1243,14 +1243,14 @@ pub(crate) async fn daemon_send_conversation(
 }
 
 async fn daemon_group_members(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
 ) -> anyhow::Result<GroupMembersResponse> {
     http_get(data_dir, &format!("/v1/groups/{conversation_id}/members")).await
 }
 
 async fn daemon_group_rename(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     name: &str,
 ) -> anyhow::Result<ActionResponse> {
@@ -1265,7 +1265,7 @@ async fn daemon_group_rename(
 }
 
 async fn daemon_group_add(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     members: Vec<String>,
 ) -> anyhow::Result<ActionResponse> {
@@ -1278,7 +1278,7 @@ async fn daemon_group_add(
 }
 
 async fn daemon_group_remove(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     members: Vec<String>,
 ) -> anyhow::Result<ActionResponse> {
@@ -1291,21 +1291,21 @@ async fn daemon_group_remove(
 }
 
 async fn daemon_group_info(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
 ) -> anyhow::Result<GroupInfoResponse> {
     http_get(data_dir, &format!("/v1/groups/{conversation_id}")).await
 }
 
 async fn daemon_group_permissions(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
 ) -> anyhow::Result<GroupPermissionsResponse> {
     http_get(data_dir, &format!("/v1/groups/{conversation_id}/permissions")).await
 }
 
 async fn daemon_update_group_permissions(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
     permission: &str,
     policy: &str,
@@ -1322,7 +1322,7 @@ async fn daemon_update_group_permissions(
 }
 
 async fn daemon_reply(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     message_id: &str,
     message: &str,
 ) -> anyhow::Result<ActionResponse> {
@@ -1339,7 +1339,7 @@ async fn daemon_reply(
 }
 
 async fn daemon_react(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     message_id: &str,
     emoji: &str,
 ) -> anyhow::Result<ActionResponse> {
@@ -1356,7 +1356,7 @@ async fn daemon_react(
 }
 
 async fn daemon_unreact(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     message_id: &str,
     emoji: &str,
 ) -> anyhow::Result<ActionResponse> {
@@ -1373,27 +1373,27 @@ async fn daemon_unreact(
 }
 
 async fn daemon_leave(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
 ) -> anyhow::Result<ActionResponse> {
     http_post(data_dir, &format!("/v1/conversations/{conversation_id}/leave"), &()).await
 }
 
 async fn daemon_conversation_info(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     conversation_id: &str,
 ) -> anyhow::Result<ConversationInfoResponse> {
     http_get(data_dir, &format!("/v1/conversations/{conversation_id}")).await
 }
 
 async fn daemon_message_info(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     message_id: &str,
 ) -> anyhow::Result<MessageInfoResponse> {
     http_get(data_dir, &format!("/v1/messages/{message_id}")).await
 }
 
-pub(crate) async fn http_get<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
+pub(crate) async fn http_get<T>(data_dir: &Path, path: &str) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -1401,7 +1401,7 @@ where
     http_get_without_autostart(data_dir, path).await
 }
 
-async fn http_get_without_autostart<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
+async fn http_get_without_autostart<T>(data_dir: &Path, path: &str) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -1414,7 +1414,7 @@ where
     decode_json_response(response).await
 }
 
-async fn http_get_with_query<T, Q>(data_dir: &PathBuf, path: &str, query: &Q) -> anyhow::Result<T>
+async fn http_get_with_query<T, Q>(data_dir: &Path, path: &str, query: &Q) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
     Q: serde::Serialize + ?Sized,
@@ -1430,7 +1430,7 @@ where
     decode_json_response(response).await
 }
 
-pub(crate) async fn http_post<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+pub(crate) async fn http_post<T, B>(data_dir: &Path, path: &str, body: &B) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,
@@ -1446,7 +1446,7 @@ where
     decode_json_response(response).await
 }
 
-async fn http_patch<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+async fn http_patch<T, B>(data_dir: &Path, path: &str, body: &B) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,
@@ -1462,7 +1462,7 @@ where
     decode_json_response(response).await
 }
 
-async fn http_delete<T, B>(data_dir: &PathBuf, path: &str, body: &B) -> anyhow::Result<T>
+async fn http_delete<T, B>(data_dir: &Path, path: &str, body: &B) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,
@@ -1478,7 +1478,7 @@ where
     decode_json_response(response).await
 }
 
-async fn http_post_empty(data_dir: &PathBuf, path: &str) -> anyhow::Result<()> {
+async fn http_post_empty(data_dir: &Path, path: &str) -> anyhow::Result<()> {
     let base_url = daemon_base_url(data_dir)?;
     let response = http_client()
         .post(format!("{base_url}{path}"))
@@ -1525,9 +1525,9 @@ async fn decode_empty_response(response: reqwest::Response) -> anyhow::Result<()
     Ok(())
 }
 
-pub(crate) async fn ensure_daemon_running(data_dir: &PathBuf) -> anyhow::Result<()> {
+pub(crate) async fn ensure_daemon_running(data_dir: &Path) -> anyhow::Result<()> {
     if !addr_path(data_dir).exists() {
-        daemon_start(data_dir.clone()).await?;
+        daemon_start(data_dir.to_path_buf()).await?;
         return Ok(());
     }
 
@@ -1535,18 +1535,18 @@ pub(crate) async fn ensure_daemon_running(data_dir: &PathBuf) -> anyhow::Result<
         return Ok(());
     }
 
-    if let Some(pid) = read_pid(data_dir)? {
-        if process_is_alive(pid) {
-            return Ok(());
-        }
+    if let Some(pid) = read_pid(data_dir)?
+        && process_is_alive(pid)
+    {
+        return Ok(());
     }
 
     stop_existing_daemon(data_dir).await?;
-    daemon_start(data_dir.clone()).await?;
+    daemon_start(data_dir.to_path_buf()).await?;
     Ok(())
 }
 
-async fn probe_daemon_status(data_dir: &PathBuf) -> anyhow::Result<()> {
+async fn probe_daemon_status(data_dir: &Path) -> anyhow::Result<()> {
     let base_url = daemon_base_url(data_dir)?;
     http_client()
         .get(format!("{base_url}/v1/status"))
@@ -1557,7 +1557,7 @@ async fn probe_daemon_status(data_dir: &PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn stop_existing_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
+async fn stop_existing_daemon(data_dir: &Path) -> anyhow::Result<()> {
     let addr = addr_path(data_dir);
     if addr.exists() {
         let _ = http_post_empty(data_dir, "/v1/shutdown").await;
@@ -1581,12 +1581,12 @@ async fn stop_existing_daemon(data_dir: &PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn daemon_base_url(data_dir: &PathBuf) -> anyhow::Result<String> {
+pub(crate) fn daemon_base_url(data_dir: &Path) -> anyhow::Result<String> {
     let addr = std::fs::read_to_string(addr_path(data_dir)).context("read daemon addr file")?;
     Ok(format!("http://{}", addr.trim()))
 }
 
-fn read_pid(data_dir: &PathBuf) -> anyhow::Result<Option<i32>> {
+fn read_pid(data_dir: &Path) -> anyhow::Result<Option<i32>> {
     let pid_file = pid_path(data_dir);
     if !pid_file.exists() {
         return Ok(None);

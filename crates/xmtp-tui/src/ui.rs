@@ -300,13 +300,13 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             content_lines
         };
 
-        if is_collapsed {
-            if let Some(last_line) = preview_lines.last_mut() {
-                last_line.spans.push(Span::styled(
-                    " ... (Enter: view full)",
-                    Style::default().fg(Color::Yellow).bg(Color::Reset),
-                ));
-            }
+        if is_collapsed
+            && let Some(last_line) = preview_lines.last_mut()
+        {
+            last_line.spans.push(Span::styled(
+                " ... (Enter: view full)",
+                Style::default().fg(Color::Yellow).bg(Color::Reset),
+            ));
         }
 
         let mut lines = Vec::with_capacity(preview_lines.len() + 1);
@@ -768,18 +768,18 @@ fn render_group_permissions(frame: &mut Frame<'_>, app: &App) {
         );
     } else if let Some(info) = &app.group_management.permissions {
         let mut rows = Vec::new();
-        rows.push(ListItem::new(Line::from(render_group_permission_row(
+        rows.push(ListItem::new(render_group_permission_row(
             "Preset:",
             &info.preset,
             false,
-        ))));
+        )));
         for (index, (label, value)) in editable_group_permission_rows(info).into_iter().enumerate() {
             let style = if index == app.group_management.permissions_cursor {
                 Style::default().reversed()
             } else {
                 Style::default()
             };
-            rows.push(ListItem::new(Line::from(render_group_permission_row(label, value, true))).style(style));
+            rows.push(ListItem::new(render_group_permission_row(label, value, true)).style(style));
         }
         let mut state = ListState::default().with_selected(Some(app.group_management.permissions_cursor + 1));
         let list = List::new(rows).highlight_style(Style::default().reversed());
@@ -804,9 +804,9 @@ fn render_group_permissions(frame: &mut Frame<'_>, app: &App) {
     );
 }
 
-fn editable_group_permission_rows<'a>(
-    info: &'a GroupPermissionsResponse,
-) -> [(&'static str, &'a str); 8] {
+fn editable_group_permission_rows(
+    info: &GroupPermissionsResponse,
+) -> [(&'static str, &str); 8] {
     [
         ("Add members:", &info.add_member),
         ("Remove members:", &info.remove_member),

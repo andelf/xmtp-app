@@ -144,10 +144,10 @@ impl MarkdownRenderer {
             TagEnd::Item => {
                 self.flush_inline(false);
                 self.in_item = false;
-                if let Some(list) = self.list_state.as_mut() {
-                    if list.ordered {
-                        list.next_number += 1;
-                    }
+                if let Some(list) = self.list_state.as_mut()
+                    && list.ordered
+                {
+                    list.next_number += 1;
                 }
             }
             TagEnd::List(_) => {

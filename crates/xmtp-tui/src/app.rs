@@ -313,10 +313,10 @@ impl App {
             AppEvent::ActionCompleted(outcome) => self.handle_action_completed(outcome),
             AppEvent::Error(error) => {
                 self.pending_status = None;
-                if let Some((suppressed, until)) = &self.suppressed_error {
-                    if suppressed == &error && Instant::now() < *until {
-                        return Vec::new();
-                    }
+                if let Some((suppressed, until)) = &self.suppressed_error
+                    && suppressed == &error && Instant::now() < *until
+                {
+                    return Vec::new();
                 }
                 self.last_error = Some(error);
                 Vec::new()
@@ -358,16 +358,15 @@ impl App {
         }
 
         let current_active = self.active_conversation_id.clone();
-        if let Some(active_id) = current_active {
-            if let Some(index) = self
+        if let Some(active_id) = current_active
+            && let Some(index) = self
                 .conversations
                 .iter()
                 .position(|conversation| conversation.id == active_id)
-            {
-                self.selected_conversation = index;
-                self.active_conversation = Some(self.conversations[index].clone());
-                return Vec::new();
-            }
+        {
+            self.selected_conversation = index;
+            self.active_conversation = Some(self.conversations[index].clone());
+            return Vec::new();
         }
 
         self.selected_conversation = self.selected_conversation.min(self.conversations.len() - 1);
@@ -509,24 +508,24 @@ impl App {
             conversation.name = update.name.clone();
         }
 
-        if let Some(active) = self.active_conversation.as_mut() {
-            if active.id == update.conversation_id {
-                active.name = update.name.clone();
-            }
+        if let Some(active) = self.active_conversation.as_mut()
+            && active.id == update.conversation_id
+        {
+            active.name = update.name.clone();
         }
 
-        if let Some(info) = self.active_info.as_mut() {
-            if info.conversation_id == update.conversation_id {
-                info.name = update.name.clone();
-                info.member_count = update.member_count;
-            }
+        if let Some(info) = self.active_info.as_mut()
+            && info.conversation_id == update.conversation_id
+        {
+            info.name = update.name.clone();
+            info.member_count = update.member_count;
         }
 
-        if let Some(info) = self.group_management.info.as_mut() {
-            if info.conversation_id == update.conversation_id {
-                info.name = update.name;
-                info.member_count = update.member_count;
-            }
+        if let Some(info) = self.group_management.info.as_mut()
+            && info.conversation_id == update.conversation_id
+        {
+            info.name = update.name;
+            info.member_count = update.member_count;
         }
     }
 
@@ -1643,19 +1642,16 @@ fn normalize_history(items: Vec<HistoryItem>) -> Vec<HistoryItem> {
         .collect();
 
     for item in items {
-        if item.content_kind == "reaction" {
-            if let Some(target_id) = item.reaction_target_message_id.as_deref() {
-                if let Some(target) = visible.iter_mut().find(|m| m.message_id == target_id) {
-                    if let (Some(emoji), Some(action)) = (item.reaction_emoji, item.reaction_action)
-                    {
-                        target.attached_reactions.push(ReactionDetail {
-                            sender_inbox_id: item.sender_inbox_id,
-                            emoji,
-                            action,
-                        });
-                    }
-                }
-            }
+        if item.content_kind == "reaction"
+            && let Some(target_id) = item.reaction_target_message_id.as_deref()
+            && let Some(target) = visible.iter_mut().find(|m| m.message_id == target_id)
+            && let (Some(emoji), Some(action)) = (item.reaction_emoji, item.reaction_action)
+        {
+            target.attached_reactions.push(ReactionDetail {
+                sender_inbox_id: item.sender_inbox_id,
+                emoji,
+                action,
+            });
         }
     }
 
@@ -1682,24 +1678,20 @@ fn merge_history_item(visible: &mut Vec<HistoryItem>, item: HistoryItem) {
         return;
     }
 
-    if item.content_kind == "reaction" {
-        if let Some(target_message_id) = item.reaction_target_message_id.clone() {
-            if let Some(target) = visible
-                .iter_mut()
-                .find(|existing| existing.message_id == target_message_id)
-            {
-                if let (Some(emoji), Some(action)) =
-                    (item.reaction_emoji.clone(), item.reaction_action.clone())
-                {
-                    target.attached_reactions.push(ReactionDetail {
-                        sender_inbox_id: item.sender_inbox_id,
-                        emoji,
-                        action,
-                    });
-                    return;
-                }
-            }
-        }
+    if item.content_kind == "reaction"
+        && let Some(target_message_id) = item.reaction_target_message_id.clone()
+        && let Some(target) = visible
+            .iter_mut()
+            .find(|existing| existing.message_id == target_message_id)
+        && let (Some(emoji), Some(action)) =
+            (item.reaction_emoji.clone(), item.reaction_action.clone())
+    {
+        target.attached_reactions.push(ReactionDetail {
+            sender_inbox_id: item.sender_inbox_id,
+            emoji,
+            action,
+        });
+        return;
     }
 
     visible.push(item);

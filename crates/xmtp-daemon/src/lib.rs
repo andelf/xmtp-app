@@ -488,10 +488,10 @@ fn list_conversations_with_client(
             Some(kind) => format!("{kind:?}").to_lowercase(),
             None => "unknown".to_owned(),
         };
-        if let Some(filter_kind) = filter_kind {
-            if kind != filter_kind {
-                continue;
-            }
+        if let Some(filter_kind) = filter_kind
+            && kind != filter_kind
+        {
+            continue;
         }
         summaries.push(ConversationSummary {
             id: conversation.id(),
@@ -1193,13 +1193,12 @@ fn find_conversation_by_id_with_kind(
     kind: Option<&str>,
 ) -> anyhow::Result<xmtp::conversation::Conversation> {
     let conversations = client.conversations().context("list local conversations")?;
-    if let Ok(resolved_id) = resolve_conversation_query(&conversations, conversation_id, kind) {
-        if let Some(conversation) = conversations
+    if let Ok(resolved_id) = resolve_conversation_query(&conversations, conversation_id, kind)
+        && let Some(conversation) = conversations
             .into_iter()
             .find(|conversation| conversation.id() == resolved_id)
-        {
-            return Ok(conversation);
-        }
+    {
+        return Ok(conversation);
     }
 
     client.sync_welcomes().context("sync welcomes")?;
@@ -1347,38 +1346,38 @@ fn summarize_decoded_content(content: &Content) -> String {
 }
 
 fn summarize_unknown_content(content_type: &str, raw: &[u8]) -> String {
-    if content_type.contains("group_updated") {
-        if let Some(group_updated) = decode_group_updated(raw) {
-            let mut parts = Vec::new();
+    if content_type.contains("group_updated")
+        && let Some(group_updated) = decode_group_updated(raw)
+    {
+        let mut parts = Vec::new();
 
-            if !group_updated.added_inboxes.is_empty() {
-                let count = group_updated.added_inboxes.len();
-                parts.push(format!("added {count} member{}", if count == 1 { "" } else { "s" }));
-            }
-            if !group_updated.removed_inboxes.is_empty() {
-                let count = group_updated.removed_inboxes.len();
-                parts.push(format!("removed {count} member{}", if count == 1 { "" } else { "s" }));
-            }
-            if !group_updated.left_inboxes.is_empty() {
-                let count = group_updated.left_inboxes.len();
-                parts.push(format!("{count} member{} left", if count == 1 { "" } else { "s" }));
-            }
-            if let Some(rename) = group_updated
-                .metadata_field_changes
-                .iter()
-                .find(|change| change.field_name.contains("name"))
-                .and_then(|change| change.new_value.as_ref())
-            {
-                parts.push(format!("renamed to {rename}"));
-            } else if !group_updated.metadata_field_changes.is_empty() {
-                parts.push("updated group metadata".to_owned());
-            }
-
-            if !parts.is_empty() {
-                return parts.join(", ");
-            }
-            return "updated group".to_owned();
+        if !group_updated.added_inboxes.is_empty() {
+            let count = group_updated.added_inboxes.len();
+            parts.push(format!("added {count} member{}", if count == 1 { "" } else { "s" }));
         }
+        if !group_updated.removed_inboxes.is_empty() {
+            let count = group_updated.removed_inboxes.len();
+            parts.push(format!("removed {count} member{}", if count == 1 { "" } else { "s" }));
+        }
+        if !group_updated.left_inboxes.is_empty() {
+            let count = group_updated.left_inboxes.len();
+            parts.push(format!("{count} member{} left", if count == 1 { "" } else { "s" }));
+        }
+        if let Some(rename) = group_updated
+            .metadata_field_changes
+            .iter()
+            .find(|change| change.field_name.contains("name"))
+            .and_then(|change| change.new_value.as_ref())
+        {
+            parts.push(format!("renamed to {rename}"));
+        } else if !group_updated.metadata_field_changes.is_empty() {
+            parts.push("updated group metadata".to_owned());
+        }
+
+        if !parts.is_empty() {
+            return parts.join(", ");
+        }
+        return "updated group".to_owned();
     }
 
     format!("unsupported {content_type}")
@@ -1398,44 +1397,44 @@ fn log_unknown_message_type(
         "unknown message type received"
     );
 
-    if content_type.contains("group_updated") {
-        if let Some(group_updated) = decode_group_updated(raw) {
-            let added: Vec<&str> = group_updated
-                .added_inboxes
-                .iter()
-                .map(|inbox| inbox.inbox_id.as_str())
-                .collect();
-            let removed: Vec<&str> = group_updated
-                .removed_inboxes
-                .iter()
-                .map(|inbox| inbox.inbox_id.as_str())
-                .collect();
-            let left: Vec<&str> = group_updated
-                .left_inboxes
-                .iter()
-                .map(|inbox| inbox.inbox_id.as_str())
-                .collect();
-            let metadata_changes: Vec<String> = group_updated
-                .metadata_field_changes
-                .iter()
-                .map(|change| {
-                    format!(
-                        "{}:{:?}->{:?}",
-                        change.field_name, change.old_value, change.new_value
-                    )
-                })
-                .collect();
-            debug!(
-                message_id = message_id.unwrap_or(""),
-                content_type = %content_type,
-                initiated_by = %group_updated.initiated_by_inbox_id,
-                added = ?added,
-                removed = ?removed,
-                left = ?left,
-                metadata_changes = ?metadata_changes,
-                "decoded group_updated message"
-            );
-        }
+    if content_type.contains("group_updated")
+        && let Some(group_updated) = decode_group_updated(raw)
+    {
+        let added: Vec<&str> = group_updated
+            .added_inboxes
+            .iter()
+            .map(|inbox| inbox.inbox_id.as_str())
+            .collect();
+        let removed: Vec<&str> = group_updated
+            .removed_inboxes
+            .iter()
+            .map(|inbox| inbox.inbox_id.as_str())
+            .collect();
+        let left: Vec<&str> = group_updated
+            .left_inboxes
+            .iter()
+            .map(|inbox| inbox.inbox_id.as_str())
+            .collect();
+        let metadata_changes: Vec<String> = group_updated
+            .metadata_field_changes
+            .iter()
+            .map(|change| {
+                format!(
+                    "{}:{:?}->{:?}",
+                    change.field_name, change.old_value, change.new_value
+                )
+            })
+            .collect();
+        debug!(
+            message_id = message_id.unwrap_or(""),
+            content_type = %content_type,
+            initiated_by = %group_updated.initiated_by_inbox_id,
+            added = ?added,
+            removed = ?removed,
+            left = ?left,
+            metadata_changes = ?metadata_changes,
+            "decoded group_updated message"
+        );
     }
 }
 
@@ -1917,15 +1916,11 @@ fn send_event(events_tx: &broadcast::Sender<DaemonEventEnvelope>, payload: Daemo
 
 fn publish_snapshot_events(state: &HttpState, status: bool, conversations: bool) {
     let mut guard = state.app.lock().expect("lock daemon app");
-    if status {
-        if let Some(payload) = guard.next_status_event() {
-            send_event(&state.events_tx, payload);
-        }
+    if status && let Some(payload) = guard.next_status_event() {
+        send_event(&state.events_tx, payload);
     }
-    if conversations {
-        if let Some(payload) = guard.next_conversation_list_event() {
-            send_event(&state.events_tx, payload);
-        }
+    if conversations && let Some(payload) = guard.next_conversation_list_event() {
+        send_event(&state.events_tx, payload);
     }
 }
 
