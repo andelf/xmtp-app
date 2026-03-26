@@ -368,7 +368,10 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .as_ref()
         .map(|conversation| conversation.kind.as_str())
         .unwrap_or("-");
-    let current_detail = format!("current {} | {} | {}", current_kind, current_name, current_id);
+    let current_detail = format!(
+        "current {} | {} | {} | msg {}",
+        current_kind, current_name, current_id, selected_message_id
+    );
     let connection_style = if online == "connected" {
         Style::default().fg(Color::Green)
     } else if online == "disconnected" || online.contains("error") {
@@ -388,7 +391,6 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Span::styled(online.clone(), connection_style),
         Span::raw(" | daemon "),
         Span::styled(daemon.clone(), daemon_style),
-        Span::raw(format!(" | msg {}", selected_message_id)),
     ];
     if let Some(error) = &app.last_error {
         runtime_spans.push(Span::raw(" | "));
