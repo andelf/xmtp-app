@@ -767,7 +767,28 @@ fn render_group_management(frame: &mut Frame<'_>, app: &App) {
     let items: Vec<ListItem<'_>> = GroupManagementAction::all()
         .into_iter()
         .enumerate()
-        .map(|(index, action)| ListItem::new(format!("{}. {}", index + 1, action.label())))
+        .map(|(index, action)| {
+            let allowed = app.can_manage_group_members(action);
+            let label = if matches!(
+                action,
+                GroupManagementAction::AddMembers | GroupManagementAction::RemoveMembers
+            ) && !allowed
+            {
+                format!("{}. {} (no permission)", index + 1, action.label())
+            } else {
+                format!("{}. {}", index + 1, action.label())
+            };
+            let style = if matches!(
+                action,
+                GroupManagementAction::AddMembers | GroupManagementAction::RemoveMembers
+            ) && !allowed
+            {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
+            ListItem::new(label).style(style)
+        })
         .collect();
     let mut state = ListState::default().with_selected(Some(app.group_management.menu_index));
     let title = app

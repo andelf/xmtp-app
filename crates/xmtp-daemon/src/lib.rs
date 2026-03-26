@@ -2598,6 +2598,12 @@ fn classify_error_code(message: &str) -> &'static str {
         "invalid_request"
     } else if lowered.contains("rate limit") || lowered.contains("resource has been exhausted") {
         "rate_limited"
+    } else if lowered.contains("permission")
+        || lowered.contains("insufficient")
+        || lowered.contains("not allowed")
+        || lowered.contains("unauthorized")
+    {
+        "permission_denied"
     } else {
         "internal_error"
     }

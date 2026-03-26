@@ -131,6 +131,7 @@ pub struct GroupManagementState {
     pub menu_index: usize,
     pub info: Option<GroupInfoResponse>,
     pub permissions: Option<GroupPermissionsResponse>,
+    pub self_permission_level: Option<String>,
     pub permissions_original: Option<GroupPermissionsResponse>,
     pub permissions_loading: bool,
     pub permissions_cursor: usize,
@@ -259,6 +260,15 @@ impl App {
             }
             AppEvent::GroupMembersLoaded(items) => {
                 self.group_management.members = items;
+                self.group_management.self_permission_level = self
+                    .self_inbox_id()
+                    .and_then(|self_inbox_id| {
+                        self.group_management
+                            .members
+                            .iter()
+                            .find(|member| member.inbox_id == self_inbox_id)
+                            .map(|member| member.permission_level.clone())
+                    });
                 self.group_management.selected_member = self
                     .group_management
                     .selected_member
@@ -734,6 +744,14 @@ impl App {
                 {
                     self.modal = Modal::GroupManagement;
                     self.group_management.menu_index = 0;
+                    if let Some(conversation_id) = self.active_group_id().map(str::to_owned) {
+                        return vec![
+                            Effect::LoadGroupMembers {
+                                conversation_id: conversation_id.clone(),
+                            },
+                            Effect::LoadGroupPermissions { conversation_id },
+                        ];
+                    }
                     return Vec::new();
                 }
                 self.focus = Focus::Input;
@@ -1078,11 +1096,23 @@ impl App {
                 ]
             }
             GroupManagementAction::AddMembers => {
+                if !self.can_manage_group_members(GroupManagementAction::AddMembers) {
+                    self.last_error =
+                        Some("You don't have permission to perform this action".to_owned());
+                    self.modal = Modal::None;
+                    return Vec::new();
+                }
                 self.modal = Modal::GroupAddMembers;
                 self.group_management.add_members_input.clear();
                 Vec::new()
             }
             GroupManagementAction::RemoveMembers => {
+                if !self.can_manage_group_members(GroupManagementAction::RemoveMembers) {
+                    self.last_error =
+                        Some("You don't have permission to perform this action".to_owned());
+                    self.modal = Modal::None;
+                    return Vec::new();
+                }
                 self.modal = Modal::GroupRemoveMembers;
                 self.group_management.selected_member = 0;
                 vec![Effect::LoadGroupMembers { conversation_id }]
@@ -1350,6 +1380,27 @@ impl App {
                 .iter()
                 .any(|item| item.sender_inbox_id != self_inbox_id),
             None => !self.messages.is_empty(),
+        }
+    }
+
+    pub fn can_manage_group_members(&self, action: GroupManagementAction) -> bool {
+        let Some(permissions) = self.group_management.permissions.as_ref() else {
+            return true;
+        };
+        let policy = match action {
+            GroupManagementAction::AddMembers => permissions.add_member.as_str(),
+            GroupManagementAction::RemoveMembers => permissions.remove_member.as_str(),
+            _ => return true,
+        };
+        match policy {
+            "everyone" => true,
+            "admin_only" => self.group_management.self_permission_level.as_deref().is_some_and(
+                |level| level == "admin" || level == "super_admin",
+            ),
+            "super_admin_only" => self.group_management.self_permission_level.as_deref()
+                == Some("super_admin"),
+            "deny" => false,
+            _ => true,
         }
     }
 
@@ -2081,7 +2132,17 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         )));
 
-        assert!(effects.is_empty());
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                Effect::LoadGroupMembers {
+                    conversation_id: members_id
+                },
+                Effect::LoadGroupPermissions {
+                    conversation_id: permissions_id
+                }
+            ] if members_id == "grp-1" && permissions_id == "grp-1"
+        ));
         assert_eq!(app.modal, Modal::GroupManagement);
         assert_eq!(app.focus, Focus::Conversations);
     }
@@ -2842,6 +2903,81 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(app.group_management.members.len(), 1);
         assert_eq!(app.group_management.members[0].inbox_id, "new-member");
+    }
+
+    #[test]
+    fn group_members_loaded_updates_self_permission_level() {
+        let (mut app, _) = App::new();
+        app.status = Some(
+            serde_json::from_value(serde_json::json!({
+                "daemon_state": "running",
+                "connection_state": "connected",
+                "inbox_id": "self-1",
+                "installation_id": null
+            }))
+            .expect("build status response"),
+        );
+
+        let effects = app.handle_event(crate::event::AppEvent::GroupMembersLoaded(vec![
+            xmtp_ipc::GroupMemberItem {
+                inbox_id: "self-1".into(),
+                permission_level: "admin".into(),
+                consent_state: "unknown".into(),
+                account_identifiers: Vec::new(),
+                installation_count: 1,
+            },
+            xmtp_ipc::GroupMemberItem {
+                inbox_id: "peer-1".into(),
+                permission_level: "member".into(),
+                consent_state: "unknown".into(),
+                account_identifiers: Vec::new(),
+                installation_count: 1,
+            },
+        ]));
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            app.group_management.self_permission_level.as_deref(),
+            Some("admin")
+        );
+    }
+
+    #[test]
+    fn add_members_precheck_blocks_member_without_permission() {
+        let (mut app, _) = App::new();
+        app.active_conversation = Some(xmtp_ipc::ConversationItem {
+            id: "grp-1".into(),
+            kind: "group".into(),
+            name: Some("team".into()),
+            dm_peer_inbox_id: None,
+            last_message_ns: None,
+        });
+        app.active_conversation_id = Some("grp-1".into());
+        app.modal = Modal::GroupManagement;
+        app.group_management.menu_index = 1;
+        app.group_management.permissions = Some(xmtp_ipc::GroupPermissionsResponse {
+            preset: "custom".into(),
+            add_member: "admin_only".into(),
+            remove_member: "everyone".into(),
+            add_admin: "super_admin_only".into(),
+            remove_admin: "super_admin_only".into(),
+            update_group_name: "admin_only".into(),
+            update_group_description: "admin_only".into(),
+            update_group_image: "admin_only".into(),
+            update_app_data: "admin_only".into(),
+        });
+        app.group_management.self_permission_level = Some("member".into());
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.modal, Modal::None);
+        assert_eq!(
+            app.last_error.as_deref(),
+            Some("You don't have permission to perform this action")
+        );
     }
 
     #[test]
