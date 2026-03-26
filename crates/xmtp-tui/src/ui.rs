@@ -194,10 +194,15 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
             }
 
             let content = item.content.replace('\n', " ");
+            let sender_display = if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) {
+                "You".to_owned()
+            } else {
+                short_display_id(&item.sender_inbox_id)
+            };
             let message_line = format!(
                 "{} [{}] {}",
                 format_clock(item.sent_at_ns),
-                short_display_id(&item.sender_inbox_id),
+                sender_display,
                 content,
             );
             lines.push(Line::from(Span::styled(
