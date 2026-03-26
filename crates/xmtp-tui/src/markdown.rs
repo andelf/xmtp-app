@@ -3,6 +3,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 pub fn render_markdown(md: &str, wrap_width: usize) -> Vec<Line<'static>> {
     let width = wrap_width.max(1);
+    if md.trim().is_empty() {
+        return vec![Line::from("")];
+    }
     let parser = Parser::new_ext(md, Options::all());
     let mut renderer = MarkdownRenderer::new(width);
     for event in parser {
@@ -347,5 +350,12 @@ mod tests {
     fn renders_inline_code_text() {
         let lines = render_markdown("hello `code`", 40);
         assert_eq!(line_text(&lines[0]), "hello  code ");
+    }
+
+    #[test]
+    fn renders_plain_text_as_non_empty_lines() {
+        let lines = render_markdown("plain text only", 40);
+        assert!(!lines.is_empty());
+        assert_eq!(line_text(&lines[0]), "plain text only");
     }
 }

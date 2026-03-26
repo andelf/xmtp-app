@@ -236,23 +236,56 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
         let lines = if item.content_kind == "markdown" {
             let indent = " ".repeat(header.chars().count());
             let rendered = render_markdown(&item.content, wrap_width.saturating_sub(indent.len()).max(1));
-            let mut lines = Vec::with_capacity(rendered.len().max(1));
-            for (line_index, line) in rendered.into_iter().enumerate() {
-                let mut spans = Vec::new();
-                if line_index == 0 {
-                    spans.push(Span::styled(
-                        header.clone(),
-                        Style::default()
-                            .fg(app.color_for_message(item))
-                            .bg(Color::Reset),
-                    ));
-                } else {
-                    spans.push(Span::raw(indent.clone()));
+            if rendered
+                .iter()
+                .all(|line| line.spans.iter().all(|span| span.content.as_ref().trim().is_empty()))
+            {
+                let message_line = format!("{}{}", header, content);
+                wrap_text_lines(&message_line, wrap_width)
+                    .into_iter()
+                    .map(|segment| {
+                        Line::from(Span::styled(
+                            segment,
+                            Style::default()
+                                .fg(app.color_for_message(item))
+                                .bg(Color::Reset),
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                let mut lines = Vec::with_capacity(rendered.len().max(1));
+                for (line_index, line) in rendered.into_iter().enumerate() {
+                    let mut spans = Vec::new();
+                    if line_index == 0 {
+                        spans.push(Span::styled(
+                            header.clone(),
+                            Style::default()
+                                .fg(app.color_for_message(item))
+                                .bg(Color::Reset),
+                        ));
+                    } else {
+                        spans.push(Span::raw(indent.clone()));
+                    }
+                    spans.extend(line.spans);
+                    lines.push(Line::from(spans));
                 }
-                spans.extend(line.spans);
-                lines.push(Line::from(spans));
+                if lines.is_empty() {
+                    let message_line = format!("{}{}", header, content);
+                    wrap_text_lines(&message_line, wrap_width)
+                        .into_iter()
+                        .map(|segment| {
+                            Line::from(Span::styled(
+                                segment,
+                                Style::default()
+                                    .fg(app.color_for_message(item))
+                                    .bg(Color::Reset),
+                            ))
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    lines
+                }
             }
-            lines
         } else {
             let message_line = format!("{}{}", header, content);
             wrap_text_lines(&message_line, wrap_width)
