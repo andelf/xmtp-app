@@ -53,7 +53,10 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     #[command(about = "Initialize the local data directory")]
-    Init,
+    Init {
+        #[arg(long, help = "Delete the local XMTP database files before re-initializing")]
+        reset: bool,
+    },
     #[command(about = "Login to an XMTP network")]
     Login {
         #[arg(
@@ -68,6 +71,8 @@ enum Command {
             help = "Advanced override for the XMTP payer or gateway endpoint"
         )]
         gateway_url: Option<String>,
+        #[arg(long, help = "Force a network switch even if the current data directory is tied to a different network")]
+        force: bool,
     },
     #[command(about = "Check local setup, daemon reachability, and runtime status")]
     Doctor,
@@ -251,7 +256,7 @@ enum InfoCommand {
     },
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum Network {
     Local,
     Dev,
@@ -274,11 +279,12 @@ async fn run() -> anyhow::Result<()> {
     let data_dir = cli.data_dir;
 
     match cli.command {
-        Command::Init => init(data_dir),
+        Command::Init { reset } => init(data_dir, reset),
         Command::Login {
             network,
             gateway_url,
-        } => login(data_dir, network, gateway_url.as_deref()).await,
+            force,
+        } => login(data_dir, network, gateway_url.as_deref(), force).await,
         Command::Doctor => doctor(data_dir).await,
         Command::Status => status(data_dir).await,
         Command::Tui => xmtp_tui::run(data_dir),
@@ -320,8 +326,18 @@ async fn run() -> anyhow::Result<()> {
     }
 }
 
-fn init(data_dir: PathBuf) -> anyhow::Result<()> {
+fn init(data_dir: PathBuf, reset: bool) -> anyhow::Result<()> {
     std::fs::create_dir_all(&data_dir).context("create data dir")?;
+
+    if reset {
+        for db_name in ["xmtp.db3", "xmtp.db3-shm", "xmtp.db3-wal"] {
+            let path = data_dir.join(db_name);
+            if path.exists() {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("remove {}", path.display()))?;
+            }
+        }
+    }
 
     let config = AppConfig::for_data_dir(&data_dir);
     save_config(&data_dir.join("config.json"), &config)?;
@@ -490,10 +506,38 @@ async fn login(
     data_dir: PathBuf,
     network: Network,
     gateway_url: Option<&str>,
+    force: bool,
 ) -> anyhow::Result<()> {
     if !data_dir.join("config.json").exists() || !data_dir.join("state.json").exists() {
-        init(data_dir.clone())?;
+        init(data_dir.clone(), false)?;
     }
+
+    let config_path = data_dir.join("config.json");
+    if let Ok(config) = load_config(&config_path) {
+        let current_network = infer_network_name(&config);
+        let requested_network = network.as_str();
+        let has_network_config = !config.xmtp_env.is_empty() || config.api_url.is_some();
+        if has_network_config && current_network != "custom" && current_network != requested_network {
+            eprintln!("WARNING: Network switch detected");
+            eprintln!("Current: {current_network}");
+            eprintln!("New: {requested_network}");
+            if !force {
+                eprintln!(
+                    "Switching networks will corrupt local MLS state. Re-initialize with: xmtp-cli --data-dir {} init --reset",
+                    data_dir.display()
+                );
+                eprintln!(
+                    "To force the switch: login --network {} --force",
+                    requested_network
+                );
+                anyhow::bail!("refusing to switch networks without --force");
+            }
+            eprintln!(
+                "WARNING: forcing network switch. Existing local MLS state may become unusable."
+            );
+        }
+    }
+
     let defaults = login_network_defaults(network);
     let resolved_env = defaults.env;
     let resolved_api_url = defaults.api_url;
@@ -502,6 +546,19 @@ async fn login(
         daemon_login(&data_dir, resolved_env, resolved_api_url, resolved_gateway_url).await?;
     print_status_response(status)?;
     Ok(())
+}
+
+impl Network {
+    fn as_str(self) -> &'static str {
+        match self {
+            Network::Local => "local",
+            Network::Dev => "dev",
+            Network::Production => "production",
+            Network::D14nDev => "d14n-dev",
+            Network::D14nStaging => "d14n-staging",
+            Network::D14nTestnet => "d14n-testnet",
+        }
+    }
 }
 
 struct LoginNetworkDefaults<'a> {
