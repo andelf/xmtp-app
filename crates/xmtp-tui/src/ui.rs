@@ -12,6 +12,16 @@ use crate::app::{
 };
 use crate::format::{format_clock, format_day_tag, short_display_id};
 
+enum MessageRowKind {
+    DateSeparator,
+    Message(usize),
+}
+
+struct MessageRow<'a> {
+    kind: MessageRowKind,
+    item: ListItem<'a>,
+}
+
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
@@ -142,78 +152,94 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
         return;
     }
 
-    let mut state = ListState::default().with_selected(if app.messages.is_empty() {
-        None
-    } else {
-        Some(app.selected_message)
+    let rows = build_message_rows(app);
+    let selected_row = rows.iter().position(|row| match row.kind {
+        MessageRowKind::Message(index) => index == app.selected_message,
+        MessageRowKind::DateSeparator => false,
     });
-
-    let mut last_day: Option<String> = None;
-    let items: Vec<ListItem<'_>> = app
-        .messages
-        .iter()
-        .map(|item| {
-            let day_tag = format_day_tag(item.sent_at_ns);
-            let mut lines = Vec::new();
-            if last_day.as_deref() != Some(day_tag.as_str()) {
-                last_day = Some(day_tag.clone());
-                lines.push(Line::from(Span::styled(
-                    format!("----- {} ----", day_tag),
-                    Style::default().dark_gray(),
-                )));
-            }
-
-            if let Some(reply_target_id) = item.reply_target_message_id.as_deref() {
-                let reply_line = if let Some(target) = app
-                    .messages
-                    .iter()
-                    .find(|candidate| candidate.message_id == reply_target_id)
-                {
-                    let preview = truncate(&target.content.replace('\n', " "), 20);
-                    format!(
-                        "  ↩ [{}]: {}",
-                        short_display_id(&target.sender_inbox_id),
-                        preview
-                    )
-                } else {
-                    format!("  ↩ [{}]", short_display_id(reply_target_id))
-                };
-                lines.push(Line::from(Span::styled(
-                    reply_line,
-                    Style::default().dark_gray(),
-                )));
-            }
-
-            let content = item.content.replace('\n', " ");
-            let sender_display = if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) {
-                "You".to_owned()
-            } else {
-                short_display_id(&item.sender_inbox_id)
-            };
-            let message_line = format!(
-                "{} [{}] {}",
-                format_clock(item.sent_at_ns),
-                sender_display,
-                content,
-            );
-            lines.push(Line::from(Span::styled(
-                message_line,
-                Style::default().fg(app.color_for_message(item)),
-            )));
-            if let Some(reactions_line) = format_reactions_line(item) {
-                lines.push(Line::from(Span::styled(
-                    format!("  reactions: {reactions_line}"),
-                    Style::default().dark_gray(),
-                )));
-            }
-            ListItem::new(lines)
-        })
-        .collect();
+    let mut state = ListState::default().with_selected(selected_row);
+    let items: Vec<ListItem<'_>> = rows.into_iter().map(|row| row.item).collect();
 
     let list = List::new(items)
         .block(titled_block(&title, app.focus == Focus::Messages))
         .highlight_style(Style::default().reversed().add_modifier(Modifier::BOLD));
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn build_message_rows<'a>(app: &'a App) -> Vec<MessageRow<'a>> {
+    let mut rows = Vec::new();
+    let mut last_day: Option<String> = None;
+
+    for (index, item) in app.messages.iter().enumerate() {
+        let day_tag = format_day_tag(item.sent_at_ns);
+        if last_day.as_deref() != Some(day_tag.as_str()) {
+            last_day = Some(day_tag.clone());
+            rows.push(MessageRow {
+                kind: MessageRowKind::DateSeparator,
+                item: ListItem::new(Line::from(Span::styled(
+                    format!("----- {} ----", day_tag),
+                    Style::default().dark_gray().bg(Color::Reset),
+                )))
+                .style(Style::default().bg(Color::Reset)),
+            });
+        }
+
+        let mut lines = Vec::new();
+
+        if let Some(reply_target_id) = item.reply_target_message_id.as_deref() {
+            let reply_line = if let Some(target) = app
+                .messages
+                .iter()
+                .find(|candidate| candidate.message_id == reply_target_id)
+            {
+                let preview = truncate(&target.content.replace('\n', " "), 20);
+                format!(
+                    "  ↩ [{}]: {}",
+                    short_display_id(&target.sender_inbox_id),
+                    preview
+                )
+            } else {
+                format!("  ↩ [{}]", short_display_id(reply_target_id))
+            };
+            lines.push(Line::from(Span::styled(
+                reply_line,
+                Style::default().dark_gray().bg(Color::Reset),
+            )));
+        }
+
+        let content = item.content.replace('\n', " ");
+        let sender_display = if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) {
+            "You".to_owned()
+        } else {
+            short_display_id(&item.sender_inbox_id)
+        };
+        let message_line = format!(
+            "{} [{}] {}",
+            format_clock(item.sent_at_ns),
+            sender_display,
+            content,
+        );
+        lines.push(Line::from(Span::styled(
+            message_line,
+            Style::default()
+                .fg(app.color_for_message(item))
+                .bg(Color::Reset),
+        )));
+
+        if let Some(reactions_line) = format_reactions_line(item) {
+            lines.push(Line::from(Span::styled(
+                format!("  reactions: {reactions_line}"),
+                Style::default().dark_gray().bg(Color::Reset),
+            )));
+        }
+
+        rows.push(MessageRow {
+            kind: MessageRowKind::Message(index),
+            item: ListItem::new(lines).style(Style::default().bg(Color::Reset)),
+        });
+    }
+
+    rows
 }
 
 fn message_panel_title(app: &App) -> String {
