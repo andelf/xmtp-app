@@ -161,8 +161,17 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
         MessageRowKind::Message(index) => index == app.selected_message,
         MessageRowKind::DateSeparator | MessageRowKind::ReplyContext | MessageRowKind::Reactions => false,
     });
+    let mut items = Vec::with_capacity(rows.len());
+    for row in &rows {
+        items.push(row.item.clone());
+    }
+
     let mut state = ListState::default().with_selected(selected_row);
-    let items: Vec<ListItem<'_>> = rows.into_iter().map(|row| row.item).collect();
+    if let Some(selected_row_idx) = selected_row {
+        let end_row_idx = trailing_row_end_index(&rows, selected_row_idx);
+        let visible_height = area.height.saturating_sub(2) as usize;
+        *state.offset_mut() = list_offset_for_visible_window(&items, end_row_idx, visible_height);
+    }
 
     let list = List::new(items)
         .block(titled_block(&title, app.focus == Focus::Messages))
@@ -383,6 +392,39 @@ fn wrap_text_lines(text: &str, width: usize) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+fn trailing_row_end_index(rows: &[MessageRow<'_>], selected_row_idx: usize) -> usize {
+    let mut end = selected_row_idx;
+    for (index, row) in rows.iter().enumerate().skip(selected_row_idx + 1) {
+        match row.kind {
+            MessageRowKind::Message(_) => break,
+            MessageRowKind::DateSeparator | MessageRowKind::ReplyContext | MessageRowKind::Reactions => {
+                end = index;
+            }
+        }
+    }
+    end
+}
+
+fn list_offset_for_visible_window(items: &[ListItem<'_>], end_row_idx: usize, visible_height: usize) -> usize {
+    if items.is_empty() || visible_height == 0 {
+        return 0;
+    }
+
+    let mut offset = end_row_idx;
+    let mut used_height = 0usize;
+    loop {
+        let item_height = items[offset].height();
+        if used_height + item_height > visible_height {
+            return (offset + 1).min(end_row_idx);
+        }
+        used_height += item_height;
+        if offset == 0 {
+            return 0;
+        }
+        offset -= 1;
+    }
 }
 
 fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
