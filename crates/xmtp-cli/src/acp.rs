@@ -211,51 +211,110 @@ async fn bridge_history_to_acp(
     session_id: &acp::SessionId,
     chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
 ) -> anyhow::Result<()> {
-    let base_url = daemon_base_url(data_dir)?;
-    let url = format!("{base_url}/v1/conversations/{conversation_id}/events");
-    let response = http_client()
-        .get(url)
-        .send()
-        .await
-        .context("open ACP history SSE stream")?
-        .error_for_status()
-        .context("ACP history SSE status")?;
-    let mut stream = response.bytes_stream().eventsource();
+    let mut retry_delay = Duration::from_millis(100);
 
     loop {
-        tokio::select! {
-            signal = tokio::signal::ctrl_c() => {
-                signal.context("wait for ctrl-c")?;
-                break;
+        let base_url = match daemon_base_url(data_dir) {
+            Ok(base_url) => base_url,
+            Err(err) => {
+                eprintln!("ACP history base URL error: {err:#}");
+                tokio::select! {
+                    signal = tokio::signal::ctrl_c() => {
+                        signal.context("wait for ctrl-c")?;
+                        break;
+                    }
+                    _ = sleep(retry_delay) => {}
+                }
+                retry_delay = next_retry_delay(retry_delay);
+                continue;
             }
-            event = stream.next() => {
-                let Some(event) = event else {
-                    anyhow::bail!("ACP history SSE stream ended");
-                };
-                let event = event.context("read ACP history SSE event")?;
-                let envelope: DaemonEventEnvelope =
-                    serde_json::from_str(&event.data).context("decode ACP SSE envelope")?;
-                if let DaemonEventData::HistoryItem { item, .. } = envelope.payload {
-                    if should_forward_item(&item, self_inbox_id) {
-                        let reply = prompt_agent(conn, session_id, chunks, item).await?;
-                        if !reply.trim().is_empty() {
-                            daemon_send_conversation(
-                                data_dir,
-                                conversation_id,
-                                &reply,
-                                Some("markdown"),
-                            )
-                            .await
-                            .with_context(|| {
-                                format!(
-                                    "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
+        };
+        let url = format!("{base_url}/v1/conversations/{conversation_id}/events");
+        let response = match http_client().get(url).send().await {
+            Ok(response) => match response.error_for_status() {
+                Ok(response) => response,
+                Err(err) => {
+                    eprintln!("ACP history SSE status error: {err:#}");
+                    tokio::select! {
+                        signal = tokio::signal::ctrl_c() => {
+                            signal.context("wait for ctrl-c")?;
+                            break;
+                        }
+                        _ = sleep(retry_delay) => {}
+                    }
+                    retry_delay = next_retry_delay(retry_delay);
+                    continue;
+                }
+            },
+            Err(err) => {
+                eprintln!("ACP history SSE connect error: {err:#}");
+                tokio::select! {
+                    signal = tokio::signal::ctrl_c() => {
+                        signal.context("wait for ctrl-c")?;
+                        break;
+                    }
+                    _ = sleep(retry_delay) => {}
+                }
+                retry_delay = next_retry_delay(retry_delay);
+                continue;
+            }
+        };
+
+        retry_delay = Duration::from_millis(100);
+        let mut stream = response.bytes_stream().eventsource();
+
+        loop {
+            tokio::select! {
+                signal = tokio::signal::ctrl_c() => {
+                    signal.context("wait for ctrl-c")?;
+                    return Ok(());
+                }
+                event = stream.next() => {
+                    let Some(event) = event else {
+                        break;
+                    };
+                    let event = match event.context("read ACP history SSE event") {
+                        Ok(event) => event,
+                        Err(err) => {
+                            eprintln!("ACP history SSE read error: {err:#}");
+                            break;
+                        }
+                    };
+
+                    retry_delay = Duration::from_millis(100);
+                    let envelope: DaemonEventEnvelope =
+                        match serde_json::from_str(&event.data).context("decode ACP SSE envelope") {
+                            Ok(envelope) => envelope,
+                            Err(err) => {
+                                eprintln!("ACP history SSE decode error: {err:#}");
+                                break;
+                            }
+                        };
+                    if let DaemonEventData::HistoryItem { item, .. } = envelope.payload {
+                        if should_forward_item(&item, self_inbox_id) {
+                            let reply = prompt_agent(conn, session_id, chunks, item).await?;
+                            if !reply.trim().is_empty() {
+                                daemon_send_conversation(
+                                    data_dir,
+                                    conversation_id,
+                                    &reply,
+                                    Some("markdown"),
                                 )
-                            })?;
+                                .await
+                                .with_context(|| {
+                                    format!(
+                                        "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
+                                    )
+                                })?;
+                            }
                         }
                     }
                 }
             }
         }
+
+        sleep(retry_delay).await;
+        retry_delay = next_retry_delay(retry_delay);
     }
 
     Ok(())
@@ -312,6 +371,11 @@ fn session_id_str(session_id: &acp::SessionId) -> &str {
 
 fn session_id_owned(session_id: &acp::SessionId) -> String {
     session_id_str(session_id).to_owned()
+}
+
+fn next_retry_delay(current: Duration) -> Duration {
+    let next_ms = (current.as_millis() as u64).saturating_mul(2).min(5_000);
+    Duration::from_millis(next_ms.max(100))
 }
 
 struct BridgeClient {
