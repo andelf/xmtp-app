@@ -304,7 +304,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             if let Some(last_line) = preview_lines.last_mut() {
                 last_line.spans.push(Span::styled(
                     " ... (Enter: view full)",
-                    Style::default().dark_gray().bg(Color::Reset),
+                    Style::default().fg(Color::Yellow).bg(Color::Reset),
                 ));
             }
         }
