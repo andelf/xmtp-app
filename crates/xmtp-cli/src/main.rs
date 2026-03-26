@@ -1396,6 +1396,12 @@ pub(crate) async fn ensure_daemon_running(data_dir: &PathBuf) -> anyhow::Result<
         return Ok(());
     }
 
+    if let Some(pid) = read_pid(data_dir)? {
+        if process_is_alive(pid) {
+            return Ok(());
+        }
+    }
+
     stop_existing_daemon(data_dir).await?;
     daemon_start(data_dir.clone()).await?;
     Ok(())
@@ -1405,7 +1411,7 @@ async fn probe_daemon_status(data_dir: &PathBuf) -> anyhow::Result<()> {
     let base_url = daemon_base_url(data_dir)?;
     http_client()
         .get(format!("{base_url}/v1/status"))
-        .timeout(Duration::from_millis(500))
+        .timeout(Duration::from_millis(3_000))
         .send()
         .await
         .context("send daemon status probe")?;
