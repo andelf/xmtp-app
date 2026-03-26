@@ -974,9 +974,7 @@ async fn http_get<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    if !addr_path(data_dir).exists() {
-        daemon_start(data_dir.clone()).await?;
-    }
+    ensure_daemon_running(data_dir).await?;
     http_get_without_autostart(data_dir, path).await
 }
 
@@ -1002,9 +1000,7 @@ where
     T: serde::de::DeserializeOwned,
     Q: serde::Serialize + ?Sized,
 {
-    if !addr_path(data_dir).exists() {
-        daemon_start(data_dir.clone()).await?;
-    }
+    ensure_daemon_running(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
     http_client()
         .get(format!("{base_url}{path}"))
@@ -1024,9 +1020,7 @@ where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,
 {
-    if !addr_path(data_dir).exists() {
-        daemon_start(data_dir.clone()).await?;
-    }
+    ensure_daemon_running(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
     http_client()
         .post(format!("{base_url}{path}"))
@@ -1046,9 +1040,7 @@ where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,
 {
-    if !addr_path(data_dir).exists() {
-        daemon_start(data_dir.clone()).await?;
-    }
+    ensure_daemon_running(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
     http_client()
         .patch(format!("{base_url}{path}"))
@@ -1068,9 +1060,7 @@ where
     T: serde::de::DeserializeOwned,
     B: serde::Serialize + ?Sized,
 {
-    if !addr_path(data_dir).exists() {
-        daemon_start(data_dir.clone()).await?;
-    }
+    ensure_daemon_running(data_dir).await?;
     let base_url = daemon_base_url(data_dir)?;
     http_client()
         .delete(format!("{base_url}{path}"))
@@ -1094,6 +1084,34 @@ async fn http_post_empty(data_dir: &PathBuf, path: &str) -> anyhow::Result<()> {
         .context("send daemon http request")?
         .error_for_status()
         .context("daemon http status")?;
+    Ok(())
+}
+
+async fn ensure_daemon_running(data_dir: &PathBuf) -> anyhow::Result<()> {
+    if !addr_path(data_dir).exists() {
+        daemon_start(data_dir.clone()).await?;
+        return Ok(());
+    }
+
+    if probe_daemon_status(data_dir).await.is_ok() {
+        return Ok(());
+    }
+
+    stop_existing_daemon(data_dir).await?;
+    daemon_start(data_dir.clone()).await?;
+    Ok(())
+}
+
+async fn probe_daemon_status(data_dir: &PathBuf) -> anyhow::Result<()> {
+    let base_url = daemon_base_url(data_dir)?;
+    http_client()
+        .get(format!("{base_url}/v1/status"))
+        .timeout(Duration::from_millis(500))
+        .send()
+        .await
+        .context("send daemon status probe")?
+        .error_for_status()
+        .context("daemon status probe failed")?;
     Ok(())
 }
 
