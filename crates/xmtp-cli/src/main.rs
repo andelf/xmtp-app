@@ -20,8 +20,9 @@ use xmtp_ipc::{
     ActionResponse, ApiErrorBody, ConversationInfoResponse, ConversationItem,
     ConversationListResponse, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
     GroupCreateRequest, GroupInfoResponse, GroupMemberItem, GroupMembersResponse,
-    GroupMembersUpdateRequest, LoginRequest, MessageInfoResponse, RecipientMessageRequest,
-    RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
+    GroupMembersUpdateRequest, GroupPermissionsResponse, LoginRequest, MessageInfoResponse,
+    RecipientMessageRequest, RenameGroupRequest, SendDmResponse, SendMessageRequest,
+    StatusResponse, UpdatePermissionRequest,
 };
 use xmtp_logging::{
     daemon_events_log_path, daemon_stderr_log_path, daemon_stdout_log_path, ensure_logs_dir,
@@ -241,6 +242,20 @@ enum GroupCommand {
     Members {
         #[arg(help = "Group conversation ID or group name")]
         conversation_id: String,
+    },
+    #[command(about = "Show group permissions")]
+    Permissions {
+        #[arg(help = "Group conversation ID or group name")]
+        conversation_id: String,
+    },
+    #[command(about = "Update one group permission policy")]
+    UpdatePermission {
+        #[arg(help = "Group conversation ID or group name")]
+        conversation_id: String,
+        #[arg(help = "权限项: add_member/remove_member/add_admin/remove_admin/update_group_name/update_group_description/update_group_image/update_app_data")]
+        permission: String,
+        #[arg(help = "策略值: everyone/admin_only/super_admin_only/deny")]
+        policy: String,
     },
     #[command(about = "Show group metadata")]
     Info {
@@ -654,6 +669,14 @@ async fn group(data_dir: PathBuf, command: GroupCommand) -> anyhow::Result<()> {
             members,
         } => group_remove(data_dir, &conversation_id, members).await,
         GroupCommand::Members { conversation_id } => group_members(data_dir, &conversation_id).await,
+        GroupCommand::Permissions { conversation_id } => {
+            group_permissions(data_dir, &conversation_id).await
+        }
+        GroupCommand::UpdatePermission {
+            conversation_id,
+            permission,
+            policy,
+        } => group_update_permission(data_dir, &conversation_id, &permission, &policy).await,
         GroupCommand::Info { conversation_id } => group_info(data_dir, &conversation_id).await,
     }
 }
@@ -705,6 +728,23 @@ async fn group_info(data_dir: PathBuf, conversation_id: &str) -> anyhow::Result<
     let info = daemon_group_info(&data_dir, conversation_id).await?;
     println!("{}", group_info_header());
     println!("{}", render_group_info_row(&info));
+    Ok(())
+}
+
+async fn group_permissions(data_dir: PathBuf, conversation_id: &str) -> anyhow::Result<()> {
+    let permissions = daemon_group_permissions(&data_dir, conversation_id).await?;
+    print_group_permissions(&permissions);
+    Ok(())
+}
+
+async fn group_update_permission(
+    data_dir: PathBuf,
+    conversation_id: &str,
+    permission: &str,
+    policy: &str,
+) -> anyhow::Result<()> {
+    let _ = daemon_update_group_permissions(&data_dir, conversation_id, permission, policy).await?;
+    println!("OK");
     Ok(())
 }
 
@@ -1182,6 +1222,30 @@ async fn daemon_group_info(
     http_get(data_dir, &format!("/v1/groups/{conversation_id}")).await
 }
 
+async fn daemon_group_permissions(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+) -> anyhow::Result<GroupPermissionsResponse> {
+    http_get(data_dir, &format!("/v1/groups/{conversation_id}/permissions")).await
+}
+
+async fn daemon_update_group_permissions(
+    data_dir: &PathBuf,
+    conversation_id: &str,
+    permission: &str,
+    policy: &str,
+) -> anyhow::Result<ActionResponse> {
+    http_patch(
+        data_dir,
+        &format!("/v1/groups/{conversation_id}/permissions"),
+        &UpdatePermissionRequest {
+            permission: permission.to_owned(),
+            policy: policy.to_owned(),
+        },
+    )
+    .await
+}
+
 async fn daemon_reply(
     data_dir: &PathBuf,
     message_id: &str,
@@ -1638,6 +1702,21 @@ fn render_group_info_row(info: &GroupInfoResponse) -> String {
     )
 }
 
+fn print_group_permissions(info: &GroupPermissionsResponse) {
+    println!("{}", render_status_row("Preset:", &info.preset));
+    println!("{}", render_status_row("Add members:", &info.add_member));
+    println!("{}", render_status_row("Remove members:", &info.remove_member));
+    println!("{}", render_status_row("Add admins:", &info.add_admin));
+    println!("{}", render_status_row("Remove admins:", &info.remove_admin));
+    println!("{}", render_status_row("Update name:", &info.update_group_name));
+    println!(
+        "{}",
+        render_status_row("Update description:", &info.update_group_description)
+    );
+    println!("{}", render_status_row("Update image:", &info.update_group_image));
+    println!("{}", render_status_row("Update app data:", &info.update_app_data));
+}
+
 fn action_result_header() -> String {
     format!("{:<16} {:<20} {}", "action", "conversation_id", "message_id")
 }
@@ -1976,6 +2055,20 @@ mod tests {
                 assert_eq!(conversation_id, "conv-3");
             }
             _ => panic!("expected group members command"),
+        }
+    }
+
+    #[test]
+    fn group_permissions_parses_conversation_id() {
+        let cli = Cli::parse_from(["xmtp-cli", "group", "permissions", "conv-3"]);
+
+        match cli.command {
+            Command::Group {
+                command: GroupCommand::Permissions { conversation_id },
+            } => {
+                assert_eq!(conversation_id, "conv-3");
+            }
+            _ => panic!("expected group permissions command"),
         }
     }
 
