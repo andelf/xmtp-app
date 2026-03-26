@@ -13,7 +13,10 @@ use tokio::process::Command;
 use tokio::task::LocalSet;
 use tokio::time::{Duration, sleep};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-use xmtp_ipc::{DaemonEventData, DaemonEventEnvelope, HistoryItem, StatusResponse};
+use xmtp_ipc::{
+    ApiErrorBody, DaemonEventData, DaemonEventEnvelope, HistoryItem, SendMessageRequest,
+    StatusResponse,
+};
 
 use crate::{daemon_base_url, daemon_send_conversation, http_client, http_get, wait_for_daemon_ready};
 
@@ -41,6 +44,9 @@ async fn run_acp_inner(
     let status: StatusResponse = http_get(&data_dir, "/v1/status")
         .await
         .context("load daemon status")?;
+    ensure_acp_send_endpoint(&data_dir)
+        .await
+        .context("verify ACP daemon endpoints")?;
     let self_inbox_id = status.inbox_id;
 
     let mut child = Command::new(program)
@@ -174,6 +180,29 @@ async fn ensure_acp_session(
     Ok(session.session_id)
 }
 
+async fn ensure_acp_send_endpoint(data_dir: &PathBuf) -> anyhow::Result<()> {
+    let base_url = daemon_base_url(data_dir)?;
+    let response = http_client()
+        .post(format!("{base_url}/v1/conversations/__probe__/send"))
+        .json(&SendMessageRequest {
+            message: String::new(),
+            conversation_id: None,
+            content_type: None,
+        })
+        .send()
+        .await
+        .context("probe conversation send endpoint")?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let json_error = serde_json::from_str::<ApiErrorBody>(&body).ok();
+
+    if status == reqwest::StatusCode::NOT_FOUND && json_error.is_none() {
+        anyhow::bail!("Daemon is outdated, please restart: xmtp-cli shutdown");
+    }
+
+    Ok(())
+}
+
 async fn bridge_history_to_acp(
     data_dir: &PathBuf,
     conversation_id: &str,
@@ -217,7 +246,11 @@ async fn bridge_history_to_acp(
                                 Some("markdown"),
                             )
                             .await
-                            .with_context(|| format!("send ACP reply back to conversation {conversation_id}"))?;
+                            .with_context(|| {
+                                format!(
+                                    "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
+                                )
+                            })?;
                         }
                     }
                 }
