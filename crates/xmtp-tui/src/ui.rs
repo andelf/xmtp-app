@@ -595,6 +595,10 @@ fn render_message_menu(frame: &mut Frame<'_>, app: &App) {
 fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
     let area = centered_rect(88, 84, frame.area());
     frame.render_widget(Clear, area);
+    let wrap_width = area.width.saturating_sub(4).max(1) as usize;
+    let visible_height = area.height.saturating_sub(2) as usize;
+    app.last_detail_wrap_width.set(wrap_width);
+    app.last_detail_visible_height.set(visible_height);
     let Some(message) = app.detail_message() else {
         let paragraph = Paragraph::new("Message not found")
             .block(Block::default().title("Message Detail").borders(Borders::ALL))
@@ -616,16 +620,9 @@ fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
         Line::from(""),
     ];
     if message.content_kind == "markdown" {
-        lines.extend(render_markdown(
-            &message.content,
-            area.width.saturating_sub(4).max(1) as usize,
-        ));
+        lines.extend(render_markdown(&message.content, wrap_width));
     } else {
-        lines.extend(
-            wrap_text_lines(&message.content, area.width.saturating_sub(4).max(1) as usize)
-                .into_iter()
-                .map(Line::from),
-        );
+        lines.extend(wrap_text_lines(&message.content, wrap_width).into_iter().map(Line::from));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -633,7 +630,6 @@ fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
         Style::default().dark_gray(),
     )));
 
-    let visible_height = area.height.saturating_sub(2) as usize;
     let max_scroll = lines.len().saturating_sub(visible_height);
     let scroll = app.detail_scroll.min(max_scroll) as u16;
 

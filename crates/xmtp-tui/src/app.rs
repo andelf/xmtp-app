@@ -1,5 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::style::Color;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use textwrap::wrap;
@@ -159,6 +160,8 @@ pub struct App {
     pub selected_message: usize,
     pub detail_scroll: usize,
     pub detail_message_id: Option<String>,
+    pub last_detail_visible_height: Cell<usize>,
+    pub last_detail_wrap_width: Cell<usize>,
     pub input: String,
     pub cursor: usize,
     pub reply_to_message_id: Option<String>,
@@ -194,6 +197,8 @@ impl App {
                 selected_message: 0,
                 detail_scroll: 0,
                 detail_message_id: None,
+                last_detail_visible_height: Cell::new(0),
+                last_detail_wrap_width: Cell::new(1),
                 input: String::new(),
                 cursor: 0,
                 reply_to_message_id: None,
@@ -880,7 +885,8 @@ impl App {
                 }
             }
             KeyCode::Down => {
-                self.detail_scroll = self.detail_scroll.saturating_add(1);
+                let max_scroll = self.detail_max_scroll();
+                self.detail_scroll = self.detail_scroll.saturating_add(1).min(max_scroll);
             }
             _ => {}
         }
@@ -1356,6 +1362,22 @@ impl App {
     pub fn detail_message(&self) -> Option<&HistoryItem> {
         let detail_id = self.detail_message_id.as_deref()?;
         self.messages.iter().find(|item| item.message_id == detail_id)
+    }
+
+    pub fn detail_max_scroll(&self) -> usize {
+        let Some(message) = self.detail_message() else {
+            return 0;
+        };
+
+        let wrap_width = self.last_detail_wrap_width.get().max(1);
+        let visible_height = self.last_detail_visible_height.get();
+        let content_lines = if message.content_kind == "markdown" {
+            render_markdown(&message.content, wrap_width).len()
+        } else {
+            wrap(&message.content, wrap_width).len().max(1)
+        };
+        let total_lines = 2 + content_lines + 2;
+        total_lines.saturating_sub(visible_height)
     }
 
     pub fn input_char_len(&self) -> usize {
