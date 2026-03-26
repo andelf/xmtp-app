@@ -107,6 +107,7 @@ fn render_conversations(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let title = message_panel_title(app);
     if app.messages.is_empty() && app.active_conversation.is_none() {
         let message = app
             .last_error
@@ -120,11 +121,6 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
     }
 
     if app.active_history_loading && app.messages.is_empty() {
-        let title = app
-            .active_conversation
-            .as_ref()
-            .and_then(|conversation| conversation.name.clone())
-            .unwrap_or_else(|| "Messages".to_owned());
         let paragraph = Paragraph::new(Line::from(Span::styled(
             "Loading…",
             Style::default().dark_gray(),
@@ -136,11 +132,6 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
     }
 
     if app.messages.is_empty() {
-        let title = app
-            .active_conversation
-            .as_ref()
-            .and_then(|conversation| conversation.name.clone())
-            .unwrap_or_else(|| "Messages".to_owned());
         let paragraph = Paragraph::new(Line::from(Span::styled(
             "No messages yet",
             Style::default().dark_gray(),
@@ -219,15 +210,27 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
         })
         .collect();
 
-    let title = app
-        .active_conversation
-        .as_ref()
-        .and_then(|conversation| conversation.name.clone())
-        .unwrap_or_else(|| "Messages".to_owned());
     let list = List::new(items)
         .block(titled_block(&title, app.focus == Focus::Messages))
         .highlight_style(Style::default().reversed().add_modifier(Modifier::BOLD));
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn message_panel_title(app: &App) -> String {
+    match app.active_conversation.as_ref() {
+        Some(conversation) if conversation.kind == "dm" => conversation
+            .dm_peer_inbox_id
+            .as_deref()
+            .map(short_display_id)
+            .or_else(|| conversation.name.clone())
+            .unwrap_or_else(|| "DM".to_owned()),
+        Some(conversation) if conversation.kind == "group" => conversation
+            .name
+            .clone()
+            .unwrap_or_else(|| "Group".to_owned()),
+        Some(conversation) => conversation.name.clone().unwrap_or_else(|| "Messages".to_owned()),
+        None => "Messages".to_owned(),
+    }
 }
 
 fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
