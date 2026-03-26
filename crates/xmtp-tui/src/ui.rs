@@ -14,6 +14,7 @@ use crate::format::{format_clock, format_day_tag, short_display_id};
 
 enum MessageRowKind {
     DateSeparator,
+    ReplyContext,
     Reactions,
     Message(usize),
 }
@@ -156,7 +157,7 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let rows = build_message_rows(app);
     let selected_row = rows.iter().position(|row| match row.kind {
         MessageRowKind::Message(index) => index == app.selected_message,
-        MessageRowKind::DateSeparator | MessageRowKind::Reactions => false,
+        MessageRowKind::DateSeparator | MessageRowKind::ReplyContext | MessageRowKind::Reactions => false,
     });
     let mut state = ListState::default().with_selected(selected_row);
     let items: Vec<ListItem<'_>> = rows.into_iter().map(|row| row.item).collect();
@@ -185,8 +186,6 @@ fn build_message_rows<'a>(app: &'a App) -> Vec<MessageRow<'a>> {
             });
         }
 
-        let mut lines = Vec::new();
-
         if let Some(reply_target_id) = item.reply_target_message_id.as_deref() {
             let reply_line = if let Some(target) = app
                 .messages
@@ -202,12 +201,17 @@ fn build_message_rows<'a>(app: &'a App) -> Vec<MessageRow<'a>> {
             } else {
                 format!("  ↩ [{}]", short_display_id(reply_target_id))
             };
-            lines.push(Line::from(Span::styled(
-                reply_line,
-                Style::default().dark_gray().bg(Color::Reset),
-            )));
+            rows.push(MessageRow {
+                kind: MessageRowKind::ReplyContext,
+                item: ListItem::new(Line::from(Span::styled(
+                    reply_line,
+                    Style::default().fg(Color::Gray).bg(Color::Reset),
+                )))
+                .style(Style::default().bg(Color::Reset)),
+            });
         }
 
+        let mut lines = Vec::new();
         let content = item.content.replace('\n', " ");
         let sender_display = if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) {
             "You".to_owned()
