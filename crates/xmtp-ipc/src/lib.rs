@@ -72,6 +72,19 @@ pub struct GroupInfoResponse {
     pub member_count: usize,
  }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupPermissionsResponse {
+    pub preset: String,
+    pub add_member: String,
+    pub remove_member: String,
+    pub add_admin: String,
+    pub remove_admin: String,
+    pub update_group_name: String,
+    pub update_group_description: String,
+    pub update_group_image: String,
+    pub update_app_data: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationInfoResponse {
     pub conversation_id: String,
@@ -179,6 +192,12 @@ pub struct RenameGroupRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GroupMembersUpdateRequest {
     pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdatePermissionRequest {
+    pub permission: String,
+    pub policy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

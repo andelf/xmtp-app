@@ -23,16 +23,20 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, error, info, warn};
 use xmtp::content::{Content, ReactionAction};
-use xmtp::{AlloySigner, Client, CreateGroupOptions, Env, Recipient};
+use xmtp::{
+    AlloySigner, Client, CreateGroupOptions, Env, MetadataField, PermissionPolicy,
+    PermissionUpdateType, Recipient,
+};
 use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_core::{ConnectionState, DaemonState};
 use xmtp_ipc::{
     ActionResponse, ApiErrorBody, ApiErrorDetail, ConversationInfoResponse, ConversationItem,
     ConversationListResponse, ConversationUpdatedEvent, DaemonEventData, DaemonEventEnvelope,
     EmojiRequest, GroupCreateRequest, GroupInfoResponse, GroupMemberItem, GroupMembersResponse,
-    GroupMembersUpdateRequest, GroupMembersUpdatedEvent, HistoryItem, HistoryResponse,
-    LoginRequest, MessageInfoResponse, ReactionDetail, RecipientMessageRequest, RecipientRequest,
-    RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
+    GroupMembersUpdateRequest, GroupMembersUpdatedEvent, GroupPermissionsResponse, HistoryItem,
+    HistoryResponse, LoginRequest, MessageInfoResponse, ReactionDetail, RecipientMessageRequest,
+    RecipientRequest, RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
+    UpdatePermissionRequest,
 };
 use xmtp_logging::append_daemon_event;
 use xmtp_store::{load_state, save_state};
@@ -704,6 +708,88 @@ fn group_info_with_client(client: &Client, conversation_id: &str) -> anyhow::Res
             .unwrap_or_else(|| "unknown".to_owned()),
         permission_preset: "unknown".to_owned(),
         member_count: members.len(),
+    })
+}
+
+fn permission_policy_to_str(policy: PermissionPolicy) -> &'static str {
+    match policy {
+        PermissionPolicy::Allow => "everyone",
+        PermissionPolicy::AdminOnly => "admin_only",
+        PermissionPolicy::SuperAdminOnly => "super_admin_only",
+        PermissionPolicy::Deny => "deny",
+        PermissionPolicy::DoesNotExist => "deny",
+        PermissionPolicy::Other => "deny",
+    }
+}
+
+fn permission_preset_to_str(preset: &str) -> &'static str {
+    match preset {
+        "allmembers" => "all_members",
+        "adminonly" => "admin_only",
+        "custom" => "custom",
+        _ => "custom",
+    }
+}
+
+fn parse_permission_policy(policy: &str) -> anyhow::Result<PermissionPolicy> {
+    match policy {
+        "everyone" => Ok(PermissionPolicy::Allow),
+        "admin_only" => Ok(PermissionPolicy::AdminOnly),
+        "super_admin_only" => Ok(PermissionPolicy::SuperAdminOnly),
+        "deny" => Ok(PermissionPolicy::Deny),
+        other => anyhow::bail!("unsupported permission policy: {other}"),
+    }
+}
+
+fn group_permissions_with_client(
+    client: &Client,
+    conversation_id: &str,
+) -> anyhow::Result<GroupPermissionsResponse> {
+    let conversation = find_conversation_by_id(client, conversation_id)?;
+    let permissions = conversation.permissions().context("get group permissions")?;
+    let preset = format!("{:?}", permissions.preset).to_lowercase();
+    Ok(GroupPermissionsResponse {
+        preset: permission_preset_to_str(&preset).to_owned(),
+        add_member: permission_policy_to_str(permissions.policies.add_member).to_owned(),
+        remove_member: permission_policy_to_str(permissions.policies.remove_member).to_owned(),
+        add_admin: permission_policy_to_str(permissions.policies.add_admin).to_owned(),
+        remove_admin: permission_policy_to_str(permissions.policies.remove_admin).to_owned(),
+        update_group_name: permission_policy_to_str(permissions.policies.update_group_name)
+            .to_owned(),
+        update_group_description:
+            permission_policy_to_str(permissions.policies.update_group_description).to_owned(),
+        update_group_image: permission_policy_to_str(permissions.policies.update_group_image_url)
+            .to_owned(),
+        update_app_data: permission_policy_to_str(permissions.policies.update_app_data).to_owned(),
+    })
+}
+
+fn update_group_permissions_with_client(
+    client: &Client,
+    conversation_id: &str,
+    request: UpdatePermissionRequest,
+) -> anyhow::Result<SendMessageResult> {
+    let conversation = find_conversation_by_id(client, conversation_id)?;
+    let policy = parse_permission_policy(&request.policy)?;
+    let (update_type, metadata_field) = match request.permission.as_str() {
+        "add_member" => (PermissionUpdateType::AddMember, None),
+        "remove_member" => (PermissionUpdateType::RemoveMember, None),
+        "add_admin" => (PermissionUpdateType::AddAdmin, None),
+        "remove_admin" => (PermissionUpdateType::RemoveAdmin, None),
+        "update_group_name" => (PermissionUpdateType::UpdateMetadata, Some(MetadataField::GroupName)),
+        "update_group_description" => {
+            (PermissionUpdateType::UpdateMetadata, Some(MetadataField::Description))
+        }
+        "update_group_image" => (PermissionUpdateType::UpdateMetadata, Some(MetadataField::ImageUrl)),
+        "update_app_data" => (PermissionUpdateType::UpdateMetadata, Some(MetadataField::AppData)),
+        other => anyhow::bail!("unsupported permission update type: {other}"),
+    };
+    conversation
+        .set_permission_policy(update_type, policy, metadata_field)
+        .context("update group permissions")?;
+    Ok(SendMessageResult {
+        conversation_id: conversation.id(),
+        message_id: String::new(),
     })
 }
 
@@ -1687,6 +1773,32 @@ impl DaemonApp {
         group_info_with_client(self.ensure_client()?, &conversation_id)
     }
 
+    fn group_permissions(
+        &mut self,
+        conversation_id: String,
+    ) -> anyhow::Result<GroupPermissionsResponse> {
+        group_permissions_with_client(self.ensure_client()?, &conversation_id)
+    }
+
+    fn update_group_permissions(
+        &mut self,
+        conversation_id: String,
+        request: UpdatePermissionRequest,
+    ) -> anyhow::Result<ActionResponse> {
+        let resolved_conversation_id = self
+            .resolve_cached_conversation_id(&conversation_id, Some("group"))
+            .unwrap_or(conversation_id);
+        let result = update_group_permissions_with_client(
+            self.ensure_client()?,
+            &resolved_conversation_id,
+            request,
+        )?;
+        Ok(ActionResponse {
+            conversation_id: result.conversation_id,
+            message_id: result.message_id,
+        })
+    }
+
     fn rename_group(&mut self, conversation_id: String, name: String) -> anyhow::Result<ActionResponse> {
         let resolved_conversation_id = self
             .resolve_cached_conversation_id(&conversation_id, Some("group"))
@@ -2141,6 +2253,42 @@ async fn group_info_handler(
     Ok(Json(info))
 }
 
+async fn group_permissions_handler(
+    State(state): State<HttpState>,
+    AxumPath(group_id): AxumPath<String>,
+) -> Result<Json<GroupPermissionsResponse>, ApiErrorResponse> {
+    let permissions = run_app(
+        &state,
+        format!("group permissions id={group_id}"),
+        false,
+        false,
+        move |app| app.group_permissions(group_id),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(permissions))
+}
+
+async fn update_group_permissions_handler(
+    State(state): State<HttpState>,
+    AxumPath(group_id): AxumPath<String>,
+    Json(request): Json<UpdatePermissionRequest>,
+) -> Result<Json<ActionResponse>, ApiErrorResponse> {
+    let event_conversation_id = group_id.clone();
+    let result = run_app(
+        &state,
+        format!("update group permissions id={group_id}"),
+        false,
+        false,
+        move |app| app.update_group_permissions(group_id, request),
+    )
+    .await
+    .map_err(internal_error)?;
+    publish_conversation_updated_now(&state, &event_conversation_id);
+    publish_conversation_snapshot_now(&state);
+    Ok(Json(result))
+}
+
 async fn rename_group_handler(
     State(state): State<HttpState>,
     AxumPath(group_id): AxumPath<String>,
@@ -2474,6 +2622,10 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
         .route(
             "/v1/groups/{group_id}",
             get(group_info_handler).patch(rename_group_handler),
+        )
+        .route(
+            "/v1/groups/{group_id}/permissions",
+            get(group_permissions_handler).patch(update_group_permissions_handler),
         )
         .route(
             "/v1/groups/{group_id}/members",
