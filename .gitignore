@@ -1,4 +1,6 @@
 target/
 data/
+data*/
 .cache/
 *.log
+.claude/
