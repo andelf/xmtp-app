@@ -85,7 +85,7 @@ async fn run_acp_inner(
 
     let cwd = std::env::current_dir().context("read current working directory")?;
     let session_id = ensure_acp_session(&data_dir, &conversation_id, &conn, &cwd).await?;
-    eprintln!("ACP session ready: {}", session_id.0);
+    eprintln!("ACP session ready: {}", session_id_str(&session_id));
 
     let bridge_result =
         bridge_history_to_acp(&data_dir, &conversation_id, self_inbox_id.as_deref(), &conn, &session_id, &chunks).await;
@@ -136,7 +136,7 @@ fn store_session_id(
     let mut sessions = load_acp_sessions(data_dir)?;
     sessions
         .sessions
-        .insert(conversation_id.to_owned(), session_id.0.to_string());
+        .insert(conversation_id.to_owned(), session_id_owned(session_id));
     save_acp_sessions(data_dir, &sessions)
 }
 
@@ -147,13 +147,13 @@ async fn ensure_acp_session(
     cwd: &Path,
 ) -> anyhow::Result<acp::SessionId> {
     if let Some(saved_session_id) = persisted_session_id(data_dir, conversation_id)? {
-        let session_id = acp::SessionId::new(saved_session_id.clone());
+        let session_id = acp::SessionId::new(saved_session_id);
         match conn
             .load_session(acp::LoadSessionRequest::new(session_id.clone(), cwd.to_path_buf()))
             .await
         {
             Ok(_) => {
-                eprintln!("ACP session restored: {}", session_id.0);
+                eprintln!("ACP session restored: {}", session_id_str(&session_id));
                 store_session_id(data_dir, conversation_id, &session_id)?;
                 return Ok(session_id);
             }
@@ -234,10 +234,11 @@ async fn prompt_agent(
     chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
     item: HistoryItem,
 ) -> anyhow::Result<String> {
-    clear_session_chunks(chunks, session_id.0.as_ref());
+    clear_session_chunks(chunks, session_id_str(session_id));
+    let content = item.content;
     conn.prompt(acp::PromptRequest::new(
         session_id.clone(),
-        vec![item.content.clone().into()],
+        vec![content.into()],
     ))
     .await
     .context("ACP prompt")?;
@@ -245,7 +246,7 @@ async fn prompt_agent(
     // Allow any final session notifications to land before we read the buffered chunks.
     sleep(Duration::from_millis(100)).await;
 
-    Ok(take_session_chunks(chunks, session_id.0.as_ref()).join(""))
+    Ok(take_session_chunks(chunks, session_id_str(session_id)).join(""))
 }
 
 fn should_forward_item(item: &HistoryItem, self_inbox_id: Option<&str>) -> bool {
@@ -270,6 +271,14 @@ fn take_session_chunks(
         .ok()
         .and_then(|mut chunks| chunks.remove(session_id))
         .unwrap_or_default()
+}
+
+fn session_id_str(session_id: &acp::SessionId) -> &str {
+    session_id.0.as_ref()
+}
+
+fn session_id_owned(session_id: &acp::SessionId) -> String {
+    session_id_str(session_id).to_owned()
 }
 
 struct BridgeClient {
@@ -300,7 +309,7 @@ impl acp::Client for BridgeClient {
             };
             if let Ok(mut chunks) = self.chunks.lock() {
                 chunks
-                    .entry(args.session_id.0.to_string())
+                    .entry(session_id_owned(&args.session_id))
                     .or_default()
                     .push(text);
             }
