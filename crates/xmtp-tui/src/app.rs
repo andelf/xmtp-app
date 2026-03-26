@@ -242,9 +242,10 @@ impl App {
             } => {
                 if self.active_conversation_id.as_deref() == Some(conversation_id.as_str()) {
                     let previous_selected = self.selected_history_item().map(|item| item.message_id.clone());
+                    let was_at_bottom = self.is_selected_message_at_end();
                     self.messages = normalize_history(items);
                     self.active_history_loading = false;
-                    self.selected_message = if self.should_auto_scroll_messages() {
+                    self.selected_message = if was_at_bottom {
                         self.messages.len().saturating_sub(1)
                     } else {
                         previous_selected
@@ -261,8 +262,9 @@ impl App {
                 item,
             } => {
                 if self.active_conversation_id.as_deref() == Some(conversation_id.as_str()) {
+                    let was_at_bottom = self.is_selected_message_at_end();
                     merge_history_item(&mut self.messages, item);
-                    if self.should_auto_scroll_messages() {
+                    if was_at_bottom {
                         self.selected_message = self.messages.len().saturating_sub(1);
                     } else {
                         self.selected_message = self.selected_message.min(self.messages.len().saturating_sub(1));
@@ -1045,6 +1047,10 @@ impl App {
         self.focus != Focus::Messages
     }
 
+    fn is_selected_message_at_end(&self) -> bool {
+        self.messages.is_empty() || self.selected_message + 1 >= self.messages.len()
+    }
+
     fn activate_conversation(&mut self, conversation: ConversationItem) -> Vec<Effect> {
         if let Some(current_id) = self.active_conversation_id.clone() {
             if self.input.trim().is_empty() {
@@ -1823,7 +1829,7 @@ mod tests {
     }
 
     #[test]
-    fn history_event_auto_scrolls_when_messages_panel_is_not_focused() {
+    fn history_event_keeps_selection_when_not_at_end_even_if_messages_panel_is_unfocused() {
         let (mut app, _) = App::new();
         app.active_conversation_id = Some("conv-1".into());
         app.focus = Focus::Conversations;
@@ -1858,6 +1864,64 @@ mod tests {
             },
         ];
         app.selected_message = 0;
+
+        app.handle_event(crate::event::AppEvent::HistoryEvent {
+            conversation_id: "conv-1".into(),
+            item: xmtp_ipc::HistoryItem {
+                message_id: "msg-3".into(),
+                sender_inbox_id: "sender-1".into(),
+                sent_at_ns: 3,
+                content_kind: "text".into(),
+                content: "third".into(),
+                reply_count: 0,
+                reaction_count: 0,
+                reply_target_message_id: None,
+                reaction_target_message_id: None,
+                reaction_emoji: None,
+                reaction_action: None,
+                attached_reactions: Vec::new(),
+            },
+        });
+
+        assert_eq!(app.selected_message, 0);
+    }
+
+    #[test]
+    fn history_event_auto_scrolls_when_selection_was_already_at_end() {
+        let (mut app, _) = App::new();
+        app.active_conversation_id = Some("conv-1".into());
+        app.focus = Focus::Conversations;
+        app.messages = vec![
+            xmtp_ipc::HistoryItem {
+                message_id: "msg-1".into(),
+                sender_inbox_id: "sender-1".into(),
+                sent_at_ns: 1,
+                content_kind: "text".into(),
+                content: "first".into(),
+                reply_count: 0,
+                reaction_count: 0,
+                reply_target_message_id: None,
+                reaction_target_message_id: None,
+                reaction_emoji: None,
+                reaction_action: None,
+                attached_reactions: Vec::new(),
+            },
+            xmtp_ipc::HistoryItem {
+                message_id: "msg-2".into(),
+                sender_inbox_id: "sender-1".into(),
+                sent_at_ns: 2,
+                content_kind: "text".into(),
+                content: "second".into(),
+                reply_count: 0,
+                reaction_count: 0,
+                reply_target_message_id: None,
+                reaction_target_message_id: None,
+                reaction_emoji: None,
+                reaction_action: None,
+                attached_reactions: Vec::new(),
+            },
+        ];
+        app.selected_message = 1;
 
         app.handle_event(crate::event::AppEvent::HistoryEvent {
             conversation_id: "conv-1".into(),

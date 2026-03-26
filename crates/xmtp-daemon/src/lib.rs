@@ -1012,7 +1012,19 @@ fn summarize_decoded_content(content: &Content) -> String {
                 short_id(&reaction.reference)
             )
         }
-        Content::Reply(reply) => format!("reply to {}", short_id(&reply.reference)),
+        Content::Reply(reply) => {
+            let inner = xmtp::content::decode(&reply.content.content)
+                .map(|content| summarize_decoded_content(&content))
+                .map(|summary| {
+                    if summary.trim().is_empty() || summary == "unsupported " {
+                        "(reply)".to_owned()
+                    } else {
+                        summary
+                    }
+                })
+                .unwrap_or_else(|_| "(reply)".to_owned());
+            format!("{} (↩ {})", inner, short_id(&reply.reference))
+        }
         Content::ReadReceipt => "read receipt".to_owned(),
         Content::Attachment(attachment) => format!(
             "attachment {}",
@@ -2298,7 +2310,7 @@ mod tests {
         }));
 
         assert_eq!(reaction, "reacted 👍 to abcd1234");
-        assert_eq!(reply, "reply to dcba4321");
+        assert_eq!(reply, "(reply) (↩ dcba4321)");
     }
 
     #[test]
