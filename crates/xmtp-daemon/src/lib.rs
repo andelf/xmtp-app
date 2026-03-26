@@ -15,6 +15,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use axum::Router;
 use futures_util::stream::Stream;
+use prost::Message as ProstMessage;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -36,6 +37,36 @@ use xmtp_store::{load_state, save_state};
 
 static TRACING_INIT: OnceLock<()> = OnceLock::new();
 static EVENT_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, prost::Message)]
+struct GroupUpdatedInbox {
+    #[prost(string, tag = "1")]
+    inbox_id: String,
+}
+
+#[derive(Clone, prost::Message)]
+struct MetadataFieldChange {
+    #[prost(string, tag = "1")]
+    field_name: String,
+    #[prost(string, optional, tag = "2")]
+    old_value: Option<String>,
+    #[prost(string, optional, tag = "3")]
+    new_value: Option<String>,
+}
+
+#[derive(Clone, prost::Message)]
+struct GroupUpdated {
+    #[prost(string, tag = "1")]
+    initiated_by_inbox_id: String,
+    #[prost(message, repeated, tag = "2")]
+    added_inboxes: Vec<GroupUpdatedInbox>,
+    #[prost(message, repeated, tag = "3")]
+    removed_inboxes: Vec<GroupUpdatedInbox>,
+    #[prost(message, repeated, tag = "4")]
+    metadata_field_changes: Vec<MetadataFieldChange>,
+    #[prost(message, repeated, tag = "5")]
+    left_inboxes: Vec<GroupUpdatedInbox>,
+}
 
 fn init_tracing() {
     TRACING_INIT.get_or_init(|| {
@@ -821,20 +852,14 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
             None,
         ),
         Ok(Content::Unknown { content_type, raw }) => {
-            debug!(
-                message_id = %message.id,
-                content_type = %content_type,
-                raw_len = raw.len(),
-                fallback = ?message.fallback,
-                "unknown message type stored in history"
-            );
+            log_unknown_message_type(Some(&message.id), &content_type, &raw, message.fallback.as_ref());
             (
                 "unknown".to_owned(),
                 message
                     .fallback
                     .clone()
                     .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| format!("type=unknown content_type={content_type}")),
+                    .unwrap_or_else(|| summarize_unknown_content(&content_type, &raw)),
                 None,
                 None,
                 None,
@@ -873,17 +898,12 @@ fn history_item_from_message(message: &xmtp::conversation::Message) -> HistoryIt
 fn summarize_message_content(message: &xmtp::conversation::Message) -> String {
     match message.decode() {
         Ok(Content::Unknown { content_type, raw }) => {
-            debug!(
-                content_type = %content_type,
-                raw_len = raw.len(),
-                fallback = ?message.fallback,
-                "unknown message type received"
-            );
+            log_unknown_message_type(None, &content_type, &raw, message.fallback.as_ref());
             message
                 .fallback
                 .clone()
                 .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| format!("type=unknown content_type={content_type}"))
+                .unwrap_or_else(|| summarize_unknown_content(&content_type, &raw))
         }
         Ok(decoded) => summarize_decoded_content(&decoded),
         Err(_) => message
@@ -1055,8 +1075,106 @@ fn summarize_decoded_content(content: &Content) -> String {
                 .clone()
                 .unwrap_or_else(|| attachment.url.clone())
         ),
-        Content::Unknown { content_type, .. } => format!("unsupported {content_type}"),
+        Content::Unknown { content_type, raw } => summarize_unknown_content(content_type, raw),
     }
+}
+
+fn summarize_unknown_content(content_type: &str, raw: &[u8]) -> String {
+    if content_type.contains("group_updated") {
+        if let Some(group_updated) = decode_group_updated(raw) {
+            let mut parts = Vec::new();
+
+            if !group_updated.added_inboxes.is_empty() {
+                let count = group_updated.added_inboxes.len();
+                parts.push(format!("added {count} member{}", if count == 1 { "" } else { "s" }));
+            }
+            if !group_updated.removed_inboxes.is_empty() {
+                let count = group_updated.removed_inboxes.len();
+                parts.push(format!("removed {count} member{}", if count == 1 { "" } else { "s" }));
+            }
+            if !group_updated.left_inboxes.is_empty() {
+                let count = group_updated.left_inboxes.len();
+                parts.push(format!("{count} member{} left", if count == 1 { "" } else { "s" }));
+            }
+            if let Some(rename) = group_updated
+                .metadata_field_changes
+                .iter()
+                .find(|change| change.field_name.contains("name"))
+                .and_then(|change| change.new_value.as_ref())
+            {
+                parts.push(format!("renamed to {rename}"));
+            } else if !group_updated.metadata_field_changes.is_empty() {
+                parts.push("updated group metadata".to_owned());
+            }
+
+            if !parts.is_empty() {
+                return parts.join(", ");
+            }
+            return "updated group".to_owned();
+        }
+    }
+
+    format!("unsupported {content_type}")
+}
+
+fn log_unknown_message_type(
+    message_id: Option<&str>,
+    content_type: &str,
+    raw: &[u8],
+    fallback: Option<&String>,
+) {
+    debug!(
+        message_id = message_id.unwrap_or(""),
+        content_type = %content_type,
+        raw_len = raw.len(),
+        fallback = ?fallback,
+        "unknown message type received"
+    );
+
+    if content_type.contains("group_updated") {
+        if let Some(group_updated) = decode_group_updated(raw) {
+            let added: Vec<&str> = group_updated
+                .added_inboxes
+                .iter()
+                .map(|inbox| inbox.inbox_id.as_str())
+                .collect();
+            let removed: Vec<&str> = group_updated
+                .removed_inboxes
+                .iter()
+                .map(|inbox| inbox.inbox_id.as_str())
+                .collect();
+            let left: Vec<&str> = group_updated
+                .left_inboxes
+                .iter()
+                .map(|inbox| inbox.inbox_id.as_str())
+                .collect();
+            let metadata_changes: Vec<String> = group_updated
+                .metadata_field_changes
+                .iter()
+                .map(|change| {
+                    format!(
+                        "{}:{:?}->{:?}",
+                        change.field_name, change.old_value, change.new_value
+                    )
+                })
+                .collect();
+            debug!(
+                message_id = message_id.unwrap_or(""),
+                content_type = %content_type,
+                initiated_by = %group_updated.initiated_by_inbox_id,
+                added = ?added,
+                removed = ?removed,
+                left = ?left,
+                metadata_changes = ?metadata_changes,
+                "decoded group_updated message"
+            );
+        }
+    }
+}
+
+fn decode_group_updated(raw: &[u8]) -> Option<GroupUpdated> {
+    let encoded = xmtp::content::EncodedContent::decode(raw).ok()?;
+    GroupUpdated::decode(encoded.content.as_slice()).ok()
 }
 
 fn short_id(value: &str) -> String {
@@ -2181,9 +2299,11 @@ impl Drop for DaemonFilesGuard {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConversationLookup, ConversationSummary, resolve_conversation_lookup_id, resolve_message_id,
+        ConversationLookup, ConversationSummary, GroupUpdated, GroupUpdatedInbox,
+        MetadataFieldChange, resolve_conversation_lookup_id, resolve_message_id,
         sort_conversation_summaries, summarize_decoded_content,
     };
+    use prost::Message;
     use xmtp::content::{
         Content, ContentTypeId, EncodedContent, Reaction, ReactionAction, ReactionSchema, Reply,
     };
@@ -2350,6 +2470,37 @@ mod tests {
         });
 
         assert_eq!(summary, "unsupported xmtp.org/group_updated:1.0");
+    }
+
+    #[test]
+    fn summarize_decoded_content_formats_group_updated_friendly_summary() {
+        let inner = GroupUpdated {
+            initiated_by_inbox_id: "inbox-1".to_owned(),
+            added_inboxes: vec![GroupUpdatedInbox {
+                inbox_id: "inbox-2".to_owned(),
+            }],
+            removed_inboxes: Vec::new(),
+            metadata_field_changes: vec![MetadataFieldChange {
+                field_name: "group_name".to_owned(),
+                old_value: Some("Old".to_owned()),
+                new_value: Some("New".to_owned()),
+            }],
+            left_inboxes: Vec::new(),
+        };
+        let encoded = xmtp::content::EncodedContent {
+            r#type: None,
+            parameters: Default::default(),
+            fallback: None,
+            content: inner.encode_to_vec(),
+            compression: None,
+        };
+
+        let summary = summarize_decoded_content(&Content::Unknown {
+            content_type: "xmtp.org/group_updated:1.0".to_owned(),
+            raw: encoded.encode_to_vec(),
+        });
+
+        assert_eq!(summary, "added 1 member, renamed to New");
     }
 
     #[test]
