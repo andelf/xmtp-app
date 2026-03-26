@@ -390,14 +390,15 @@ impl App {
         }
 
         let current_active = self.active_conversation_id.clone();
-        if let Some(active_id) = current_active
-            && let Some(index) = self
+        if let Some(active_id) = current_active {
+            if let Some(index) = self
                 .conversations
                 .iter()
                 .position(|conversation| conversation.id == active_id)
-        {
-            self.selected_conversation = index;
-            self.active_conversation = Some(self.conversations[index].clone());
+            {
+                self.selected_conversation = index;
+                self.active_conversation = Some(self.conversations[index].clone());
+            }
             return Vec::new();
         }
 
@@ -2614,6 +2615,64 @@ mod tests {
         ));
         assert_eq!(app.active_conversation_id.as_deref(), Some("conv-2"));
         assert_eq!(app.unread_counts.get("conv-2"), None);
+    }
+
+    #[test]
+    fn conversations_loaded_keeps_pending_new_active_conversation_until_it_appears() {
+        let (mut app, _) = App::new();
+        app.conversations = vec![xmtp_ipc::ConversationItem {
+            id: "conv-1".into(),
+            kind: "dm".into(),
+            name: Some("one".into()),
+            dm_peer_inbox_id: Some("peer-1".into()),
+            last_message_ns: Some(10),
+        }];
+        app.selected_conversation = 0;
+        app.active_conversation_id = Some("conv-2".into());
+        app.active_conversation = Some(xmtp_ipc::ConversationItem {
+            id: "conv-1".into(),
+            kind: "dm".into(),
+            name: Some("one".into()),
+            dm_peer_inbox_id: Some("peer-1".into()),
+            last_message_ns: Some(10),
+        });
+
+        let effects = app.handle_event(crate::event::AppEvent::ConversationsLoaded(vec![
+            xmtp_ipc::ConversationItem {
+                id: "conv-1".into(),
+                kind: "dm".into(),
+                name: Some("one".into()),
+                dm_peer_inbox_id: Some("peer-1".into()),
+                last_message_ns: Some(10),
+            },
+        ]));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.selected_conversation, 0);
+        assert_eq!(app.active_conversation_id.as_deref(), Some("conv-2"));
+        assert_eq!(app.active_conversation.as_ref().map(|c| c.id.as_str()), Some("conv-1"));
+
+        let effects = app.handle_event(crate::event::AppEvent::ConversationsLoaded(vec![
+            xmtp_ipc::ConversationItem {
+                id: "conv-1".into(),
+                kind: "dm".into(),
+                name: Some("one".into()),
+                dm_peer_inbox_id: Some("peer-1".into()),
+                last_message_ns: Some(10),
+            },
+            xmtp_ipc::ConversationItem {
+                id: "conv-2".into(),
+                kind: "dm".into(),
+                name: Some("two".into()),
+                dm_peer_inbox_id: Some("peer-2".into()),
+                last_message_ns: Some(20),
+            },
+        ]));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.selected_conversation, 1);
+        assert_eq!(app.active_conversation_id.as_deref(), Some("conv-2"));
+        assert_eq!(app.active_conversation.as_ref().map(|c| c.id.as_str()), Some("conv-2"));
     }
 
     #[test]
