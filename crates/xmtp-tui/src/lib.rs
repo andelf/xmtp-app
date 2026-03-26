@@ -8,42 +8,35 @@ use std::io;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use clap::Parser;
 use crossterm::event::EventStream;
-use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{event::Event, execute};
 use futures_util::StreamExt;
-use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
 use xmtp_config::load_config;
 
 use crate::app::App;
 use crate::event::AppEvent;
 use crate::ipc::Runtime;
 
-#[derive(Debug, Parser)]
-#[command(name = "xmtp-tui")]
-struct Cli {
-    #[arg(long, default_value = "./data")]
-    data_dir: PathBuf,
-}
-
-#[tokio::main(flavor = "multi_thread")]
-async fn main() {
-    if let Err(err) = run().await {
-        eprintln!("{err:#}");
-        std::process::exit(1);
+pub fn run(data_dir: PathBuf) -> anyhow::Result<()> {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(run_async(data_dir)))
+    } else {
+        tokio::runtime::Runtime::new()
+            .context("create tokio runtime for TUI")?
+            .block_on(run_async(data_dir))
     }
 }
 
-async fn run() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+async fn run_async(data_dir: PathBuf) -> anyhow::Result<()> {
     enable_raw_mode().context("enable raw mode")?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen).context("enter alternate screen")?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create terminal")?;
-    let result = run_app(&mut terminal, cli.data_dir).await;
+    let result = run_app(&mut terminal, data_dir).await;
     disable_raw_mode().ok();
     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
     terminal.show_cursor().ok();
@@ -63,7 +56,7 @@ async fn run_app(
     let daemon_ready = match runtime.ensure_ready().await {
         Ok(()) => true,
         Err(err) => {
-        let _ = tx.send(AppEvent::Error(format!("daemon unavailable: {}", err)));
+            let _ = tx.send(AppEvent::Error(format!("daemon unavailable: {}", err)));
             false
         }
     };

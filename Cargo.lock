@@ -4750,6 +4750,7 @@ dependencies = [
  "xmtp-ipc",
  "xmtp-logging",
  "xmtp-store",
+ "xmtp-tui",
 ]
 
 [[package]]

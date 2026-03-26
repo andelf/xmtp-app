@@ -19,7 +19,3 @@ tokio.workspace = true
 xmtp-config = { path = "../xmtp-config" }
 xmtp-daemon = { path = "../xmtp-daemon" }
 xmtp-ipc = { path = "../xmtp-ipc" }
-
-[[bin]]
-name = "xmtp-tui"
-path = "src/main.rs"

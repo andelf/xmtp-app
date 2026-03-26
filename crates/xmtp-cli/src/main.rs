@@ -56,6 +56,7 @@ enum Command {
     },
     Doctor,
     Status,
+    Tui,
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,
@@ -208,6 +209,7 @@ async fn run() -> anyhow::Result<()> {
         .await,
         Command::Doctor => doctor(data_dir).await,
         Command::Status => status(data_dir),
+        Command::Tui => xmtp_tui::run(data_dir),
         Command::Daemon { command } => daemon(data_dir, command).await,
         Command::Logs { kind, follow } => logs(data_dir, &kind, follow).await,
         Command::Watch { command } => watch(data_dir, command).await,

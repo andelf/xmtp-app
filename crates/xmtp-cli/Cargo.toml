@@ -21,6 +21,7 @@ xmtp-daemon = { path = "../xmtp-daemon" }
 xmtp-ipc = { path = "../xmtp-ipc" }
 xmtp-logging = { path = "../xmtp-logging" }
 xmtp-store = { path = "../xmtp-store" }
+xmtp-tui = { path = "../xmtp-tui" }
 
 [dev-dependencies]
 assert_cmd.workspace = true
