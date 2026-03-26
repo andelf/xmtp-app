@@ -95,7 +95,7 @@ enum Command {
         #[command(subcommand)]
         command: WatchCommand,
     },
-    #[command(about = "List DM and group conversations")]
+    #[command(about = "List DM and group conversations", visible_alias = "list")]
     ListConversations {
         #[arg(long, conflicts_with = "dm", help = "Show only group conversations")]
         group: bool,
@@ -1902,6 +1902,19 @@ mod tests {
         match cli.command {
             Command::ListConversations { group, dm } => {
                 assert!(group);
+                assert!(!dm);
+            }
+            _ => panic!("expected list-conversations command"),
+        }
+    }
+
+    #[test]
+    fn list_alias_parses_as_list_conversations() {
+        let cli = Cli::parse_from(["xmtp-cli", "list"]);
+
+        match cli.command {
+            Command::ListConversations { group, dm } => {
+                assert!(!group);
                 assert!(!dm);
             }
             _ => panic!("expected list-conversations command"),
