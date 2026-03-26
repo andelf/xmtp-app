@@ -161,6 +161,11 @@ pub fn normalize_signer_key_hex(key: &str) -> anyhow::Result<String> {
     Ok(format!("{:x}", signer.into_inner().to_bytes()))
 }
 
+pub fn signer_address_from_hex(key: &str) -> anyhow::Result<String> {
+    let signer = AlloySigner::from_hex(key).context("invalid private key hex")?;
+    Ok(signer.address())
+}
+
 fn signer_key_path(data_dir: &Path) -> PathBuf {
     data_dir.join("signer.key")
 }

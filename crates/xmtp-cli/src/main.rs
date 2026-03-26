@@ -15,6 +15,7 @@ use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_daemon::{
     HistoryEntry, addr_path, history_with_kind as load_history_direct,
     normalize_signer_key_hex, pid_path, resolve_conversation_id, serve,
+    signer_address_from_hex,
 };
 use xmtp_core::{ConnectionState, DaemonState, StateSnapshot, SyncPhase, SyncState};
 use xmtp_ipc::{
@@ -425,6 +426,12 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
         "{}",
         render_status_row("signer_key", bool_label(signer_path.exists()))
     );
+    if signer_path.exists()
+        && let Ok(key_hex) = fs::read_to_string(&signer_path)
+        && let Ok(address) = signer_address_from_hex(key_hex.trim())
+    {
+        println!("{}", render_status_row("eth_address", &address));
+    }
     if let Ok(config) = load_config(&config_path) {
         println!("{}", render_status_row("network", infer_network_name(&config)));
         println!(
