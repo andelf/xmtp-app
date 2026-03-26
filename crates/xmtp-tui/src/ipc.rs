@@ -684,7 +684,16 @@ async fn send_group(data_dir: &PathBuf, conversation_id: &str, message: &str) ->
 }
 
 async fn create_group(data_dir: &PathBuf, name: Option<String>, members: Vec<String>) -> anyhow::Result<ActionResponse> {
-    http_post(data_dir, "/v1/groups", &GroupCreateRequest { name, members }).await
+    http_post(
+        data_dir,
+        "/v1/groups",
+        &GroupCreateRequest {
+            name,
+            members,
+            permission_preset: None,
+        },
+    )
+    .await
 }
 
 async fn add_group_members(

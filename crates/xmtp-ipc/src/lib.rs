@@ -182,6 +182,7 @@ pub struct RecipientMessageRequest {
 pub struct GroupCreateRequest {
     pub name: Option<String>,
     pub members: Vec<String>,
+    pub permission_preset: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

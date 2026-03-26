@@ -24,8 +24,8 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, error, info, warn};
 use xmtp::content::{Content, ReactionAction};
 use xmtp::{
-    AlloySigner, Client, CreateGroupOptions, Env, MetadataField, PermissionPolicy,
-    PermissionUpdateType, Recipient,
+    AlloySigner, Client, CreateGroupOptions, Env, GroupPermissionsPreset, MetadataField,
+    PermissionPolicy, PermissionUpdateType, Recipient,
 };
 use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_core::{ConnectionState, DaemonState};
@@ -361,9 +361,10 @@ pub fn create_group(
     data_dir: &Path,
     name: Option<String>,
     members: &[String],
+    permission_preset: Option<&str>,
 ) -> anyhow::Result<SendMessageResult> {
     let client = open_existing_client(data_dir)?;
-    create_group_with_client(&client, name, members)
+    create_group_with_client(&client, name, members, permission_preset)
 }
 
 pub fn send_group(
@@ -542,13 +543,20 @@ fn create_group_with_client(
     client: &Client,
     name: Option<String>,
     members: &[String],
+    permission_preset: Option<&str>,
 ) -> anyhow::Result<SendMessageResult> {
     let recipients: Vec<Recipient> = members.iter().map(|member| Recipient::parse(member)).collect();
+    let permissions = match permission_preset {
+        Some("all_members") => Some(GroupPermissionsPreset::AllMembers),
+        Some("admin_only") => Some(GroupPermissionsPreset::AdminOnly),
+        _ => None,
+    };
     let conversation = client
         .group(
             &recipients,
             &CreateGroupOptions {
                 name,
+                permissions,
                 ..Default::default()
             },
         )
@@ -1680,8 +1688,18 @@ impl DaemonApp {
         })
     }
 
-    fn create_group(&mut self, name: Option<String>, members: Vec<String>) -> anyhow::Result<ActionResponse> {
-        let result = create_group_with_client(self.ensure_client()?, name, &members)?;
+    fn create_group(
+        &mut self,
+        name: Option<String>,
+        members: Vec<String>,
+        permission_preset: Option<String>,
+    ) -> anyhow::Result<ActionResponse> {
+        let result = create_group_with_client(
+            self.ensure_client()?,
+            name,
+            &members,
+            permission_preset.as_deref(),
+        )?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -2136,7 +2154,7 @@ async fn create_group_handler(
         format!("create group name={:?}", request.name),
         false,
         false,
-        move |app| app.create_group(request.name, request.members),
+        move |app| app.create_group(request.name, request.members, request.permission_preset),
     )
     .await
     .map_err(internal_error)?;

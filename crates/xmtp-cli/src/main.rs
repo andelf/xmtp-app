@@ -216,6 +216,8 @@ enum GroupCommand {
         name: Option<String>,
         #[arg(long = "member", required = true, help = "Initial member inbox ID; repeat for multiple members")]
         members: Vec<String>,
+        #[arg(long, help = "Permission preset: all_members or admin_only (default: all_members)")]
+        permission_preset: Option<String>,
     },
     #[command(about = "Send a message to a group")]
     Send {
@@ -705,7 +707,11 @@ async fn group(data_dir: PathBuf, command: GroupCommand) -> anyhow::Result<()> {
             conversation_id,
             watch,
         } => history(data_dir, &conversation_id, watch, Some("group")).await,
-        GroupCommand::Create { name, members } => group_create(data_dir, name, members).await,
+        GroupCommand::Create {
+            name,
+            members,
+            permission_preset,
+        } => group_create(data_dir, name, members, permission_preset).await,
         GroupCommand::Send {
             conversation_id,
             message,
@@ -735,8 +741,13 @@ async fn group(data_dir: PathBuf, command: GroupCommand) -> anyhow::Result<()> {
     }
 }
 
-async fn group_create(data_dir: PathBuf, name: Option<String>, members: Vec<String>) -> anyhow::Result<()> {
-    let result = daemon_create_group(&data_dir, name, members).await?;
+async fn group_create(
+    data_dir: PathBuf,
+    name: Option<String>,
+    members: Vec<String>,
+    permission_preset: Option<String>,
+) -> anyhow::Result<()> {
+    let result = daemon_create_group(&data_dir, name, members, permission_preset).await?;
     print_action_result("group-create", &result);
     Ok(())
 }
@@ -1182,8 +1193,18 @@ async fn daemon_create_group(
     data_dir: &PathBuf,
     name: Option<String>,
     members: Vec<String>,
+    permission_preset: Option<String>,
 ) -> anyhow::Result<ActionResponse> {
-    http_post(data_dir, "/v1/groups", &GroupCreateRequest { name, members }).await
+    http_post(
+        data_dir,
+        "/v1/groups",
+        &GroupCreateRequest {
+            name,
+            members,
+            permission_preset,
+        },
+    )
+    .await
 }
 
 async fn daemon_send_group(
@@ -1989,6 +2010,8 @@ mod tests {
             "create",
             "--name",
             "team",
+            "--permission-preset",
+            "admin_only",
             "--member",
             "member-1",
             "--member",
@@ -1997,10 +2020,16 @@ mod tests {
 
         match cli.command {
             Command::Group {
-                command: GroupCommand::Create { name, members },
+                command:
+                    GroupCommand::Create {
+                        name,
+                        members,
+                        permission_preset,
+                    },
             } => {
                 assert_eq!(name.as_deref(), Some("team"));
                 assert_eq!(members, vec!["member-1", "member-2"]);
+                assert_eq!(permission_preset.as_deref(), Some("admin_only"));
             }
             _ => panic!("expected group create command"),
         }
