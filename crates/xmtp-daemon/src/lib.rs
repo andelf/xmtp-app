@@ -1030,15 +1030,14 @@ fn summarize_decoded_content(content: &Content) -> String {
             )
         }
         Content::Reply(reply) => {
-            let inner_text = reply
+            reply
                 .content
                 .r#type
                 .as_ref()
                 .filter(|t| t.type_id == "text" || t.type_id == "markdown")
                 .and_then(|_| String::from_utf8(reply.content.content.clone()).ok())
                 .or_else(|| reply.content.fallback.clone())
-                .unwrap_or_else(|| "(reply)".to_owned());
-            format!("{} (↩ {})", inner_text, short_id(&reply.reference))
+                .unwrap_or_else(|| "(reply)".to_owned())
         }
         Content::ReadReceipt => "read receipt".to_owned(),
         Content::Attachment(attachment) => format!(
@@ -2336,7 +2335,7 @@ mod tests {
         }));
 
         assert_eq!(reaction, "reacted 👍 to abcd1234");
-        assert_eq!(reply, "hello world (↩ dcba4321)");
+        assert_eq!(reply, "hello world");
     }
 
     #[test]
