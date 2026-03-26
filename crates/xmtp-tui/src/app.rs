@@ -124,6 +124,7 @@ pub struct GroupManagementState {
     pub info: Option<GroupInfoResponse>,
     pub members: Vec<GroupMemberItem>,
     pub selected_member: usize,
+    pub info_member_scroll: usize,
     pub add_members_input: String,
     pub rename_input: String,
 }
@@ -217,6 +218,10 @@ impl App {
                         .group_management
                         .selected_member
                         .min(self.group_management.members.len().saturating_sub(1));
+                    self.group_management.info_member_scroll = self
+                        .group_management
+                        .info_member_scroll
+                        .min(self.group_management.members.len().saturating_sub(1));
                 }
                 Vec::new()
             }
@@ -233,6 +238,10 @@ impl App {
                 self.group_management.selected_member = self
                     .group_management
                     .selected_member
+                    .min(self.group_management.members.len().saturating_sub(1));
+                self.group_management.info_member_scroll = self
+                    .group_management
+                    .info_member_scroll
                     .min(self.group_management.members.len().saturating_sub(1));
                 Vec::new()
             }
@@ -937,7 +946,13 @@ impl App {
         match GroupManagementAction::all()[self.group_management.menu_index] {
             GroupManagementAction::ViewInfo => {
                 self.modal = Modal::GroupInfo;
-                vec![Effect::LoadGroupInfo { conversation_id }]
+                self.group_management.info_member_scroll = 0;
+                vec![
+                    Effect::LoadGroupInfo {
+                        conversation_id: conversation_id.clone(),
+                    },
+                    Effect::LoadGroupMembers { conversation_id },
+                ]
             }
             GroupManagementAction::AddMembers => {
                 self.modal = Modal::GroupAddMembers;
@@ -962,8 +977,21 @@ impl App {
     }
 
     fn handle_group_info_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        if matches!(key.code, KeyCode::Enter) {
-            self.modal = Modal::GroupManagement;
+        match key.code {
+            KeyCode::Up => {
+                if self.group_management.info_member_scroll > 0 {
+                    self.group_management.info_member_scroll -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.group_management.info_member_scroll + 1 < self.group_management.members.len() {
+                    self.group_management.info_member_scroll += 1;
+                }
+            }
+            KeyCode::Enter => {
+                self.modal = Modal::GroupManagement;
+            }
+            _ => {}
         }
         Vec::new()
     }

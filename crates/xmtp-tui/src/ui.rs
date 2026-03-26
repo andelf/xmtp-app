@@ -626,13 +626,21 @@ fn render_group_management(frame: &mut Frame<'_>, app: &App) {
 fn render_group_info(frame: &mut Frame<'_>, app: &App) {
     let area = centered_rect(64, 36, frame.area());
     frame.render_widget(Clear, area);
-    let text = if let Some(info) = &app.group_management.info {
+    let block = Block::default().title("Group Info").borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(6), Constraint::Min(3)])
+        .split(inner);
+
+    let info_lines = if let Some(info) = &app.group_management.info {
         vec![
             Line::from(format!(
                 "name: {}",
                 info.name.clone().unwrap_or_else(|| "-".to_owned())
             )),
-            Line::from(format!("members: {}", info.member_count)),
             Line::from(format!(
                 "creator: {}",
                 if info.creator_inbox_id.is_empty() {
@@ -642,6 +650,7 @@ fn render_group_info(frame: &mut Frame<'_>, app: &App) {
                 }
             )),
             Line::from(format!("type: {}", info.conversation_type)),
+            Line::from(format!("members: {}", info.member_count)),
         ]
     } else {
         vec![Line::from(Span::styled(
@@ -649,10 +658,49 @@ fn render_group_info(frame: &mut Frame<'_>, app: &App) {
             Style::default().dark_gray(),
         ))]
     };
-    let paragraph = Paragraph::new(text)
-        .block(Block::default().title("Group Info").borders(Borders::ALL))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, area);
+    frame.render_widget(
+        Paragraph::new(info_lines).wrap(Wrap { trim: false }),
+        sections[0],
+    );
+
+    let members_block = Block::default().title("Members").borders(Borders::ALL);
+    if app.group_management.members.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "loading...",
+                Style::default().dark_gray(),
+            )))
+            .block(members_block),
+            sections[1],
+        );
+        return;
+    }
+
+    let self_inbox_id = app.self_inbox_id();
+    let items: Vec<ListItem<'_>> = app
+        .group_management
+        .members
+        .iter()
+        .map(|member| {
+            let you_suffix = if self_inbox_id == Some(member.inbox_id.as_str()) {
+                "  [you]"
+            } else {
+                ""
+            };
+            ListItem::new(format!(
+                "{}  {}{}",
+                short_display_id(&member.inbox_id),
+                format_permission_level(&member.permission_level),
+                you_suffix
+            ))
+        })
+        .collect();
+    let mut state = ListState::default().with_offset(app.group_management.info_member_scroll);
+    frame.render_stateful_widget(
+        List::new(items).block(members_block),
+        sections[1],
+        &mut state,
+    );
 }
 
 fn render_group_add_members(frame: &mut Frame<'_>, app: &App) {
@@ -745,6 +793,14 @@ fn truncate(value: &str, max: usize) -> String {
         return value.to_owned();
     }
     chars[..max].iter().collect()
+}
+
+fn format_permission_level(value: &str) -> &str {
+    match value {
+        "super_admin" => "super_admin",
+        "admin" => "admin",
+        _ => "member",
+    }
 }
 
 fn format_reactions_line(item: &xmtp_ipc::HistoryItem) -> Option<String> {
