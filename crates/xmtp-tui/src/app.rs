@@ -721,7 +721,14 @@ impl App {
                 self.cursor = 0;
                 self.pending_status = Some("Sending...".to_owned());
                 if let Some(message_id) = self.reply_to_message_id.take() {
-                    return vec![Effect::Reply { message_id, text }];
+                    if let Some(conversation) = &self.active_conversation {
+                        return vec![Effect::Reply {
+                            message_id,
+                            text,
+                            conversation_id: conversation.id.clone(),
+                        }];
+                    }
+                    return Vec::new();
                 }
                 if let Some(conversation) = &self.active_conversation {
                     let target = self.active_info.as_ref().and_then(|info| info.dm_peer_inbox_id.clone());
@@ -832,10 +839,14 @@ impl App {
                 if let Some(message) = self.selected_history_item() {
                     let message_id = message.message_id.clone();
                     self.modal = Modal::None;
-                    return vec![Effect::React {
-                        message_id,
-                        emoji: reaction_choices()[self.reaction_picker_index].to_owned(),
-                    }];
+                    if let Some(conversation) = &self.active_conversation {
+                        return vec![Effect::React {
+                            message_id,
+                            emoji: reaction_choices()[self.reaction_picker_index].to_owned(),
+                            conversation_id: conversation.id.clone(),
+                        }];
+                    }
+                    return Vec::new();
                 }
                 self.modal = Modal::None;
             }

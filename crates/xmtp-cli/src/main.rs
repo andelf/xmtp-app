@@ -1088,6 +1088,7 @@ async fn daemon_send_group(
         &format!("/v1/groups/{conversation_id}/send"),
         &SendMessageRequest {
             message: message.to_owned(),
+            conversation_id: None,
         },
     )
     .await
@@ -1158,6 +1159,7 @@ async fn daemon_reply(
         &format!("/v1/messages/{message_id}/reply"),
         &SendMessageRequest {
             message: message.to_owned(),
+            conversation_id: None,
         },
     )
     .await
@@ -1174,6 +1176,7 @@ async fn daemon_react(
         &EmojiRequest {
             emoji: emoji.to_owned(),
             action: Some("add".to_owned()),
+            conversation_id: None,
         },
     )
     .await
@@ -1190,6 +1193,7 @@ async fn daemon_unreact(
         &EmojiRequest {
             emoji: emoji.to_owned(),
             action: Some("remove".to_owned()),
+            conversation_id: None,
         },
     )
     .await

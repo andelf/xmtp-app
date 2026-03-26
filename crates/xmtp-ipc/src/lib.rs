@@ -154,6 +154,7 @@ pub struct RecipientRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SendMessageRequest {
     pub message: String,
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -182,6 +183,7 @@ pub struct GroupMembersUpdateRequest {
 pub struct EmojiRequest {
     pub emoji: String,
     pub action: Option<String>,
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -53,6 +53,6 @@ pub enum Effect {
     RenameGroup { conversation_id: String, name: String },
     LeaveConversation { conversation_id: String },
     SendMessage { conversation_id: String, kind: String, target: Option<String>, text: String },
-    Reply { message_id: String, text: String },
-    React { message_id: String, emoji: String },
+    Reply { message_id: String, text: String, conversation_id: String },
+    React { message_id: String, emoji: String, conversation_id: String },
 }

@@ -406,12 +406,12 @@ pub fn leave_conversation(
 
 pub fn reply(data_dir: &Path, message_id: &str, text: &str) -> anyhow::Result<SendMessageResult> {
     let client = open_existing_client(data_dir)?;
-    reply_with_client(&client, message_id, text)
+    reply_with_client(&client, message_id, text, None)
 }
 
 pub fn react(data_dir: &Path, message_id: &str, emoji: &str) -> anyhow::Result<SendMessageResult> {
     let client = open_existing_client(data_dir)?;
-    react_with_action_with_client(&client, message_id, emoji, ReactionAction::Added)
+    react_with_action_with_client(&client, message_id, emoji, ReactionAction::Added, None)
 }
 
 pub fn unreact(
@@ -420,7 +420,7 @@ pub fn unreact(
     emoji: &str,
 ) -> anyhow::Result<SendMessageResult> {
     let client = open_existing_client(data_dir)?;
-    react_with_action_with_client(&client, message_id, emoji, ReactionAction::Removed)
+    react_with_action_with_client(&client, message_id, emoji, ReactionAction::Removed, None)
 }
 
 pub fn conversation_info(
@@ -671,8 +671,21 @@ fn leave_conversation_with_client(
     })
 }
 
-fn reply_with_client(client: &Client, message_id: &str, text: &str) -> anyhow::Result<SendMessageResult> {
-    let (conversation, resolved_message_id) = find_message_conversation(client, message_id)?;
+fn reply_with_client(
+    client: &Client,
+    message_id: &str,
+    text: &str,
+    conversation_id: Option<&str>,
+) -> anyhow::Result<SendMessageResult> {
+    let (conversation, resolved_message_id) = if let Some(conversation_id) = conversation_id {
+        let conversation = find_conversation_by_id(client, conversation_id)?;
+        let messages = conversation.messages().context("list messages")?;
+        let ids: Vec<String> = messages.iter().map(|message| message.id.clone()).collect();
+        let resolved_message_id = resolve_message_id(&ids, message_id)?;
+        (conversation, resolved_message_id)
+    } else {
+        find_message_conversation(client, message_id)?
+    };
     let sent_message_id = conversation
         .send_text_reply(&resolved_message_id, text)
         .context("send reply text")?;
@@ -687,8 +700,17 @@ fn react_with_action_with_client(
     message_id: &str,
     emoji: &str,
     action: ReactionAction,
+    conversation_id: Option<&str>,
 ) -> anyhow::Result<SendMessageResult> {
-    let (conversation, resolved_message_id) = find_message_conversation(client, message_id)?;
+    let (conversation, resolved_message_id) = if let Some(conversation_id) = conversation_id {
+        let conversation = find_conversation_by_id(client, conversation_id)?;
+        let messages = conversation.messages().context("list messages")?;
+        let ids: Vec<String> = messages.iter().map(|message| message.id.clone()).collect();
+        let resolved_message_id = resolve_message_id(&ids, message_id)?;
+        (conversation, resolved_message_id)
+    } else {
+        find_message_conversation(client, message_id)?
+    };
     let sent_message_id = conversation
         .send_reaction(&resolved_message_id, emoji, action)
         .context("send reaction")?;
@@ -1529,8 +1551,18 @@ impl DaemonApp {
         })
     }
 
-    fn reply(&mut self, message_id: String, message: String) -> anyhow::Result<ActionResponse> {
-        let result = reply_with_client(self.ensure_client()?, &message_id, &message)?;
+    fn reply(
+        &mut self,
+        message_id: String,
+        message: String,
+        conversation_id: Option<String>,
+    ) -> anyhow::Result<ActionResponse> {
+        let result = reply_with_client(
+            self.ensure_client()?,
+            &message_id,
+            &message,
+            conversation_id.as_deref(),
+        )?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1542,8 +1574,15 @@ impl DaemonApp {
         message_id: String,
         emoji: String,
         action: ReactionAction,
+        conversation_id: Option<String>,
     ) -> anyhow::Result<ActionResponse> {
-        let result = react_with_action_with_client(self.ensure_client()?, &message_id, &emoji, action)?;
+        let result = react_with_action_with_client(
+            self.ensure_client()?,
+            &message_id,
+            &emoji,
+            action,
+            conversation_id.as_deref(),
+        )?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1926,7 +1965,7 @@ async fn reply_handler(
         format!("reply message_id={message_id}"),
         false,
         true,
-        move |app| app.reply(message_id, request.message),
+        move |app| app.reply(message_id, request.message, request.conversation_id),
     )
     .await
     .map_err(internal_error)?;
@@ -1958,7 +1997,7 @@ async fn react_handler(
         format!("react message_id={message_id} action={action:?}"),
         false,
         true,
-        move |app| app.react_with_action(message_id, request.emoji, action),
+        move |app| app.react_with_action(message_id, request.emoji, action, request.conversation_id),
     )
     .await
     .map_err(internal_error)?;

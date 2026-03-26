@@ -82,8 +82,16 @@ impl Runtime {
                     target,
                     text,
                 } => self.spawn_send_message(conversation_id, kind, target, text),
-                Effect::Reply { message_id, text } => self.spawn_reply(message_id, text),
-                Effect::React { message_id, emoji } => self.spawn_react(message_id, emoji),
+                Effect::Reply {
+                    message_id,
+                    text,
+                    conversation_id,
+                } => self.spawn_reply(message_id, text, conversation_id),
+                Effect::React {
+                    message_id,
+                    emoji,
+                    conversation_id,
+                } => self.spawn_react(message_id, emoji, conversation_id),
             }
         }
     }
@@ -307,11 +315,11 @@ impl Runtime {
         });
     }
 
-    fn spawn_reply(&self, message_id: String, text: String) {
+    fn spawn_reply(&self, message_id: String, text: String, conversation_id: String) {
         let tx = self.tx.clone();
         let data_dir = self.data_dir.clone();
         tokio::spawn(async move {
-            match reply(&data_dir, &message_id, &text).await {
+            match reply(&data_dir, &message_id, &text, &conversation_id).await {
                 Ok(result) => {
                     let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::Sent {
                         conversation_id: result.conversation_id,
@@ -326,11 +334,11 @@ impl Runtime {
         });
     }
 
-    fn spawn_react(&self, message_id: String, emoji: String) {
+    fn spawn_react(&self, message_id: String, emoji: String, conversation_id: String) {
         let tx = self.tx.clone();
         let data_dir = self.data_dir.clone();
         tokio::spawn(async move {
-            match react(&data_dir, &message_id, &emoji).await {
+            match react(&data_dir, &message_id, &emoji, &conversation_id).await {
                 Ok(_result) => {
                     let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::Reacted));
                 }
@@ -598,6 +606,7 @@ async fn send_group(data_dir: &PathBuf, conversation_id: &str, message: &str) ->
         &format!("/v1/groups/{conversation_id}/send"),
         &SendMessageRequest {
             message: message.to_owned(),
+            conversation_id: None,
         },
     )
     .await
@@ -653,24 +662,36 @@ async fn leave_conversation(data_dir: &PathBuf, conversation_id: &str) -> anyhow
     .await
 }
 
-async fn reply(data_dir: &PathBuf, message_id: &str, message: &str) -> anyhow::Result<ActionResponse> {
+async fn reply(
+    data_dir: &PathBuf,
+    message_id: &str,
+    message: &str,
+    conversation_id: &str,
+) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
         &format!("/v1/messages/{message_id}/reply"),
         &SendMessageRequest {
             message: message.to_owned(),
+            conversation_id: Some(conversation_id.to_owned()),
         },
     )
     .await
 }
 
-async fn react(data_dir: &PathBuf, message_id: &str, emoji: &str) -> anyhow::Result<ActionResponse> {
+async fn react(
+    data_dir: &PathBuf,
+    message_id: &str,
+    emoji: &str,
+    conversation_id: &str,
+) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
         &format!("/v1/messages/{message_id}/react"),
         &EmojiRequest {
             emoji: emoji.to_owned(),
             action: Some("add".to_owned()),
+            conversation_id: Some(conversation_id.to_owned()),
         },
     )
     .await
