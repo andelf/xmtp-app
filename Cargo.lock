@@ -4853,6 +4853,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "xmtp-config",
  "xmtp-daemon",
  "xmtp-ipc",
 ]

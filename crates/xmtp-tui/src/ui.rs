@@ -320,6 +320,7 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .as_ref()
         .map(|status| status.daemon_state.to_string())
         .unwrap_or_else(|| "unknown".to_owned());
+    let xmtp_env = app.xmtp_env.as_deref().unwrap_or("unknown");
     let selected_message_id = app
         .messages
         .get(app.selected_message)
@@ -352,7 +353,7 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Style::default().fg(Color::Yellow)
     };
     let mut runtime_spans = vec![
-        Span::raw(format!("me {} | ", me)),
+        Span::raw(format!("me {} | {} | ", me, xmtp_env)),
         Span::styled(online.clone(), connection_style),
         Span::raw(" | daemon "),
         Span::styled(daemon.clone(), daemon_style),

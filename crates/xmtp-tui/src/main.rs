@@ -15,6 +15,7 @@ use crossterm::{event::Event, execute};
 use futures_util::StreamExt;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use xmtp_config::load_config;
 
 use crate::app::App;
 use crate::event::AppEvent;
@@ -55,6 +56,9 @@ async fn run_app(
 ) -> anyhow::Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let (mut app, initial_effects) = App::new();
+    if let Ok(config) = load_config(&data_dir.join("config.json")) {
+        app.xmtp_env = Some(config.xmtp_env);
+    }
     let mut runtime = Runtime::new(data_dir, tx.clone());
     let daemon_ready = match runtime.ensure_ready().await {
         Ok(()) => true,
