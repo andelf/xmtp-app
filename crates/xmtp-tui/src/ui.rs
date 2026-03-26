@@ -235,19 +235,24 @@ fn render_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
     if let Some(reply_to) = &app.reply_to_message_id {
         lines.push(Line::from(format!("reply -> {}", short_display_id(reply_to))));
     }
-    lines.extend(render_input_lines(app));
+    lines.extend(render_input_lines(app, app.focus == Focus::Input));
     let paragraph = Paragraph::new(lines)
         .block(titled_block("Input", app.focus == Focus::Input))
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }
 
-fn render_input_lines(app: &App) -> Vec<Line<'static>> {
+fn render_input_lines(app: &App, focused: bool) -> Vec<Line<'static>> {
     if app.input.is_empty() {
-        return vec![Line::from(vec![
-            Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)),
-            Span::styled("Type message", Style::default().dark_gray()),
-        ])];
+        let mut spans = Vec::new();
+        if focused {
+            spans.push(Span::styled(
+                " ",
+                Style::default().add_modifier(Modifier::REVERSED),
+            ));
+        }
+        spans.push(Span::styled("Type message", Style::default().dark_gray()));
+        return vec![Line::from(spans)];
     }
 
     let mut lines = Vec::new();
@@ -256,10 +261,12 @@ fn render_input_lines(app: &App) -> Vec<Line<'static>> {
 
     for (index, ch) in chars.iter().enumerate() {
         if index == app.cursor && *ch == '\n' {
-            spans.push(Span::styled(
-                " ",
-                Style::default().add_modifier(Modifier::REVERSED),
-            ));
+            if focused {
+                spans.push(Span::styled(
+                    " ",
+                    Style::default().add_modifier(Modifier::REVERSED),
+                ));
+            }
             lines.push(Line::from(std::mem::take(&mut spans)));
             continue;
         }
@@ -269,7 +276,7 @@ fn render_input_lines(app: &App) -> Vec<Line<'static>> {
             continue;
         }
 
-        let span = if index == app.cursor {
+        let span = if focused && index == app.cursor {
             Span::styled(
                 ch.to_string(),
                 Style::default().add_modifier(Modifier::REVERSED),
@@ -280,7 +287,7 @@ fn render_input_lines(app: &App) -> Vec<Line<'static>> {
         spans.push(span);
     }
 
-    if app.cursor == chars.len() {
+    if focused && app.cursor == chars.len() {
         spans.push(Span::styled(
             " ",
             Style::default().add_modifier(Modifier::REVERSED),
