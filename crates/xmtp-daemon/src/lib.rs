@@ -411,7 +411,7 @@ pub fn reply(data_dir: &Path, message_id: &str, text: &str) -> anyhow::Result<Se
 
 pub fn react(data_dir: &Path, message_id: &str, emoji: &str) -> anyhow::Result<SendMessageResult> {
     let client = open_existing_client(data_dir)?;
-    react_with_client(&client, message_id, emoji)
+    react_with_action_with_client(&client, message_id, emoji, ReactionAction::Added)
 }
 
 pub fn unreact(
@@ -420,7 +420,7 @@ pub fn unreact(
     emoji: &str,
 ) -> anyhow::Result<SendMessageResult> {
     let client = open_existing_client(data_dir)?;
-    unreact_with_client(&client, message_id, emoji)
+    react_with_action_with_client(&client, message_id, emoji, ReactionAction::Removed)
 }
 
 pub fn conversation_info(
@@ -682,26 +682,16 @@ fn reply_with_client(client: &Client, message_id: &str, text: &str) -> anyhow::R
     })
 }
 
-fn react_with_client(client: &Client, message_id: &str, emoji: &str) -> anyhow::Result<SendMessageResult> {
-    let (conversation, resolved_message_id) = find_message_conversation(client, message_id)?;
-    let sent_message_id = conversation
-        .send_reaction(&resolved_message_id, emoji, ReactionAction::Added)
-        .context("send reaction")?;
-    Ok(SendMessageResult {
-        conversation_id: conversation.id(),
-        message_id: sent_message_id,
-    })
-}
-
-fn unreact_with_client(
+fn react_with_action_with_client(
     client: &Client,
     message_id: &str,
     emoji: &str,
+    action: ReactionAction,
 ) -> anyhow::Result<SendMessageResult> {
     let (conversation, resolved_message_id) = find_message_conversation(client, message_id)?;
     let sent_message_id = conversation
-        .send_reaction(&resolved_message_id, emoji, ReactionAction::Removed)
-        .context("remove reaction")?;
+        .send_reaction(&resolved_message_id, emoji, action)
+        .context("send reaction")?;
     Ok(SendMessageResult {
         conversation_id: conversation.id(),
         message_id: sent_message_id,
@@ -1547,16 +1537,13 @@ impl DaemonApp {
         })
     }
 
-    fn react(&mut self, message_id: String, emoji: String) -> anyhow::Result<ActionResponse> {
-        let result = react_with_client(self.ensure_client()?, &message_id, &emoji)?;
-        Ok(ActionResponse {
-            conversation_id: result.conversation_id,
-            message_id: result.message_id,
-        })
-    }
-
-    fn unreact(&mut self, message_id: String, emoji: String) -> anyhow::Result<ActionResponse> {
-        let result = unreact_with_client(self.ensure_client()?, &message_id, &emoji)?;
+    fn react_with_action(
+        &mut self,
+        message_id: String,
+        emoji: String,
+        action: ReactionAction,
+    ) -> anyhow::Result<ActionResponse> {
+        let result = react_with_action_with_client(self.ensure_client()?, &message_id, &emoji, action)?;
         Ok(ActionResponse {
             conversation_id: result.conversation_id,
             message_id: result.message_id,
@@ -1951,29 +1938,27 @@ async fn react_handler(
     AxumPath(message_id): AxumPath<String>,
     Json(request): Json<EmojiRequest>,
 ) -> Result<Json<ActionResponse>, ApiErrorResponse> {
+    let action = match request.action.as_deref() {
+        Some("remove") => ReactionAction::Removed,
+        Some("add") | None => ReactionAction::Added,
+        Some(other) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorBody {
+                    error: ApiErrorDetail {
+                        code: "invalid_reaction_action".to_owned(),
+                        message: format!("unsupported reaction action: {other}"),
+                    },
+                }),
+            ));
+        }
+    };
     let result = run_app(
         &state,
-        format!("react message_id={message_id}"),
+        format!("react message_id={message_id} action={action:?}"),
         false,
         true,
-        move |app| app.react(message_id, request.emoji),
-    )
-    .await
-    .map_err(internal_error)?;
-    Ok(Json(result))
-}
-
-async fn unreact_handler(
-    State(state): State<HttpState>,
-    AxumPath(message_id): AxumPath<String>,
-    Json(request): Json<EmojiRequest>,
-) -> Result<Json<ActionResponse>, ApiErrorResponse> {
-    let result = run_app(
-        &state,
-        format!("unreact message_id={message_id}"),
-        false,
-        true,
-        move |app| app.unreact(message_id, request.emoji),
+        move |app| app.react_with_action(message_id, request.emoji, action),
     )
     .await
     .map_err(internal_error)?;
@@ -2358,9 +2343,8 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
         .route("/v1/messages/{message_id}", get(message_info_handler))
         .route("/v1/messages/{message_id}/reply", post(reply_handler))
         .route("/v1/messages/{message_id}/react", post(react_handler))
-        .route("/v1/messages/{message_id}/unreact", post(unreact_handler))
         .route("/v1/events", get(app_events_handler))
-        .route("/v1/events/history/{conversation_id}", get(history_events_handler))
+        .route("/v1/conversations/{conversation_id}/events", get(history_events_handler))
         .with_state(HttpState {
             app,
             shutdown_tx: shutdown_tx.clone(),

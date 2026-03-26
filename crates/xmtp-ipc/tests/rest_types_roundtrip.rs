@@ -58,6 +58,7 @@ fn group_and_message_requests_roundtrip_as_json() {
     };
     let emoji = EmojiRequest {
         emoji: "👍".to_owned(),
+        action: Some("add".to_owned()),
     };
 
     let group_json = serde_json::to_string(&group).expect("serialize group request");
@@ -75,6 +76,7 @@ fn group_and_message_requests_roundtrip_as_json() {
     assert_eq!(decoded_group.members.len(), 2);
     assert_eq!(decoded_send.message, "hi");
     assert_eq!(decoded_emoji.emoji, "👍");
+    assert_eq!(decoded_emoji.action.as_deref(), Some("add"));
 }
 
 #[test]

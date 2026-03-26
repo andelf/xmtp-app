@@ -735,7 +735,7 @@ async fn watch_history(
     let resolved_conversation_id = resolve_conversation_id(&data_dir, conversation_id, kind)?;
     let client = reqwest::Client::new();
     let base_url = daemon_base_url(&data_dir)?;
-    let url = format!("{base_url}/v1/events/history/{resolved_conversation_id}");
+    let url = format!("{base_url}/v1/conversations/{resolved_conversation_id}/events");
     let response = client
         .get(url)
         .send()
@@ -1173,6 +1173,7 @@ async fn daemon_react(
         &format!("/v1/messages/{message_id}/react"),
         &EmojiRequest {
             emoji: emoji.to_owned(),
+            action: Some("add".to_owned()),
         },
     )
     .await
@@ -1185,9 +1186,10 @@ async fn daemon_unreact(
 ) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
-        &format!("/v1/messages/{message_id}/unreact"),
+        &format!("/v1/messages/{message_id}/react"),
         &EmojiRequest {
             emoji: emoji.to_owned(),
+            action: Some("remove".to_owned()),
         },
     )
     .await

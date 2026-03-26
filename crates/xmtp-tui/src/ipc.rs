@@ -417,7 +417,7 @@ async fn watch_history(
             }
         };
         let response = match http_client()
-            .get(format!("{base_url}/v1/events/history/{conversation_id}"))
+            .get(format!("{base_url}/v1/conversations/{conversation_id}/events"))
             .send()
             .await
             .context("open history sse stream")
@@ -571,7 +571,7 @@ async fn watch_app_events(
                     let _ = tx.send(AppEvent::Error(message));
                 }
                 // Global /v1/events currently only carries app-level snapshots and errors.
-                // History items come from the dedicated /v1/events/history/:id stream.
+                // History items come from the dedicated /v1/conversations/:id/events stream.
                 DaemonEventData::HistoryItem { .. } => {}
             }
         }
@@ -670,6 +670,7 @@ async fn react(data_dir: &PathBuf, message_id: &str, emoji: &str) -> anyhow::Res
         &format!("/v1/messages/{message_id}/react"),
         &EmojiRequest {
             emoji: emoji.to_owned(),
+            action: Some("add".to_owned()),
         },
     )
     .await

@@ -181,6 +181,7 @@ pub struct GroupMembersUpdateRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmojiRequest {
     pub emoji: String,
+    pub action: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
