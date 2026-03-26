@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -81,13 +83,8 @@ async fn run_acp_inner(
     .await
     .context("ACP initialize")?;
 
-    let session = conn
-        .new_session(acp::NewSessionRequest::new(
-            std::env::current_dir().context("read current working directory")?,
-        ))
-        .await
-        .context("ACP new_session")?;
-    let session_id = session.session_id.clone();
+    let cwd = std::env::current_dir().context("read current working directory")?;
+    let session_id = ensure_acp_session(&data_dir, &conversation_id, &conn, &cwd).await?;
     eprintln!("ACP session ready: {}", session_id.0);
 
     let bridge_result =
@@ -101,6 +98,80 @@ async fn run_acp_inner(
     let _ = child.wait().await;
     io_handle.abort();
     bridge_result
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct PersistedAcpSessions {
+    sessions: HashMap<String, String>,
+}
+
+fn acp_sessions_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("acp_sessions.json")
+}
+
+fn load_acp_sessions(data_dir: &Path) -> anyhow::Result<PersistedAcpSessions> {
+    let path = acp_sessions_path(data_dir);
+    if !path.exists() {
+        return Ok(PersistedAcpSessions::default());
+    }
+    let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
+}
+
+fn save_acp_sessions(data_dir: &Path, sessions: &PersistedAcpSessions) -> anyhow::Result<()> {
+    let path = acp_sessions_path(data_dir);
+    let payload = serde_json::to_vec_pretty(sessions).context("serialize ACP sessions")?;
+    fs::write(&path, payload).with_context(|| format!("write {}", path.display()))
+}
+
+fn persisted_session_id(data_dir: &Path, conversation_id: &str) -> anyhow::Result<Option<String>> {
+    Ok(load_acp_sessions(data_dir)?.sessions.get(conversation_id).cloned())
+}
+
+fn store_session_id(
+    data_dir: &Path,
+    conversation_id: &str,
+    session_id: &acp::SessionId,
+) -> anyhow::Result<()> {
+    let mut sessions = load_acp_sessions(data_dir)?;
+    sessions
+        .sessions
+        .insert(conversation_id.to_owned(), session_id.0.to_string());
+    save_acp_sessions(data_dir, &sessions)
+}
+
+async fn ensure_acp_session(
+    data_dir: &Path,
+    conversation_id: &str,
+    conn: &acp::ClientSideConnection,
+    cwd: &Path,
+) -> anyhow::Result<acp::SessionId> {
+    if let Some(saved_session_id) = persisted_session_id(data_dir, conversation_id)? {
+        let session_id = acp::SessionId::new(saved_session_id.clone());
+        match conn
+            .load_session(acp::LoadSessionRequest::new(session_id.clone(), cwd.to_path_buf()))
+            .await
+        {
+            Ok(_) => {
+                eprintln!("ACP session restored: {}", session_id.0);
+                store_session_id(data_dir, conversation_id, &session_id)?;
+                return Ok(session_id);
+            }
+            Err(err) => {
+                eprintln!(
+                    "ACP session restore failed for conversation {}: {err:#}",
+                    conversation_id
+                );
+            }
+        }
+    }
+
+    let session = conn
+        .new_session(acp::NewSessionRequest::new(cwd.to_path_buf()))
+        .await
+        .context("ACP new_session")?;
+    store_session_id(data_dir, conversation_id, &session.session_id)?;
+    Ok(session.session_id)
 }
 
 async fn bridge_history_to_acp(
