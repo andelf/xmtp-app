@@ -384,6 +384,31 @@ impl App {
                     Effect::LoadGroupMembers { conversation_id },
                 ]
             }
+            ActionOutcome::LeftConversation(conversation_id) => {
+                self.pending_status = None;
+                self.last_error = None;
+                self.modal = Modal::None;
+                self.group_management = GroupManagementState::default();
+                self.conversations
+                    .retain(|conversation| conversation.id != conversation_id);
+                if self.conversations.is_empty() {
+                    self.selected_conversation = 0;
+                    self.active_conversation_id = None;
+                    self.active_conversation = None;
+                    self.active_info = None;
+                    self.active_history_loading = false;
+                    self.messages.clear();
+                    self.focus = Focus::Conversations;
+                    Vec::new()
+                } else {
+                    self.selected_conversation = self
+                        .selected_conversation
+                        .min(self.conversations.len().saturating_sub(1));
+                    let conversation = self.conversations[self.selected_conversation].clone();
+                    self.focus = Focus::Conversations;
+                    self.activate_conversation(conversation)
+                }
+            }
             ActionOutcome::Sent {
                 conversation_id,
                 message_id,
@@ -1025,9 +1050,13 @@ impl App {
 
     fn handle_group_leave_confirm_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+            let Some(conversation_id) = self.active_group_id().map(str::to_owned) else {
+                self.modal = Modal::None;
+                return Vec::new();
+            };
             self.modal = Modal::None;
-            self.last_error = Some("Leave group is not supported in this version".to_owned());
-            return Vec::new();
+            self.pending_status = Some("Leaving group...".to_owned());
+            return vec![Effect::LeaveConversation { conversation_id }];
         }
         Vec::new()
     }
@@ -1637,7 +1666,7 @@ mod tests {
     }
 
     #[test]
-    fn leave_group_confirm_sets_explicit_unsupported_message() {
+    fn leave_group_confirm_dispatches_real_leave_effect() {
         let (mut app, _) = App::new();
         app.active_conversation = Some(xmtp_ipc::ConversationItem {
             id: "grp-1".into(),
@@ -1654,12 +1683,12 @@ mod tests {
             KeyModifiers::NONE,
         ))));
 
-        assert!(effects.is_empty());
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::LeaveConversation { conversation_id }] if conversation_id == "grp-1"
+        ));
         assert_eq!(app.modal, Modal::None);
-        assert_eq!(
-            app.last_error.as_deref(),
-            Some("Leave group is not supported in this version")
-        );
+        assert_eq!(app.pending_status.as_deref(), Some("Leaving group..."));
     }
 
     #[test]

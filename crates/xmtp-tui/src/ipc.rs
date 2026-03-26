@@ -73,6 +73,9 @@ impl Runtime {
                     conversation_id,
                     name,
                 } => self.spawn_rename_group(conversation_id, name),
+                Effect::LeaveConversation { conversation_id } => {
+                    self.spawn_leave_conversation(conversation_id)
+                }
                 Effect::SendMessage {
                     conversation_id,
                     kind,
@@ -243,6 +246,23 @@ impl Runtime {
                 Ok(result) => {
                     let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::GroupUpdated(
                         result.conversation_id,
+                    )));
+                }
+                Err(err) => {
+                    let _ = tx.send(AppEvent::Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    fn spawn_leave_conversation(&self, conversation_id: String) {
+        let tx = self.tx.clone();
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            match leave_conversation(&data_dir, &conversation_id).await {
+                Ok(_result) => {
+                    let _ = tx.send(AppEvent::ActionCompleted(ActionOutcome::LeftConversation(
+                        conversation_id,
                     )));
                 }
                 Err(err) => {
@@ -620,6 +640,15 @@ async fn rename_group(data_dir: &PathBuf, conversation_id: &str, name: &str) -> 
         &RenameGroupRequest {
             name: name.to_owned(),
         },
+    )
+    .await
+}
+
+async fn leave_conversation(data_dir: &PathBuf, conversation_id: &str) -> anyhow::Result<ActionResponse> {
+    http_post(
+        data_dir,
+        &format!("/v1/conversations/{conversation_id}/leave"),
+        &(),
     )
     .await
 }

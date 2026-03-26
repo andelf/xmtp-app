@@ -616,10 +616,11 @@ fn leave_conversation_with_client(
     conversation_id: &str,
 ) -> anyhow::Result<SendMessageResult> {
     let conversation = find_conversation_by_id(client, conversation_id)?;
-    anyhow::bail!(
-        "leave conversation is temporarily disabled because the current XMTP SDK path is unstable for this runtime: {}",
-        conversation.id()
-    );
+    conversation.leave().context("leave conversation")?;
+    Ok(SendMessageResult {
+        conversation_id: conversation.id(),
+        message_id: String::new(),
+    })
 }
 
 fn reply_with_client(client: &Client, message_id: &str, text: &str) -> anyhow::Result<SendMessageResult> {
@@ -1849,6 +1850,7 @@ async fn leave_conversation_handler(
     State(state): State<HttpState>,
     AxumPath(conversation_id): AxumPath<String>,
 ) -> Result<Json<ActionResponse>, ApiErrorResponse> {
+    let event_conversation_id = conversation_id.clone();
     let result = run_app(
         &state,
         format!("leave conversation id={conversation_id}"),
@@ -1858,6 +1860,8 @@ async fn leave_conversation_handler(
     )
     .await
     .map_err(internal_error)?;
+    publish_conversation_updated_now(&state, &event_conversation_id);
+    publish_conversation_snapshot_now(&state);
     Ok(Json(result))
 }
 

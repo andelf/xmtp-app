@@ -37,6 +37,7 @@ pub enum ActionOutcome {
     CreatedGroup(ActionResponse),
     Reacted,
     GroupUpdated(String),
+    LeftConversation(String),
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +51,7 @@ pub enum Effect {
     AddGroupMembers { conversation_id: String, members: Vec<String> },
     RemoveGroupMembers { conversation_id: String, members: Vec<String> },
     RenameGroup { conversation_id: String, name: String },
+    LeaveConversation { conversation_id: String },
     SendMessage { conversation_id: String, kind: String, target: Option<String>, text: String },
     Reply { message_id: String, text: String },
     React { message_id: String, emoji: String },
