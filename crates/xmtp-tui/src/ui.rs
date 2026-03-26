@@ -566,7 +566,8 @@ fn render_group_management(frame: &mut Frame<'_>, app: &App) {
     frame.render_widget(Clear, area);
     let items: Vec<ListItem<'_>> = GroupManagementAction::all()
         .into_iter()
-        .map(|action| ListItem::new(action.label()))
+        .enumerate()
+        .map(|(index, action)| ListItem::new(format!("{}. {}", index + 1, action.label())))
         .collect();
     let mut state = ListState::default().with_selected(Some(app.group_management.menu_index));
     let title = app
@@ -686,8 +687,8 @@ fn render_group_leave_confirm(frame: &mut Frame<'_>, app: &App) {
         .unwrap_or_else(|| "group".to_owned());
     let text = vec![
         Line::from(format!("Leave {name}?")),
-        Line::from("Leave group is not supported in this version."),
-        Line::from("press y to acknowledge"),
+        Line::from("This will remove this conversation from the current account."),
+        Line::from("press y to confirm"),
         Line::from("press Esc to cancel"),
     ];
     let paragraph = Paragraph::new(text)

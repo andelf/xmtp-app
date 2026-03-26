@@ -914,37 +914,51 @@ impl App {
                     self.group_management.menu_index += 1;
                 }
             }
-            KeyCode::Enter => {
-                let Some(conversation_id) = self.active_group_id().map(str::to_owned) else {
-                    self.modal = Modal::None;
-                    return Vec::new();
-                };
-                match GroupManagementAction::all()[self.group_management.menu_index] {
-                    GroupManagementAction::ViewInfo => {
-                        self.modal = Modal::GroupInfo;
-                        return vec![Effect::LoadGroupInfo { conversation_id }];
-                    }
-                    GroupManagementAction::AddMembers => {
-                        self.modal = Modal::GroupAddMembers;
-                        self.group_management.add_members_input.clear();
-                    }
-                    GroupManagementAction::RemoveMembers => {
-                        self.modal = Modal::GroupRemoveMembers;
-                        self.group_management.selected_member = 0;
-                        return vec![Effect::LoadGroupMembers { conversation_id }];
-                    }
-                    GroupManagementAction::Rename => {
-                        self.modal = Modal::GroupRename;
-                        self.group_management.rename_input.clear();
-                    }
-                    GroupManagementAction::LeaveGroup => {
-                        self.modal = Modal::GroupLeaveConfirm;
-                    }
+            KeyCode::Char(ch) if ('1'..='5').contains(&ch) => {
+                let index = (ch as u8 - b'1') as usize;
+                if index < GroupManagementAction::all().len() {
+                    self.group_management.menu_index = index;
+                    return self.activate_group_management_action();
                 }
+            }
+            KeyCode::Enter => {
+                return self.activate_group_management_action();
             }
             _ => {}
         }
         Vec::new()
+    }
+
+    fn activate_group_management_action(&mut self) -> Vec<Effect> {
+        let Some(conversation_id) = self.active_group_id().map(str::to_owned) else {
+            self.modal = Modal::None;
+            return Vec::new();
+        };
+        match GroupManagementAction::all()[self.group_management.menu_index] {
+            GroupManagementAction::ViewInfo => {
+                self.modal = Modal::GroupInfo;
+                vec![Effect::LoadGroupInfo { conversation_id }]
+            }
+            GroupManagementAction::AddMembers => {
+                self.modal = Modal::GroupAddMembers;
+                self.group_management.add_members_input.clear();
+                Vec::new()
+            }
+            GroupManagementAction::RemoveMembers => {
+                self.modal = Modal::GroupRemoveMembers;
+                self.group_management.selected_member = 0;
+                vec![Effect::LoadGroupMembers { conversation_id }]
+            }
+            GroupManagementAction::Rename => {
+                self.modal = Modal::GroupRename;
+                self.group_management.rename_input.clear();
+                Vec::new()
+            }
+            GroupManagementAction::LeaveGroup => {
+                self.modal = Modal::GroupLeaveConfirm;
+                Vec::new()
+            }
+        }
     }
 
     fn handle_group_info_key(&mut self, key: KeyEvent) -> Vec<Effect> {
