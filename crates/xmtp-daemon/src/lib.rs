@@ -147,6 +147,9 @@ fn build_client(config: &AppConfig, signer: &AlloySigner, data_dir: &Path) -> an
     if let Some(api_url) = &config.api_url {
         builder = builder.api_url(api_url.clone());
     }
+    if let Some(gateway_url) = &config.gateway_url {
+        builder = builder.gateway_host(gateway_url.clone());
+    }
     let client = builder.build(signer).context("build XMTP client")?;
     Ok(client)
 }
@@ -163,11 +166,17 @@ fn open_client_with_login(data_dir: &Path, env: &str) -> anyhow::Result<Client> 
     build_client(&config, &signer, data_dir)
 }
 
-pub fn configure_runtime(data_dir: &Path, env: &str, api_url: Option<&str>) -> anyhow::Result<()> {
+pub fn configure_runtime(
+    data_dir: &Path,
+    env: &str,
+    api_url: Option<&str>,
+    gateway_url: Option<&str>,
+) -> anyhow::Result<()> {
     ensure_initialized(data_dir)?;
     let mut config = load_config(&data_dir.join("config.json"))?;
     config.xmtp_env = env.to_owned();
     config.api_url = api_url.map(str::to_owned);
+    config.gateway_url = gateway_url.map(str::to_owned);
     save_config(&data_dir.join("config.json"), &config)
 }
 
@@ -1158,8 +1167,18 @@ impl DaemonApp {
         Some(DaemonEventData::ConversationList(conversations))
     }
 
-    fn login(&mut self, env: String, api_url: Option<String>) -> anyhow::Result<StatusResponse> {
-        configure_runtime(&self.data_dir, &env, api_url.as_deref())?;
+    fn login(
+        &mut self,
+        env: String,
+        api_url: Option<String>,
+        gateway_url: Option<String>,
+    ) -> anyhow::Result<StatusResponse> {
+        configure_runtime(
+            &self.data_dir,
+            &env,
+            api_url.as_deref(),
+            gateway_url.as_deref(),
+        )?;
         let client = open_client_with_login(&self.data_dir, &env)?;
         let runtime = RuntimeInfo {
             inbox_id: client.inbox_id().context("get inbox id")?,
@@ -1510,7 +1529,7 @@ async fn login_handler(
         format!("login env={}", request.env),
         true,
         true,
-        move |app| app.login(request.env, request.api_url),
+        move |app| app.login(request.env, request.api_url, request.gateway_url),
     )
     .await
     .map_err(internal_error)?;

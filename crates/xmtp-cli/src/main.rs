@@ -49,6 +49,8 @@ enum Command {
         env: String,
         #[arg(long)]
         api_url: Option<String>,
+        #[arg(long)]
+        gateway_url: Option<String>,
     },
     Doctor,
     Status,
@@ -189,7 +191,11 @@ async fn run() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Init => init(data_dir),
-        Command::Login { env, api_url } => login(data_dir, &env, api_url.as_deref()).await,
+        Command::Login {
+            env,
+            api_url,
+            gateway_url,
+        } => login(data_dir, &env, api_url.as_deref(), gateway_url.as_deref()).await,
         Command::Doctor => doctor(data_dir).await,
         Command::Status => status(data_dir),
         Command::Daemon { command } => daemon(data_dir, command).await,
@@ -343,8 +349,13 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn login(data_dir: PathBuf, env: &str, api_url: Option<&str>) -> anyhow::Result<()> {
-    let status = daemon_login(&data_dir, env, api_url).await?;
+async fn login(
+    data_dir: PathBuf,
+    env: &str,
+    api_url: Option<&str>,
+    gateway_url: Option<&str>,
+) -> anyhow::Result<()> {
+    let status = daemon_login(&data_dir, env, api_url, gateway_url).await?;
     print_status_response(status)?;
     Ok(())
 }
@@ -787,6 +798,7 @@ async fn daemon_login(
     data_dir: &PathBuf,
     env: &str,
     api_url: Option<&str>,
+    gateway_url: Option<&str>,
 ) -> anyhow::Result<StatusResponse> {
     http_post(
         data_dir,
@@ -794,6 +806,7 @@ async fn daemon_login(
         &LoginRequest {
             env: env.to_owned(),
             api_url: api_url.map(str::to_owned),
+            gateway_url: gateway_url.map(str::to_owned),
         },
     )
     .await

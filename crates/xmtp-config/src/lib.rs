@@ -14,6 +14,7 @@ pub struct AppConfig {
     pub daemon_addr_path: String,
     pub log_level: String,
     pub api_url: Option<String>,
+    pub gateway_url: Option<String>,
 }
 
 impl AppConfig {
@@ -26,6 +27,7 @@ impl AppConfig {
             daemon_addr_path: data_dir.join("daemon.addr").display().to_string(),
             log_level: "info".to_owned(),
             api_url: None,
+            gateway_url: None,
         }
     }
 }

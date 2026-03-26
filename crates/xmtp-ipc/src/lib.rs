@@ -143,6 +143,7 @@ pub struct ReactionDetail {
 pub struct LoginRequest {
     pub env: String,
     pub api_url: Option<String>,
+    pub gateway_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

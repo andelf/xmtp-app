@@ -13,6 +13,7 @@ fn config_roundtrips_to_json_file() {
         daemon_addr_path: temp.path().join("daemon.addr").display().to_string(),
         log_level: "info".to_owned(),
         api_url: Some("https://grpc.testnet.xmtp.network:443".to_owned()),
+        gateway_url: Some("https://payer.testnet-staging.xmtp.network".to_owned()),
     };
 
     save_config(&path, &config).expect("save config");
@@ -26,5 +27,9 @@ fn config_roundtrips_to_json_file() {
     assert_eq!(
         loaded.api_url.as_deref(),
         Some("https://grpc.testnet.xmtp.network:443")
+    );
+    assert_eq!(
+        loaded.gateway_url.as_deref(),
+        Some("https://payer.testnet-staging.xmtp.network")
     );
 }

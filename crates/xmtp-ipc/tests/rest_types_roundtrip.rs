@@ -10,6 +10,7 @@ fn login_request_roundtrips_as_json() {
     let request = LoginRequest {
         env: "dev".to_owned(),
         api_url: Some("https://grpc.dev.xmtp.network:443".to_owned()),
+        gateway_url: Some("https://payer.testnet-staging.xmtp.network".to_owned()),
     };
 
     let json = serde_json::to_string(&request).expect("serialize login request");
@@ -17,6 +18,10 @@ fn login_request_roundtrips_as_json() {
 
     assert_eq!(decoded.env, "dev");
     assert_eq!(decoded.api_url.as_deref(), Some("https://grpc.dev.xmtp.network:443"));
+    assert_eq!(
+        decoded.gateway_url.as_deref(),
+        Some("https://payer.testnet-staging.xmtp.network")
+    );
 }
 
 #[test]
