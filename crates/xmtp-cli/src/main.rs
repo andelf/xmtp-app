@@ -76,8 +76,6 @@ enum Command {
     },
     #[command(about = "Check local setup, daemon reachability, and runtime status")]
     Doctor,
-    #[command(about = "Show current daemon and connection status")]
-    Status,
     #[command(about = "Launch the interactive TUI")]
     Tui,
     #[command(about = "Manage the daemon process")]
@@ -286,7 +284,6 @@ async fn run() -> anyhow::Result<()> {
             force,
         } => login(data_dir, network, gateway_url.as_deref(), force).await,
         Command::Doctor => doctor(data_dir).await,
-        Command::Status => status(data_dir).await,
         Command::Tui => xmtp_tui::run(data_dir),
         Command::Daemon { command } => daemon(data_dir, command).await,
         Command::Logs { kind, follow } => logs(data_dir, &kind, follow).await,
@@ -452,50 +449,6 @@ async fn doctor(data_dir: PathBuf) -> anyhow::Result<()> {
         }
         if let Some(installation_id) = state.installation_id {
             println!("{}", render_status_row("installation_id", &installation_id));
-        }
-    }
-
-    Ok(())
-}
-
-async fn status(data_dir: PathBuf) -> anyhow::Result<()> {
-    if let Ok(config) = load_config(&data_dir.join("config.json")) {
-        println!("{}", render_status_row("network", infer_network_name(&config)));
-    }
-
-    match daemon_get_status_without_autostart(&data_dir).await {
-        Ok(status) => {
-            println!(
-                "{}",
-                render_status_row("daemon_state", &status.daemon_state.to_string())
-            );
-            println!(
-                "{}",
-                render_status_row("connection_state", &status.connection_state.to_string())
-            );
-            if let Some(inbox_id) = status.inbox_id {
-                println!("{}", render_status_row("inbox_id", &inbox_id));
-            }
-            if let Some(installation_id) = status.installation_id {
-                println!("{}", render_status_row("installation_id", &installation_id));
-            }
-        }
-        Err(_) => {
-            let state = load_state(&data_dir.join("state.json"))?;
-            println!(
-                "{}",
-                render_status_row("daemon_state", &state.daemon_state.to_string())
-            );
-            println!(
-                "{}",
-                render_status_row("connection_state", &state.connection_state.to_string())
-            );
-            if let Some(inbox_id) = state.inbox_id {
-                println!("{}", render_status_row("inbox_id", &inbox_id));
-            }
-            if let Some(installation_id) = state.installation_id {
-                println!("{}", render_status_row("installation_id", &installation_id));
-            }
         }
     }
 
