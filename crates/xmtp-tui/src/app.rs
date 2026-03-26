@@ -1077,7 +1077,7 @@ impl App {
 
     pub fn color_for_message(&self, item: &HistoryItem) -> Color {
         if item.content_kind == "unknown" || item.content.starts_with("type=unknown content_type=") {
-            return Color::DarkGray;
+            return Color::White;
         }
         if self.self_inbox_id() == Some(item.sender_inbox_id.as_str()) {
             Color::Green
