@@ -780,7 +780,7 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
 }
 
 async fn daemon_get_status_without_autostart(data_dir: &PathBuf) -> anyhow::Result<StatusResponse> {
-    http_get(data_dir, "/v1/status").await
+    http_get_without_autostart(data_dir, "/v1/status").await
 }
 
 async fn daemon_login(
@@ -974,6 +974,16 @@ async fn http_get<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
+    if !addr_path(data_dir).exists() {
+        daemon_start(data_dir.clone()).await?;
+    }
+    http_get_without_autostart(data_dir, path).await
+}
+
+async fn http_get_without_autostart<T>(data_dir: &PathBuf, path: &str) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
     let base_url = daemon_base_url(data_dir)?;
     http_client()
         .get(format!("{base_url}{path}"))
@@ -992,6 +1002,9 @@ where
     T: serde::de::DeserializeOwned,
     Q: serde::Serialize + ?Sized,
 {
+    if !addr_path(data_dir).exists() {
+        daemon_start(data_dir.clone()).await?;
+    }
     let base_url = daemon_base_url(data_dir)?;
     http_client()
         .get(format!("{base_url}{path}"))
