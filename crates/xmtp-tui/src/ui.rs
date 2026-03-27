@@ -682,7 +682,7 @@ fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "↑↓ 滚动  Esc 关闭",
+        "↑↓ scroll  Esc close",
         Style::default().dark_gray(),
     )));
 
@@ -885,7 +885,7 @@ fn render_group_permissions(frame: &mut Frame<'_>, app: &App) {
 
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "↑↓ 移动  ← → 切换  Enter 保存  Esc 取消",
+            "↑↓ move  ← → switch  Enter save  Esc cancel",
             Style::default().dark_gray(),
         ))),
         chunks[1],
