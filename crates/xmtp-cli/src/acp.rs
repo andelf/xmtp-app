@@ -16,8 +16,8 @@ use tokio::task::LocalSet;
 use tokio::time::{Duration, sleep};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use xmtp_ipc::{
-    ApiErrorBody, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope, HistoryItem,
-    SendMessageRequest, StatusResponse,
+    ApiErrorBody, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
+    HistoryItem, SendMessageRequest, StatusResponse,
 };
 
 use crate::{
@@ -28,6 +28,7 @@ pub async fn run_acp(
     data_dir: PathBuf,
     conversation_id: String,
     context_prefix: bool,
+    enable_reaction: bool,
     command: Vec<String>,
 ) -> anyhow::Result<()> {
     let local = LocalSet::new();
@@ -36,6 +37,7 @@ pub async fn run_acp(
             data_dir,
             conversation_id,
             context_prefix,
+            enable_reaction,
             command,
         ))
         .await
@@ -45,6 +47,7 @@ async fn run_acp_inner(
     data_dir: PathBuf,
     conversation_id: String,
     context_prefix: bool,
+    enable_reaction: bool,
     command: Vec<String>,
 ) -> anyhow::Result<()> {
     let (program, args) = command
@@ -118,6 +121,7 @@ async fn run_acp_inner(
         &conversation_id,
         self_inbox_id.as_deref(),
         context_prefix,
+        enable_reaction,
         &conn,
         &session_id,
         &chunks,
@@ -320,6 +324,7 @@ async fn bridge_history_to_acp(
     conversation_id: &str,
     self_inbox_id: Option<&str>,
     context_prefix: bool,
+    enable_reaction: bool,
     conn: &acp::ClientSideConnection,
     session_id: &acp::SessionId,
     chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
@@ -509,6 +514,14 @@ async fn bridge_history_to_acp(
                     if let DaemonEventData::HistoryItem { item, .. } = envelope.payload
                         && should_forward_item(&item, self_inbox_id)
                     {
+                        if enable_reaction {
+                            send_processing_reaction(
+                                data_dir,
+                                conversation_id,
+                                &base_url,
+                                &item.message_id,
+                            );
+                        }
                         log_acp_event(
                             data_dir,
                             conversation_id,
@@ -706,6 +719,66 @@ fn next_retry_delay(current: Duration) -> Duration {
 
 fn sender_short_id(sender_inbox_id: &str) -> String {
     sender_inbox_id.chars().take(8).collect()
+}
+
+fn send_processing_reaction(
+    data_dir: &Path,
+    conversation_id: &str,
+    base_url: &str,
+    message_id: &str,
+) {
+    let data_dir = data_dir.to_path_buf();
+    let conversation_id = conversation_id.to_owned();
+    let base_url = base_url.to_owned();
+    let message_id = message_id.to_owned();
+    tokio::spawn(async move {
+        let result = http_client()
+            .post(format!("{base_url}/v1/messages/{message_id}/react"))
+            .json(&EmojiRequest {
+                emoji: "👀".to_owned(),
+                action: Some("added".to_owned()),
+                conversation_id: Some(conversation_id.clone()),
+            })
+            .send()
+            .await;
+
+        match result {
+            Ok(response) => {
+                if let Err(err) = response.error_for_status_ref() {
+                    eprintln!("ACP reaction send failed for message {message_id}: {err:#}");
+                    log_acp_event(
+                        &data_dir,
+                        &conversation_id,
+                        serde_json::json!({
+                            "event": "warning",
+                            "message": format!("ACP reaction send failed for message {message_id}: {err:#}"),
+                        }),
+                    );
+                } else {
+                    log_acp_event(
+                        &data_dir,
+                        &conversation_id,
+                        serde_json::json!({
+                            "event": "reaction_sent",
+                            "message_id": message_id,
+                            "emoji": "👀",
+                        }),
+                    );
+                }
+            }
+            Err(err) => {
+                eprintln!("ACP reaction send failed for message {message_id}: {err:#}");
+                log_acp_event(
+                    &data_dir,
+                    &conversation_id,
+                    serde_json::json!({
+                        "event": "warning",
+                        "message": format!("ACP reaction send failed for message {message_id}: {err:#}"),
+                    }),
+                );
+            }
+        }
+    });
 }
 
 struct BridgeClient {

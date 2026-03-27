@@ -104,6 +104,12 @@ enum Command {
             help = "Enable sender context prefix for group conversations"
         )]
         context_prefix: bool,
+        #[arg(
+            long = "enable-reaction",
+            default_value_t = false,
+            help = "React with eyes emoji on incoming messages to indicate processing"
+        )]
+        enable_reaction: bool,
         #[arg(last = true, required = true, help = "ACP agent command and arguments")]
         command: Vec<String>,
     },
@@ -378,8 +384,18 @@ async fn run() -> anyhow::Result<()> {
         Command::Acp {
             conversation_id,
             context_prefix,
+            enable_reaction,
             command,
-        } => acp::run_acp(data_dir, conversation_id, context_prefix, command).await,
+        } => {
+            acp::run_acp(
+                data_dir,
+                conversation_id,
+                context_prefix,
+                enable_reaction,
+                command,
+            )
+            .await
+        }
         Command::Daemon { command } => daemon(data_dir, command).await,
         Command::Logs { kind, follow } => logs(data_dir, &kind, follow).await,
         Command::Watch { command } => watch(data_dir, command).await,
