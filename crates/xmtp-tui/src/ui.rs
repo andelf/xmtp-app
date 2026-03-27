@@ -176,20 +176,14 @@ fn render_messages(frame: &mut Frame<'_>, app: &App, area: Rect) {
         items.push(row.item.clone());
     }
 
-    let mut state = ListState::default().with_selected(selected_row);
+    let mut state = ListState::default();
     if let Some(selected_row_idx) = selected_row {
         let end_row_idx = trailing_row_end_index(&rows, selected_row_idx);
         let visible_height = area.height.saturating_sub(2) as usize;
         *state.offset_mut() = list_offset_for_visible_window(&items, end_row_idx, visible_height);
     }
 
-    let list = List::new(items)
-        .block(titled_block(&title, app.focus == Focus::Messages))
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        );
+    let list = List::new(items).block(titled_block(&title, app.focus == Focus::Messages));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -199,6 +193,10 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
     let mut rows = Vec::new();
     let mut last_day: Option<String> = None;
     let wrap_width = width.max(1) as usize;
+    let selected_style = Style::default()
+        .bg(Color::DarkGray)
+        .add_modifier(Modifier::BOLD);
+    let unselected_style = Style::default().bg(Color::Reset);
 
     for (index, item) in app.messages.iter().enumerate() {
         let day_tag = format_day_tag(item.sent_at_ns);
@@ -239,6 +237,11 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             });
         }
 
+        let message_style = if index == app.selected_message {
+            selected_style
+        } else {
+            unselected_style
+        };
         let content = item.content.replace('\n', " ");
         let sender_display = if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) {
             "You".to_owned()
@@ -258,7 +261,10 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
                 Style::default().fg(Color::DarkGray).bg(Color::Reset),
             ));
         }
-        let header_line = Line::from(header_spans);
+        rows.push(MessageRow {
+            kind: MessageRowKind::Message(index),
+            item: ListItem::new(Line::from(header_spans)).style(message_style),
+        });
 
         let mut content_lines = if item.content_kind == "markdown" {
             let rendered =
@@ -309,7 +315,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
         }
 
         let is_collapsed = content_lines.len() > THRESHOLD;
-        let mut preview_lines = if is_collapsed {
+        let preview_lines = if is_collapsed {
             content_lines
                 .into_iter()
                 .take(THRESHOLD)
@@ -317,22 +323,20 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
         } else {
             content_lines
         };
-
-        if is_collapsed && let Some(last_line) = preview_lines.last_mut() {
-            last_line.spans.push(Span::styled(
-                " ... (Enter: view full)",
-                Style::default().fg(Color::Yellow).bg(Color::Reset),
-            ));
-        }
-
-        let mut lines = Vec::with_capacity(preview_lines.len() + 1);
-        lines.push(header_line);
-        lines.extend(preview_lines);
-
-        rows.push(MessageRow {
+        rows.extend(preview_lines.into_iter().map(|line| MessageRow {
             kind: MessageRowKind::Message(index),
-            item: ListItem::new(lines).style(Style::default().bg(Color::Reset)),
-        });
+            item: ListItem::new(line).style(message_style),
+        }));
+        if is_collapsed {
+            rows.push(MessageRow {
+                kind: MessageRowKind::Message(index),
+                item: ListItem::new(Line::from(Span::styled(
+                    " ... (Enter: view full)",
+                    Style::default().fg(Color::Yellow).bg(Color::Reset),
+                )))
+                .style(message_style),
+            });
+        }
 
         if let Some(reactions_line) = format_reactions_line(item) {
             rows.push(MessageRow {
@@ -480,9 +484,29 @@ fn wrap_text_lines(text: &str, width: usize) -> Vec<String> {
 
 fn trailing_row_end_index(rows: &[MessageRow<'_>], selected_row_idx: usize) -> usize {
     let mut end = selected_row_idx;
+    let selected_message_index = match rows.get(selected_row_idx) {
+        Some(MessageRow {
+            kind: MessageRowKind::Message(index),
+            ..
+        }) => Some(*index),
+        Some(MessageRow {
+            kind: MessageRowKind::DateSeparator
+                | MessageRowKind::ReplyContext
+                | MessageRowKind::Reactions,
+            ..
+        })
+        | None => None,
+    };
     for (index, row) in rows.iter().enumerate().skip(selected_row_idx + 1) {
         match row.kind {
-            MessageRowKind::Message(_) => break,
+            MessageRowKind::Message(message_index)
+                if Some(message_index) != selected_message_index =>
+            {
+                break;
+            }
+            MessageRowKind::Message(_) => {
+                end = index;
+            }
             MessageRowKind::DateSeparator
             | MessageRowKind::ReplyContext
             | MessageRowKind::Reactions => {
