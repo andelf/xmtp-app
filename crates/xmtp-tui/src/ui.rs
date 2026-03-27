@@ -887,6 +887,10 @@ fn render_group_info(frame: &mut Frame<'_>, app: &App) {
     let block = Block::default().title("Group Info").borders(Borders::ALL);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(1)])
+        .split(inner);
 
     let info_lines = if let Some(info) = &app.group_management.info {
         let conversation_id = app
@@ -919,22 +923,38 @@ fn render_group_info(frame: &mut Frame<'_>, app: &App) {
     };
     frame.render_widget(
         Paragraph::new(info_lines).wrap(Wrap { trim: false }),
-        inner,
+        sections[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "Esc back to menu",
+            Style::default().dark_gray(),
+        ))),
+        sections[1],
     );
 }
 
 fn render_group_members(frame: &mut Frame<'_>, app: &App) {
     let area = centered_rect(64, 36, frame.area());
     frame.render_widget(Clear, area);
-    let members_block = Block::default().title("Members").borders(Borders::ALL);
+    let block = Block::default().title("Members").borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .split(inner);
     if app.group_management.members.is_empty() {
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                "loading...",
-                Style::default().dark_gray(),
-            )))
-            .block(members_block),
-            area,
+            Paragraph::new(vec![
+                Line::from(Span::styled("loading...", Style::default().dark_gray())),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "↑↓ scroll  Esc back to menu",
+                    Style::default().dark_gray(),
+                )),
+            ]),
+            inner,
         );
         return;
     }
@@ -959,10 +979,13 @@ fn render_group_members(frame: &mut Frame<'_>, app: &App) {
         })
         .collect();
     let mut state = ListState::default().with_offset(app.group_management.info_member_scroll);
-    frame.render_stateful_widget(
-        List::new(items).block(members_block),
-        area,
-        &mut state,
+    frame.render_stateful_widget(List::new(items), sections[0], &mut state);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "↑↓ scroll  Esc back to menu",
+            Style::default().dark_gray(),
+        ))),
+        sections[1],
     );
 }
 
@@ -974,6 +997,11 @@ fn render_group_add_members(frame: &mut Frame<'_>, app: &App) {
         Line::from("inbox_id list:"),
         Line::from(app.group_management.add_members_input.clone()),
         Line::from("members can be separated by comma or space"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter confirm  Esc cancel",
+            Style::default().dark_gray(),
+        )),
     ];
     let paragraph = Paragraph::new(text)
         .block(Block::default().title("Add Members").borders(Borders::ALL))
@@ -1018,6 +1046,19 @@ fn render_group_remove_members(frame: &mut Frame<'_>, app: &App) {
         )
         .highlight_style(Style::default().reversed());
     frame.render_stateful_widget(list, area, &mut state);
+    let hint_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height.saturating_sub(2),
+        width: area.width.saturating_sub(2),
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "Enter remove  Esc cancel",
+            Style::default().dark_gray(),
+        ))),
+        hint_area,
+    );
 }
 
 fn render_group_rename(frame: &mut Frame<'_>, app: &App) {
@@ -1031,6 +1072,11 @@ fn render_group_rename(frame: &mut Frame<'_>, app: &App) {
     let text = vec![
         Line::from(format!("New name (current: {current_name}):")),
         Line::from(app.group_management.rename_input.clone()),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter confirm  Esc cancel",
+            Style::default().dark_gray(),
+        )),
     ];
     let paragraph = Paragraph::new(text)
         .block(Block::default().title("Rename").borders(Borders::ALL))

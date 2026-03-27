@@ -643,6 +643,11 @@ impl App {
 
     fn handle_escape(&mut self) -> Vec<Effect> {
         match self.modal {
+            Modal::GroupInfo | Modal::GroupMembers => {
+                self.modal = Modal::GroupManagement;
+                self.exit_armed = false;
+                return Vec::new();
+            }
             Modal::Help
             | Modal::MessageMenu
             | Modal::MessageDetail
@@ -650,8 +655,6 @@ impl App {
             | Modal::CreateDm
             | Modal::CreateGroup
             | Modal::GroupManagement
-            | Modal::GroupInfo
-            | Modal::GroupMembers
             | Modal::GroupPermissions
             | Modal::GroupAddMembers
             | Modal::GroupRemoveMembers
@@ -1147,12 +1150,7 @@ impl App {
     }
 
     fn handle_group_info_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        match key.code {
-            KeyCode::Enter => {
-                self.modal = Modal::GroupManagement;
-            }
-            _ => {}
-        }
+        let _ = key;
         Vec::new()
     }
 
@@ -1169,6 +1167,9 @@ impl App {
                 {
                     self.group_management.info_member_scroll += 1;
                 }
+            }
+            KeyCode::Enter => {
+                self.modal = Modal::GroupManagement;
             }
             _ => {}
         }
