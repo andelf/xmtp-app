@@ -584,7 +584,9 @@ impl App {
         }
         self.exit_armed = false;
 
-        if self.modal == Modal::None && matches!(key.code, KeyCode::Char('?') | KeyCode::Char('/'))
+        if self.modal == Modal::None
+            && self.focus != Focus::Input
+            && matches!(key.code, KeyCode::Char('?') | KeyCode::Char('/'))
         {
             self.modal = Modal::Help;
             return Vec::new();

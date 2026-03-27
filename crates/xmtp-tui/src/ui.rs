@@ -507,7 +507,7 @@ fn list_offset_for_visible_window(
     loop {
         let item_height = items[offset].height();
         if used_height + item_height > visible_height {
-            return offset;
+            return (offset + 1).min(end_row_idx);
         }
         used_height += item_height;
         if offset == 0 {
@@ -1275,6 +1275,6 @@ mod tests {
 
         let offset = list_offset_for_visible_window(&items, 4, 10);
 
-        assert_eq!(offset, 0);
+        assert_eq!(offset, 1);
     }
 }
