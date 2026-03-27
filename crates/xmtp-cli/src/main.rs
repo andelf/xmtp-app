@@ -98,6 +98,12 @@ enum Command {
     Acp {
         #[arg(long, help = "Conversation ID to bridge")]
         conversation_id: String,
+        #[arg(
+            long = "enable-context-prefix",
+            default_value_t = false,
+            help = "Enable sender context prefix for group conversations"
+        )]
+        context_prefix: bool,
         #[arg(last = true, required = true, help = "ACP agent command and arguments")]
         command: Vec<String>,
     },
@@ -371,8 +377,9 @@ async fn run() -> anyhow::Result<()> {
         Command::Tui => xmtp_tui::run(data_dir),
         Command::Acp {
             conversation_id,
+            context_prefix,
             command,
-        } => acp::run_acp(data_dir, conversation_id, command).await,
+        } => acp::run_acp(data_dir, conversation_id, context_prefix, command).await,
         Command::Daemon { command } => daemon(data_dir, command).await,
         Command::Logs { kind, follow } => logs(data_dir, &kind, follow).await,
         Command::Watch { command } => watch(data_dir, command).await,
@@ -1704,7 +1711,10 @@ fn print_status_response(status: StatusResponse) -> anyhow::Result<()> {
         render_status_row("connection_state", &status.connection_state.to_string())
     );
     if let Some(inbox_id) = status.inbox_id {
-        println!("{}", render_status_row("inbox_id", &short_display_id(&inbox_id)));
+        println!(
+            "{}",
+            render_status_row("inbox_id", &short_display_id(&inbox_id))
+        );
     }
     if let Some(installation_id) = status.installation_id {
         println!(

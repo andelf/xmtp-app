@@ -16,26 +16,35 @@ use tokio::task::LocalSet;
 use tokio::time::{Duration, sleep};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use xmtp_ipc::{
-    ApiErrorBody, DaemonEventData, DaemonEventEnvelope, HistoryItem, SendMessageRequest,
-    StatusResponse,
+    ApiErrorBody, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope, HistoryItem,
+    SendMessageRequest, StatusResponse,
 };
 
-use crate::{daemon_base_url, daemon_send_conversation, http_client, http_get, wait_for_daemon_ready};
+use crate::{
+    daemon_base_url, daemon_send_conversation, http_client, http_get, wait_for_daemon_ready,
+};
 
 pub async fn run_acp(
     data_dir: PathBuf,
     conversation_id: String,
+    context_prefix: bool,
     command: Vec<String>,
 ) -> anyhow::Result<()> {
     let local = LocalSet::new();
     local
-        .run_until(run_acp_inner(data_dir, conversation_id, command))
+        .run_until(run_acp_inner(
+            data_dir,
+            conversation_id,
+            context_prefix,
+            command,
+        ))
         .await
 }
 
 async fn run_acp_inner(
     data_dir: PathBuf,
     conversation_id: String,
+    context_prefix: bool,
     command: Vec<String>,
 ) -> anyhow::Result<()> {
     let (program, args) = command
@@ -92,11 +101,28 @@ async fn run_acp_inner(
     .context("ACP initialize")?;
 
     let cwd = std::env::current_dir().context("read current working directory")?;
-    let session_id = ensure_acp_session(&data_dir, &conversation_id, &conn, &cwd).await?;
+    let session_id = ensure_acp_session(
+        &data_dir,
+        &conversation_id,
+        self_inbox_id.as_deref(),
+        context_prefix,
+        &conn,
+        &cwd,
+        &chunks,
+    )
+    .await?;
     eprintln!("ACP session ready: {}", session_id_str(&session_id));
 
-    let bridge_result =
-        bridge_history_to_acp(&data_dir, &conversation_id, self_inbox_id.as_deref(), &conn, &session_id, &chunks).await;
+    let bridge_result = bridge_history_to_acp(
+        &data_dir,
+        &conversation_id,
+        self_inbox_id.as_deref(),
+        context_prefix,
+        &conn,
+        &session_id,
+        &chunks,
+    )
+    .await;
 
     if let Err(err) = &bridge_result {
         eprintln!("ACP bridge error: {err:#}");
@@ -143,13 +169,12 @@ fn append_acp_log(
     Ok(())
 }
 
-fn log_acp_event(
-    data_dir: &Path,
-    conversation_id: &str,
-    mut entry: serde_json::Value,
-) {
+fn log_acp_event(data_dir: &Path, conversation_id: &str, mut entry: serde_json::Value) {
     if let Some(map) = entry.as_object_mut() {
-        map.insert("ts".to_owned(), serde_json::Value::String(Utc::now().to_rfc3339()));
+        map.insert(
+            "ts".to_owned(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
+        );
     }
     if let Err(err) = append_acp_log(data_dir, conversation_id, &entry) {
         eprintln!("ACP log write failed: {err:#}");
@@ -172,7 +197,10 @@ fn save_acp_sessions(data_dir: &Path, sessions: &PersistedAcpSessions) -> anyhow
 }
 
 fn persisted_session_id(data_dir: &Path, conversation_id: &str) -> anyhow::Result<Option<String>> {
-    Ok(load_acp_sessions(data_dir)?.sessions.get(conversation_id).cloned())
+    Ok(load_acp_sessions(data_dir)?
+        .sessions
+        .get(conversation_id)
+        .cloned())
 }
 
 fn store_session_id(
@@ -190,13 +218,19 @@ fn store_session_id(
 async fn ensure_acp_session(
     data_dir: &Path,
     conversation_id: &str,
+    self_inbox_id: Option<&str>,
+    context_prefix: bool,
     conn: &acp::ClientSideConnection,
     cwd: &Path,
+    chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
 ) -> anyhow::Result<acp::SessionId> {
     if let Some(saved_session_id) = persisted_session_id(data_dir, conversation_id)? {
         let session_id = acp::SessionId::new(saved_session_id);
         match conn
-            .load_session(acp::LoadSessionRequest::new(session_id.clone(), cwd.to_path_buf()))
+            .load_session(acp::LoadSessionRequest::new(
+                session_id.clone(),
+                cwd.to_path_buf(),
+            ))
             .await
         {
             Ok(_) => {
@@ -244,6 +278,17 @@ async fn ensure_acp_session(
         }),
     );
     store_session_id(data_dir, conversation_id, &session.session_id)?;
+    if context_prefix {
+        send_bootstrap_prompt(
+            data_dir,
+            conversation_id,
+            self_inbox_id,
+            conn,
+            &session.session_id,
+            chunks,
+        )
+        .await?;
+    }
     Ok(session.session_id)
 }
 
@@ -274,6 +319,7 @@ async fn bridge_history_to_acp(
     data_dir: &Path,
     conversation_id: &str,
     self_inbox_id: Option<&str>,
+    context_prefix: bool,
     conn: &acp::ClientSideConnection,
     session_id: &acp::SessionId,
     chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
@@ -473,8 +519,16 @@ async fn bridge_history_to_acp(
                                 "content": item.content.clone(),
                             }),
                         );
-                        let reply =
-                            prompt_agent(data_dir, conversation_id, conn, session_id, chunks, item).await?;
+                        let reply = prompt_agent(
+                            data_dir,
+                            conversation_id,
+                            conn,
+                            session_id,
+                            chunks,
+                            item,
+                            context_prefix,
+                        )
+                        .await?;
                         if !reply.trim().is_empty() {
                             let sent = daemon_send_conversation(
                                 data_dir,
@@ -517,9 +571,18 @@ async fn prompt_agent(
     session_id: &acp::SessionId,
     chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
     item: HistoryItem,
+    context_prefix: bool,
 ) -> anyhow::Result<String> {
     clear_session_chunks(chunks, session_id_str(session_id));
-    let content = item.content;
+    let content = if context_prefix {
+        format!(
+            "[{}] {}",
+            sender_short_id(&item.sender_inbox_id),
+            item.content
+        )
+    } else {
+        item.content
+    };
     log_acp_event(
         data_dir,
         conversation_id,
@@ -550,6 +613,58 @@ async fn prompt_agent(
         }),
     );
     Ok(reply)
+}
+
+async fn send_bootstrap_prompt(
+    data_dir: &Path,
+    conversation_id: &str,
+    self_inbox_id: Option<&str>,
+    conn: &acp::ClientSideConnection,
+    session_id: &acp::SessionId,
+    chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+) -> anyhow::Result<()> {
+    let info: ConversationInfoResponse =
+        http_get(data_dir, &format!("/v1/conversations/{conversation_id}"))
+            .await
+            .context("load conversation info for ACP bootstrap")?;
+    let bootstrap = format!(
+        "You are an AI agent connected to an XMTP messaging conversation.\n\nContext:\n- Type: {} ({} members)\n- Conversation ID: {}\n- Your identity (inbox ID): {}\n\nMessage format:\nEach user message is prefixed with the sender short ID in brackets:\n  [0x1a2b3c4d] Hello everyone\n\nRules:\n- Respond with plain text only, do NOT include any prefix in your replies.\n- In group chats, pay attention to who said what.\n- If the conversation type is dm, there is only one other participant.",
+        info.conversation_type,
+        info.member_count,
+        conversation_id,
+        self_inbox_id.unwrap_or("unknown"),
+    );
+    clear_session_chunks(chunks, session_id_str(session_id));
+    log_acp_event(
+        data_dir,
+        conversation_id,
+        serde_json::json!({
+            "event": "agent_bootstrap_prompt",
+            "session_id": session_id_str(session_id),
+            "content": bootstrap,
+        }),
+    );
+    conn.prompt(acp::PromptRequest::new(
+        session_id.clone(),
+        vec![bootstrap.into()],
+    ))
+    .await
+    .context("ACP bootstrap prompt")?;
+
+    sleep(Duration::from_millis(100)).await;
+    let discarded_reply = take_session_chunks(chunks, session_id_str(session_id)).join("");
+    if !discarded_reply.trim().is_empty() {
+        log_acp_event(
+            data_dir,
+            conversation_id,
+            serde_json::json!({
+                "event": "agent_bootstrap_reply_discarded",
+                "session_id": session_id_str(session_id),
+                "content": discarded_reply,
+            }),
+        );
+    }
+    Ok(())
 }
 
 fn should_forward_item(item: &HistoryItem, self_inbox_id: Option<&str>) -> bool {
@@ -589,6 +704,10 @@ fn next_retry_delay(current: Duration) -> Duration {
     Duration::from_millis(next_ms.max(100))
 }
 
+fn sender_short_id(sender_inbox_id: &str) -> String {
+    sender_inbox_id.chars().take(8).collect()
+}
+
 struct BridgeClient {
     chunks: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
@@ -606,7 +725,9 @@ impl acp::Client for BridgeClient {
         &self,
         args: acp::SessionNotification,
     ) -> acp::Result<(), acp::Error> {
-        if let acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) = args.update {
+        if let acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) =
+            args.update
+        {
             let text = match content {
                 acp::ContentBlock::Text(text) => text.text,
                 acp::ContentBlock::Image(_) => "<image>".to_owned(),
