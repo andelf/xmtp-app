@@ -49,6 +49,7 @@ pub enum Modal {
     CreateGroup,
     GroupManagement,
     GroupInfo,
+    GroupMembers,
     GroupPermissions,
     GroupAddMembers,
     GroupRemoveMembers,
@@ -84,6 +85,7 @@ pub enum GroupDialogField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroupManagementAction {
     ViewInfo,
+    ViewMembers,
     AddMembers,
     RemoveMembers,
     Rename,
@@ -92,9 +94,10 @@ pub enum GroupManagementAction {
 }
 
 impl GroupManagementAction {
-    pub fn all() -> [Self; 6] {
+    pub fn all() -> [Self; 7] {
         [
             Self::ViewInfo,
+            Self::ViewMembers,
             Self::AddMembers,
             Self::RemoveMembers,
             Self::Rename,
@@ -106,6 +109,7 @@ impl GroupManagementAction {
     pub fn label(self) -> &'static str {
         match self {
             Self::ViewInfo => "view info",
+            Self::ViewMembers => "view members",
             Self::AddMembers => "add members",
             Self::RemoveMembers => "remove members",
             Self::Rename => "rename",
@@ -628,6 +632,7 @@ impl App {
             Modal::CreateGroup => self.handle_create_group_key(key),
             Modal::GroupManagement => self.handle_group_management_key(key),
             Modal::GroupInfo => self.handle_group_info_key(key),
+            Modal::GroupMembers => self.handle_group_members_view_key(key),
             Modal::GroupPermissions => self.handle_group_permissions_key(key),
             Modal::GroupAddMembers => self.handle_group_add_members_key(key),
             Modal::GroupRemoveMembers => self.handle_group_remove_members_key(key),
@@ -646,6 +651,7 @@ impl App {
             | Modal::CreateGroup
             | Modal::GroupManagement
             | Modal::GroupInfo
+            | Modal::GroupMembers
             | Modal::GroupPermissions
             | Modal::GroupAddMembers
             | Modal::GroupRemoveMembers
@@ -1066,7 +1072,7 @@ impl App {
                     self.group_management.menu_index += 1;
                 }
             }
-            KeyCode::Char(ch) if ('1'..='6').contains(&ch) => {
+            KeyCode::Char(ch) if ('1'..='7').contains(&ch) => {
                 let index = (ch as u8 - b'1') as usize;
                 if index < GroupManagementAction::all().len() {
                     self.group_management.menu_index = index;
@@ -1089,13 +1095,12 @@ impl App {
         match GroupManagementAction::all()[self.group_management.menu_index] {
             GroupManagementAction::ViewInfo => {
                 self.modal = Modal::GroupInfo;
+                vec![Effect::LoadGroupInfo { conversation_id }]
+            }
+            GroupManagementAction::ViewMembers => {
+                self.modal = Modal::GroupMembers;
                 self.group_management.info_member_scroll = 0;
-                vec![
-                    Effect::LoadGroupInfo {
-                        conversation_id: conversation_id.clone(),
-                    },
-                    Effect::LoadGroupMembers { conversation_id },
-                ]
+                vec![Effect::LoadGroupMembers { conversation_id }]
             }
             GroupManagementAction::AddMembers => {
                 if !self.can_manage_group_members(GroupManagementAction::AddMembers) {
@@ -1143,6 +1148,16 @@ impl App {
 
     fn handle_group_info_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
+            KeyCode::Enter => {
+                self.modal = Modal::GroupManagement;
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_group_members_view_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
             KeyCode::Up => {
                 if self.group_management.info_member_scroll > 0 {
                     self.group_management.info_member_scroll -= 1;
@@ -1154,9 +1169,6 @@ impl App {
                 {
                     self.group_management.info_member_scroll += 1;
                 }
-            }
-            KeyCode::Enter => {
-                self.modal = Modal::GroupManagement;
             }
             _ => {}
         }
@@ -2205,7 +2217,7 @@ mod tests {
         });
         app.active_conversation_id = Some("grp-1".into());
         app.modal = Modal::GroupManagement;
-        app.group_management.menu_index = 3;
+        app.group_management.menu_index = 4;
 
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -3058,7 +3070,7 @@ mod tests {
         });
         app.active_conversation_id = Some("grp-1".into());
         app.modal = Modal::GroupManagement;
-        app.group_management.menu_index = 1;
+        app.group_management.menu_index = 2;
         app.group_management.permissions = Some(xmtp_ipc::GroupPermissionsResponse {
             preset: "custom".into(),
             add_member: "admin_only".into(),

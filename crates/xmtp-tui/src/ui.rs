@@ -53,6 +53,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Modal::CreateGroup => render_create_group(frame, app),
         Modal::GroupManagement => render_group_management(frame, app),
         Modal::GroupInfo => render_group_info(frame, app),
+        Modal::GroupMembers => render_group_members(frame, app),
         Modal::GroupPermissions => render_group_permissions(frame, app),
         Modal::GroupAddMembers => render_group_add_members(frame, app),
         Modal::GroupRemoveMembers => render_group_remove_members(frame, app),
@@ -881,16 +882,11 @@ fn render_group_permission_row(label: &str, value: &str, editable: bool) -> Line
 }
 
 fn render_group_info(frame: &mut Frame<'_>, app: &App) {
-    let area = centered_rect(64, 36, frame.area());
+    let area = centered_rect(64, 22, frame.area());
     frame.render_widget(Clear, area);
     let block = Block::default().title("Group Info").borders(Borders::ALL);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(6), Constraint::Min(3)])
-        .split(inner);
 
     let info_lines = if let Some(info) = &app.group_management.info {
         vec![
@@ -917,9 +913,13 @@ fn render_group_info(frame: &mut Frame<'_>, app: &App) {
     };
     frame.render_widget(
         Paragraph::new(info_lines).wrap(Wrap { trim: false }),
-        sections[0],
+        inner,
     );
+}
 
+fn render_group_members(frame: &mut Frame<'_>, app: &App) {
+    let area = centered_rect(64, 36, frame.area());
+    frame.render_widget(Clear, area);
     let members_block = Block::default().title("Members").borders(Borders::ALL);
     if app.group_management.members.is_empty() {
         frame.render_widget(
@@ -928,7 +928,7 @@ fn render_group_info(frame: &mut Frame<'_>, app: &App) {
                 Style::default().dark_gray(),
             )))
             .block(members_block),
-            sections[1],
+            area,
         );
         return;
     }
@@ -955,7 +955,7 @@ fn render_group_info(frame: &mut Frame<'_>, app: &App) {
     let mut state = ListState::default().with_offset(app.group_management.info_member_scroll);
     frame.render_stateful_widget(
         List::new(items).block(members_block),
-        sections[1],
+        area,
         &mut state,
     );
 }
