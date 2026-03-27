@@ -889,6 +889,11 @@ fn render_group_info(frame: &mut Frame<'_>, app: &App) {
     frame.render_widget(block, area);
 
     let info_lines = if let Some(info) = &app.group_management.info {
+        let conversation_id = app
+            .active_conversation
+            .as_ref()
+            .map(|conversation| conversation.id.as_str())
+            .unwrap_or("-");
         vec![
             Line::from(format!(
                 "name: {}",
@@ -904,6 +909,7 @@ fn render_group_info(frame: &mut Frame<'_>, app: &App) {
             )),
             Line::from(format!("type: {}", info.conversation_type)),
             Line::from(format!("members: {}", info.member_count)),
+            Line::from(format!("conversation_id: {conversation_id}")),
         ]
     } else {
         vec![Line::from(Span::styled(
