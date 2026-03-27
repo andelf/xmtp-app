@@ -47,6 +47,7 @@ struct Cli {
         long,
         global = true,
         default_value = "./data",
+        env = "XMTP_CLI_DATA_DIR",
         help = "Path to the local data directory used for config, logs, and cached state"
     )]
     data_dir: PathBuf,
