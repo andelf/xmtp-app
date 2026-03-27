@@ -8,7 +8,9 @@ use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use reqwest::Response;
 use tempfile::TempDir;
-use xmtp_ipc::{ActionResponse, ApiErrorBody, DaemonEventEnvelope, StatusResponse};
+use xmtp_ipc::{
+    ActionResponse, ApiErrorBody, DaemonEventEnvelope, GroupMembersResponse, StatusResponse,
+};
 
 struct DaemonProcess {
     _temp: TempDir,
@@ -312,6 +314,74 @@ async fn create_group_and_send_message_over_http() -> anyhow::Result<()> {
     };
     assert_eq!(sent.conversation_id, created.conversation_id);
     assert!(!sent.message_id.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn group_members_creator_is_super_admin() -> anyhow::Result<()> {
+    let daemon = DaemonProcess::start()?;
+    let login = match daemon.login_dev().await {
+        Ok(login) => login,
+        Err(err) if is_rate_limited(&err) => {
+            eprintln!("skipping group_members_creator_is_super_admin due to XMTP rate limit: {err:#}");
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+    let client = reqwest::Client::new();
+    let member = login
+        .inbox_id
+        .clone()
+        .context("login response missing inbox_id")?;
+
+    let created: ActionResponse = match post_json_with_retry(
+        &client,
+        format!("{}/v1/groups", daemon.base_url),
+        &serde_json::json!({
+            "name": "ci-http-members",
+            "members": [member]
+        }),
+        "create group status",
+    )
+    .await {
+        Ok(created) => created,
+        Err(err) if is_rate_limited(&err) => {
+            eprintln!("skipping group_members_creator_is_super_admin due to XMTP rate limit: {err:#}");
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+    assert!(!created.conversation_id.is_empty());
+
+    let members: GroupMembersResponse = match get_json_with_retry(
+        &client,
+        format!(
+            "{}/v1/groups/{}/members",
+            daemon.base_url, created.conversation_id
+        ),
+        "group members status",
+    )
+    .await {
+        Ok(members) => members,
+        Err(err) if is_rate_limited(&err) => {
+            eprintln!("skipping group_members_creator_is_super_admin due to XMTP rate limit: {err:#}");
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+
+    assert!(!members.items.is_empty());
+    assert!(members.items.iter().all(|item| {
+        ["super_admin", "admin", "member"].contains(&item.permission_level.as_str())
+    }));
+
+    let creator = members
+        .items
+        .iter()
+        .find(|item| item.inbox_id == member)
+        .context("creator missing from group members")?;
+    assert_eq!(creator.permission_level, "super_admin");
 
     Ok(())
 }
