@@ -965,17 +965,24 @@ fn render_group_members(frame: &mut Frame<'_>, app: &App) {
         .members
         .iter()
         .map(|member| {
-            let you_suffix = if self_inbox_id == Some(member.inbox_id.as_str()) {
-                "  [you]"
-            } else {
-                ""
+            let permission_style = match member.permission_level.as_str() {
+                "super_admin" | "admin" => Style::default().fg(Color::Yellow),
+                "member" => Style::default().fg(Color::DarkGray),
+                _ => Style::default(),
             };
-            ListItem::new(format!(
-                "{}  {}{}",
-                short_display_id(&member.inbox_id),
-                format_permission_level(&member.permission_level),
-                you_suffix
-            ))
+            let mut spans = vec![
+                Span::styled(short_display_id(&member.inbox_id), Style::default()),
+                Span::raw("  "),
+                Span::styled(
+                    format_permission_level(&member.permission_level),
+                    permission_style,
+                ),
+            ];
+            if self_inbox_id == Some(member.inbox_id.as_str()) {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled("[you]", Style::default().fg(Color::Cyan)));
+            }
+            ListItem::new(Line::from(spans))
         })
         .collect();
     let mut state = ListState::default().with_offset(app.group_management.info_member_scroll);
