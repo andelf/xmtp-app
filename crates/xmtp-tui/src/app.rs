@@ -143,6 +143,7 @@ pub struct GroupManagementState {
     pub members: Vec<GroupMemberItem>,
     pub selected_member: usize,
     pub info_member_scroll: usize,
+    pub members_list_visible_rows: Cell<usize>,
     pub add_members_input: String,
     pub rename_input: String,
     pub permissions_dirty: bool,
@@ -1162,9 +1163,14 @@ impl App {
                 }
             }
             KeyCode::Down => {
-                if self.group_management.info_member_scroll + 1
-                    < self.group_management.members.len()
-                {
+                let visible = self.group_management.members_list_visible_rows.get();
+                let max_scroll =
+                    if visible == 0 || self.group_management.members.len() <= visible {
+                        0
+                    } else {
+                        self.group_management.members.len() - visible
+                    };
+                if self.group_management.info_member_scroll < max_scroll {
                     self.group_management.info_member_scroll += 1;
                 }
             }

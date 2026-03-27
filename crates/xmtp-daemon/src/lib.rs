@@ -25,7 +25,7 @@ use tracing::{debug, error, info, warn};
 use xmtp::content::{Content, ReactionAction};
 use xmtp::{
     AlloySigner, Client, CreateGroupOptions, Env, GroupPermissionsPreset, MetadataField,
-    PermissionPolicy, PermissionUpdateType, Recipient,
+    PermissionLevel, PermissionPolicy, PermissionUpdateType, Recipient,
 };
 use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_core::{ConnectionState, DaemonState};
@@ -709,7 +709,11 @@ fn group_members_with_client(
         .take(limit)
         .map(|member| GroupMemberItem {
             inbox_id: member.inbox_id,
-            permission_level: format!("{:?}", member.permission_level).to_lowercase(),
+            permission_level: match member.permission_level {
+                PermissionLevel::Member => "member".to_owned(),
+                PermissionLevel::Admin => "admin".to_owned(),
+                PermissionLevel::SuperAdmin => "super_admin".to_owned(),
+            },
             consent_state: format!("{:?}", member.consent_state).to_lowercase(),
             account_identifiers: member.account_identifiers,
             installation_count: member.installation_ids.len(),
@@ -729,9 +733,7 @@ fn group_info_with_client(
         description: conversation.description(),
         creator_inbox_id: members
             .iter()
-            .find(|member| {
-                format!("{:?}", member.permission_level).eq_ignore_ascii_case("superadmin")
-            })
+            .find(|member| member.permission_level == PermissionLevel::SuperAdmin)
             .map(|member| member.inbox_id.clone())
             .or_else(|| members.first().map(|member| member.inbox_id.clone()))
             .unwrap_or_default(),

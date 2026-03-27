@@ -986,6 +986,9 @@ fn render_group_members(frame: &mut Frame<'_>, app: &App) {
         })
         .collect();
     let mut state = ListState::default().with_offset(app.group_management.info_member_scroll);
+    app.group_management
+        .members_list_visible_rows
+        .set(sections[0].height as usize);
     frame.render_stateful_widget(List::new(items), sections[0], &mut state);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
