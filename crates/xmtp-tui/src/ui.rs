@@ -507,7 +507,7 @@ fn list_offset_for_visible_window(
     loop {
         let item_height = items[offset].height();
         if used_height + item_height > visible_height {
-            return (offset + 1).min(end_row_idx);
+            return offset;
         }
         used_height += item_height;
         if offset == 0 {
@@ -1205,12 +1205,14 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::text::Line;
+    use ratatui::widgets::ListItem;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     use crate::app::{App, Focus};
 
-    use super::render;
+    use super::{list_offset_for_visible_window, render};
 
     #[test]
     fn conversations_panel_shows_unread_badge() {
@@ -1262,5 +1264,17 @@ mod tests {
             "rendered output:\n{rendered}"
         );
         println!("{rendered}");
+    }
+
+    #[test]
+    fn list_offset_keeps_top_item_to_avoid_blank_line_at_bottom() {
+        let items = [2usize, 2, 5, 1, 1]
+            .into_iter()
+            .map(|height| ListItem::new(vec![Line::from("x"); height]))
+            .collect::<Vec<_>>();
+
+        let offset = list_offset_for_visible_window(&items, 4, 10);
+
+        assert_eq!(offset, 0);
     }
 }
