@@ -44,6 +44,7 @@ pub enum Modal {
     Help,
     MessageMenu,
     MessageDetail,
+    ReadByList,
     ReactionPicker,
     CreateDm,
     CreateGroup,
@@ -60,6 +61,7 @@ pub enum Modal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageMenuAction {
     ViewFull,
+    ViewReadBy,
     Reply,
     Reaction,
     SendReadReceipt,
@@ -69,6 +71,7 @@ impl MessageMenuAction {
     pub fn label(self) -> &'static str {
         match self {
             Self::ViewFull => "view full",
+            Self::ViewReadBy => "read by",
             Self::Reply => "reply",
             Self::Reaction => "reaction",
             Self::SendReadReceipt => "send read receipt",
@@ -271,9 +274,8 @@ impl App {
             }
             AppEvent::GroupMembersLoaded(items) => {
                 self.group_management.members = items;
-                self.group_management.self_permission_level = self
-                    .self_inbox_id()
-                    .and_then(|self_inbox_id| {
+                self.group_management.self_permission_level =
+                    self.self_inbox_id().and_then(|self_inbox_id| {
                         self.group_management
                             .members
                             .iter()
@@ -630,6 +632,7 @@ impl App {
             Modal::Help => self.handle_help_key(key),
             Modal::MessageMenu => self.handle_message_menu_key(key),
             Modal::MessageDetail => self.handle_message_detail_key(key),
+            Modal::ReadByList => self.handle_read_by_list_key(key),
             Modal::ReactionPicker => self.handle_reaction_picker_key(key),
             Modal::CreateDm => self.handle_create_dm_key(key),
             Modal::CreateGroup => self.handle_create_group_key(key),
@@ -654,6 +657,7 @@ impl App {
             Modal::Help
             | Modal::MessageMenu
             | Modal::MessageDetail
+            | Modal::ReadByList
             | Modal::ReactionPicker
             | Modal::CreateDm
             | Modal::CreateGroup
@@ -916,6 +920,9 @@ impl App {
                             self.detail_scroll = 0;
                             self.modal = Modal::MessageDetail;
                         }
+                        MessageMenuAction::ViewReadBy => {
+                            self.modal = Modal::ReadByList;
+                        }
                         MessageMenuAction::Reply => {
                             self.reply_to_message_id = Some(message.message_id.clone());
                             self.modal = Modal::None;
@@ -927,12 +934,9 @@ impl App {
                         }
                         MessageMenuAction::SendReadReceipt => {
                             self.modal = Modal::None;
-                            if self
-                                .selected_history_item()
-                                .is_some_and(|item| {
-                                    self.self_inbox_id() != Some(item.sender_inbox_id.as_str())
-                                })
-                                && let Some(conversation_id) = self.active_conversation_id.clone()
+                            if self.selected_history_item().is_some_and(|item| {
+                                self.self_inbox_id() != Some(item.sender_inbox_id.as_str())
+                            }) && let Some(conversation_id) = self.active_conversation_id.clone()
                             {
                                 return self.enqueue_read_receipt_effect(conversation_id);
                             }
@@ -944,6 +948,10 @@ impl App {
             }
             _ => {}
         }
+        Vec::new()
+    }
+
+    fn handle_read_by_list_key(&mut self, _key: KeyEvent) -> Vec<Effect> {
         Vec::new()
     }
 
@@ -1166,12 +1174,11 @@ impl App {
             }
             KeyCode::Down => {
                 let visible = self.group_management.members_list_visible_rows.get();
-                let max_scroll =
-                    if visible == 0 || self.group_management.members.len() <= visible {
-                        0
-                    } else {
-                        self.group_management.members.len() - visible
-                    };
+                let max_scroll = if visible == 0 || self.group_management.members.len() <= visible {
+                    0
+                } else {
+                    self.group_management.members.len() - visible
+                };
                 if self.group_management.info_member_scroll < max_scroll {
                     self.group_management.info_member_scroll += 1;
                 }
@@ -1367,7 +1374,7 @@ impl App {
             .map(|conversation| conversation.id.as_str())
     }
 
-    fn selected_history_item(&self) -> Option<&HistoryItem> {
+    pub fn selected_history_item(&self) -> Option<&HistoryItem> {
         self.messages.get(self.selected_message)
     }
 
@@ -1441,9 +1448,7 @@ impl App {
             return lines.clone();
         }
         let lines = render_markdown(content, wrap_width);
-        self.markdown_cache
-            .borrow_mut()
-            .insert(key, lines.clone());
+        self.markdown_cache.borrow_mut().insert(key, lines.clone());
         lines
     }
 
@@ -1458,11 +1463,14 @@ impl App {
         };
         match policy {
             "everyone" => true,
-            "admin_only" => self.group_management.self_permission_level.as_deref().is_some_and(
-                |level| level == "admin" || level == "super_admin",
-            ),
-            "super_admin_only" => self.group_management.self_permission_level.as_deref()
-                == Some("super_admin"),
+            "admin_only" => self
+                .group_management
+                .self_permission_level
+                .as_deref()
+                .is_some_and(|level| level == "admin" || level == "super_admin"),
+            "super_admin_only" => {
+                self.group_management.self_permission_level.as_deref() == Some("super_admin")
+            }
             "deny" => false,
             _ => true,
         }
@@ -1535,6 +1543,12 @@ impl App {
         actions.push(MessageMenuAction::Reply);
         actions.push(MessageMenuAction::Reaction);
         actions.push(MessageMenuAction::SendReadReceipt);
+        if self
+            .selected_history_item()
+            .is_some_and(|item| !item.read_by.is_empty())
+        {
+            actions.push(MessageMenuAction::ViewReadBy);
+        }
         actions
     }
 
@@ -2384,6 +2398,59 @@ mod tests {
     }
 
     #[test]
+    fn message_menu_includes_read_by_when_message_has_readers() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Messages;
+        let mut item = sample_history_item("msg-1", "hello");
+        item.read_by = vec!["peer-1".into()];
+        app.messages.push(item);
+
+        assert_eq!(
+            app.message_menu_actions(),
+            vec![
+                MessageMenuAction::Reply,
+                MessageMenuAction::Reaction,
+                MessageMenuAction::SendReadReceipt,
+                MessageMenuAction::ViewReadBy,
+            ]
+        );
+    }
+
+    #[test]
+    fn message_menu_excludes_read_by_when_message_has_no_readers() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Messages;
+        app.messages.push(sample_history_item("msg-1", "hello"));
+
+        assert!(
+            !app.message_menu_actions()
+                .contains(&MessageMenuAction::ViewReadBy)
+        );
+    }
+
+    #[test]
+    fn selecting_read_by_action_opens_read_by_list_modal() {
+        let (mut app, _) = App::new();
+        app.focus = Focus::Messages;
+        app.modal = Modal::MessageMenu;
+        let mut item = sample_history_item("msg-1", "hello");
+        item.read_by = vec!["peer-1".into()];
+        app.messages.push(item);
+        app.message_menu_index = app
+            .message_menu_actions()
+            .iter()
+            .position(|action| *action == MessageMenuAction::ViewReadBy)
+            .expect("read by action");
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.modal, Modal::ReadByList);
+    }
+
+    #[test]
     fn pressing_r_in_messages_focus_enters_reply_mode() {
         let (mut app, _) = App::new();
         app.focus = Focus::Messages;
@@ -2716,7 +2783,10 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(app.selected_conversation, 0);
         assert_eq!(app.active_conversation_id.as_deref(), Some("conv-2"));
-        assert_eq!(app.active_conversation.as_ref().map(|c| c.id.as_str()), Some("conv-1"));
+        assert_eq!(
+            app.active_conversation.as_ref().map(|c| c.id.as_str()),
+            Some("conv-1")
+        );
 
         let effects = app.handle_event(crate::event::AppEvent::ConversationsLoaded(vec![
             xmtp_ipc::ConversationItem {
@@ -2738,7 +2808,10 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(app.selected_conversation, 1);
         assert_eq!(app.active_conversation_id.as_deref(), Some("conv-2"));
-        assert_eq!(app.active_conversation.as_ref().map(|c| c.id.as_str()), Some("conv-2"));
+        assert_eq!(
+            app.active_conversation.as_ref().map(|c| c.id.as_str()),
+            Some("conv-2")
+        );
     }
 
     #[test]

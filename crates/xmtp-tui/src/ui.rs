@@ -48,6 +48,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         Modal::Help => render_help(frame),
         Modal::MessageMenu => render_message_menu(frame, app),
         Modal::MessageDetail => render_message_detail(frame, app),
+        Modal::ReadByList => render_read_by_list(frame, app),
         Modal::ReactionPicker => render_reaction_picker(frame, app),
         Modal::CreateDm => render_create_dm(frame, app),
         Modal::CreateGroup => render_create_group(frame, app),
@@ -256,9 +257,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
         let header = format!("{} [{}]", format_clock(item.sent_at_ns), sender_display);
         let mut header_spans = vec![Span::styled(
             header,
-            Style::default()
-                .fg(app.color_for_message(item))
-                .bg(row_bg),
+            Style::default().fg(app.color_for_message(item)).bg(row_bg),
         )];
         if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) && !item.read_by.is_empty() {
             header_spans.push(Span::styled(
@@ -284,9 +283,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
                     .map(|segment| {
                         Line::from(Span::styled(
                             segment,
-                            Style::default()
-                                .fg(app.color_for_message(item))
-                                .bg(row_bg),
+                            Style::default().fg(app.color_for_message(item)).bg(row_bg),
                         ))
                     })
                     .collect::<Vec<_>>()
@@ -302,9 +299,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
                 .map(|segment| {
                     Line::from(Span::styled(
                         segment,
-                        Style::default()
-                            .fg(app.color_for_message(item))
-                            .bg(row_bg),
+                        Style::default().fg(app.color_for_message(item)).bg(row_bg),
                     ))
                 })
                 .collect::<Vec<_>>()
@@ -313,9 +308,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
         if content_lines.is_empty() {
             content_lines.push(Line::from(Span::styled(
                 content.clone(),
-                Style::default()
-                    .fg(app.color_for_message(item))
-                    .bg(row_bg),
+                Style::default().fg(app.color_for_message(item)).bg(row_bg),
             )));
         }
 
@@ -495,9 +488,8 @@ fn trailing_row_end_index(rows: &[MessageRow<'_>], selected_row_idx: usize) -> u
             ..
         }) => Some(*index),
         Some(MessageRow {
-            kind: MessageRowKind::DateSeparator
-                | MessageRowKind::ReplyContext
-                | MessageRowKind::Reactions,
+            kind:
+                MessageRowKind::DateSeparator | MessageRowKind::ReplyContext | MessageRowKind::Reactions,
             ..
         })
         | None => None,
@@ -700,6 +692,52 @@ fn render_message_detail(frame: &mut Frame<'_>, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
+fn render_read_by_list(frame: &mut Frame<'_>, app: &App) {
+    let read_by = app
+        .selected_history_item()
+        .map(|item| item.read_by.as_slice())
+        .unwrap_or(&[]);
+    let popup_height_percent = ((read_by.len() as u16).saturating_mul(6))
+        .saturating_add(18)
+        .clamp(18, 60);
+    let area = centered_rect(48, popup_height_percent, frame.area());
+    frame.render_widget(Clear, area);
+
+    let mut lines = if read_by.is_empty() {
+        vec![Line::from(Span::styled(
+            "No readers yet",
+            Style::default().dark_gray(),
+        ))]
+    } else {
+        read_by
+            .iter()
+            .map(|inbox_id| {
+                let label = if app.self_inbox_id() == Some(inbox_id.as_str()) {
+                    "You".to_owned()
+                } else {
+                    resolve_read_by_label(app, inbox_id)
+                };
+                Line::from(label)
+            })
+            .collect()
+    };
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Esc close",
+        Style::default().dark_gray(),
+    )));
+
+    let paragraph = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(format!("Read by ({})", read_by.len()))
+                .borders(Borders::ALL),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, area);
+}
+
 fn render_help(frame: &mut Frame<'_>) {
     let area = centered_rect(64, 44, frame.area());
     frame.render_widget(Clear, area);
@@ -730,6 +768,10 @@ fn render_help(frame: &mut Frame<'_>) {
         .block(Block::default().title("Help").borders(Borders::ALL))
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
+}
+
+fn resolve_read_by_label(_app: &App, inbox_id: &str) -> String {
+    short_display_id(inbox_id)
 }
 
 fn render_reaction_picker(frame: &mut Frame<'_>, app: &App) {
@@ -1234,10 +1276,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::text::Line;
-    use ratatui::widgets::ListItem;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::text::Line;
+    use ratatui::widgets::ListItem;
 
     use crate::app::{App, Focus};
 
