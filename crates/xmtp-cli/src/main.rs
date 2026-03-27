@@ -93,7 +93,14 @@ enum Command {
     #[command(about = "Check local setup, daemon reachability, and runtime status")]
     Doctor,
     #[command(about = "Launch the interactive TUI")]
-    Tui,
+    Tui {
+        #[arg(
+            long = "enable-read-receipt",
+            default_value_t = false,
+            help = "Automatically send read receipts when viewing messages"
+        )]
+        enable_read_receipt: bool,
+    },
     #[command(about = "Bridge an XMTP conversation to an ACP agent subprocess")]
     Acp {
         #[arg(long, help = "Conversation ID to bridge")]
@@ -380,7 +387,9 @@ async fn run() -> anyhow::Result<()> {
             .await
         }
         Command::Doctor => doctor(data_dir).await,
-        Command::Tui => xmtp_tui::run(data_dir),
+        Command::Tui {
+            enable_read_receipt,
+        } => xmtp_tui::run(data_dir, enable_read_receipt),
         Command::Acp {
             conversation_id,
             context_prefix,

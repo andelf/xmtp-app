@@ -192,7 +192,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> (Self, Vec<Effect>) {
+    pub fn new(enable_read_receipt: bool) -> (Self, Vec<Effect>) {
         (
             Self {
                 focus: Focus::Conversations,
@@ -210,7 +210,7 @@ impl App {
                 active_history_loading: false,
                 messages: Vec::new(),
                 markdown_cache: RefCell::new(HashMap::new()),
-                read_receipt_auto_send: true,
+                read_receipt_auto_send: enable_read_receipt,
                 last_read_receipt_sent: HashMap::new(),
                 selected_message: 0,
                 detail_scroll: 0,
@@ -1950,7 +1950,7 @@ mod tests {
 
     #[test]
     fn input_focus_treats_char_as_text() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
@@ -1961,7 +1961,7 @@ mod tests {
 
     #[test]
     fn input_cursor_moves_left_and_right() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         app.input = "abc".into();
         app.cursor = 3;
@@ -1981,7 +1981,7 @@ mod tests {
 
     #[test]
     fn input_home_and_end_move_cursor() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         app.input = "abc".into();
         app.cursor = 1;
@@ -2001,7 +2001,7 @@ mod tests {
 
     #[test]
     fn input_ctrl_left_and_right_jump_by_word() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         app.input = "hello brave new world".into();
         app.cursor = app.input.chars().count();
@@ -2021,7 +2021,7 @@ mod tests {
 
     #[test]
     fn input_alt_left_and_right_jump_by_word() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         app.input = "hello brave new".into();
         app.cursor = "hello ".chars().count();
@@ -2047,7 +2047,7 @@ mod tests {
 
     #[test]
     fn input_inserts_text_in_the_middle() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         app.input = "helo".into();
         app.cursor = 2;
@@ -2063,7 +2063,7 @@ mod tests {
 
     #[test]
     fn input_ctrl_w_deletes_previous_word() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         app.input = "hello brave new".into();
         app.cursor = app.input.chars().count();
@@ -2079,7 +2079,7 @@ mod tests {
 
     #[test]
     fn input_ctrl_u_deletes_to_start() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         app.input = "hello brave new".into();
         app.cursor = "hello brave".chars().count();
@@ -2095,7 +2095,7 @@ mod tests {
 
     #[test]
     fn conversation_navigation_switches_immediately() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.conversations = vec![
             xmtp_ipc::ConversationItem {
                 id: "one".into(),
@@ -2143,7 +2143,7 @@ mod tests {
 
     #[test]
     fn ctrl_n_opens_create_dm_modal_outside_input() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Conversations;
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
             KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
@@ -2154,7 +2154,7 @@ mod tests {
 
     #[test]
     fn question_mark_opens_help_modal() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Conversations;
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
             KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT),
@@ -2165,7 +2165,7 @@ mod tests {
 
     #[test]
     fn any_key_clears_last_error() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.last_error = Some("boom".into());
         app.focus = Focus::Conversations;
         let _ = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
@@ -2178,7 +2178,7 @@ mod tests {
 
     #[test]
     fn enter_in_conversations_jumps_to_input() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Conversations;
         app.conversations = vec![xmtp_ipc::ConversationItem {
             id: "dm-1".into(),
@@ -2197,7 +2197,7 @@ mod tests {
 
     #[test]
     fn enter_on_group_conversation_opens_group_management_modal() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Conversations;
         app.conversations = vec![xmtp_ipc::ConversationItem {
             id: "grp-1".into(),
@@ -2230,7 +2230,7 @@ mod tests {
 
     #[test]
     fn rename_group_modal_starts_with_empty_input() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation = Some(xmtp_ipc::ConversationItem {
             id: "grp-1".into(),
             kind: "group".into(),
@@ -2253,7 +2253,7 @@ mod tests {
 
     #[test]
     fn rename_group_supports_ctrl_u_and_ctrl_w() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.modal = Modal::GroupRename;
         app.group_management.rename_input = "old team name".into();
 
@@ -2272,7 +2272,7 @@ mod tests {
 
     #[test]
     fn create_dm_enter_closes_modal_and_sets_progress_message() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.modal = Modal::CreateDm;
         app.focus = Focus::Input;
         app.dm_dialog.recipient = "peer-1".into();
@@ -2291,7 +2291,7 @@ mod tests {
 
     #[test]
     fn create_group_enter_closes_modal_and_sets_progress_message() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.modal = Modal::CreateGroup;
         app.focus = Focus::Input;
         app.group_dialog.field = Some(GroupDialogField::Members);
@@ -2312,7 +2312,7 @@ mod tests {
 
     #[test]
     fn leave_group_confirm_dispatches_real_leave_effect() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation = Some(xmtp_ipc::ConversationItem {
             id: "grp-1".into(),
             kind: "group".into(),
@@ -2337,7 +2337,7 @@ mod tests {
 
     #[test]
     fn enter_on_message_list_opens_message_menu() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Messages;
         app.messages.push(xmtp_ipc::HistoryItem {
             message_id: "msg-1".into(),
@@ -2363,7 +2363,7 @@ mod tests {
 
     #[test]
     fn short_message_hides_view_full_menu_action() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Messages;
         app.messages.push(sample_history_item("msg-1", "hello"));
 
@@ -2379,7 +2379,7 @@ mod tests {
 
     #[test]
     fn long_message_shows_view_full_menu_action() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Messages;
         app.messages.push(sample_history_item(
             "msg-1",
@@ -2399,7 +2399,7 @@ mod tests {
 
     #[test]
     fn message_menu_includes_read_by_when_message_has_readers() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Messages;
         let mut item = sample_history_item("msg-1", "hello");
         item.read_by = vec!["peer-1".into()];
@@ -2418,7 +2418,7 @@ mod tests {
 
     #[test]
     fn message_menu_excludes_read_by_when_message_has_no_readers() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Messages;
         app.messages.push(sample_history_item("msg-1", "hello"));
 
@@ -2430,7 +2430,7 @@ mod tests {
 
     #[test]
     fn selecting_read_by_action_opens_read_by_list_modal() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Messages;
         app.modal = Modal::MessageMenu;
         let mut item = sample_history_item("msg-1", "hello");
@@ -2452,7 +2452,7 @@ mod tests {
 
     #[test]
     fn pressing_r_in_messages_focus_enters_reply_mode() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Messages;
         app.messages.push(xmtp_ipc::HistoryItem {
             message_id: "msg-1".into(),
@@ -2481,7 +2481,7 @@ mod tests {
 
     #[test]
     fn history_load_merges_reaction_into_target_message() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.handle_event(crate::event::AppEvent::HistoryLoaded {
             conversation_id: "conv-1".into(),
@@ -2527,7 +2527,7 @@ mod tests {
 
     #[test]
     fn history_load_merges_reaction_even_when_reaction_appears_first() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.handle_event(crate::event::AppEvent::HistoryLoaded {
             conversation_id: "conv-1".into(),
@@ -2573,7 +2573,7 @@ mod tests {
 
     #[test]
     fn history_loaded_auto_sends_read_receipt_when_remote_message_exists() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(true);
         app.active_conversation_id = Some("conv-1".into());
         app.status = Some(
             serde_json::from_value(serde_json::json!({
@@ -2612,7 +2612,7 @@ mod tests {
 
     #[test]
     fn history_loaded_skips_read_receipt_when_all_messages_are_from_self() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.status = Some(
             serde_json::from_value(serde_json::json!({
@@ -2648,7 +2648,7 @@ mod tests {
 
     #[test]
     fn message_menu_send_read_receipt_skips_self_message() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.status = Some(
             serde_json::from_value(serde_json::json!({
@@ -2691,14 +2691,14 @@ mod tests {
 
     #[test]
     fn app_starts_with_app_event_subscription_effect() {
-        let (_, effects) = App::new();
+        let (_, effects) = App::new(false);
         assert_eq!(effects.len(), 1);
         assert!(matches!(effects[0], Effect::SubscribeAppEvents));
     }
 
     #[test]
     fn unread_count_increments_for_inactive_conversation_and_clears_on_switch() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.conversations = vec![
             xmtp_ipc::ConversationItem {
                 id: "conv-1".into(),
@@ -2752,7 +2752,7 @@ mod tests {
 
     #[test]
     fn conversations_loaded_keeps_pending_new_active_conversation_until_it_appears() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.conversations = vec![xmtp_ipc::ConversationItem {
             id: "conv-1".into(),
             kind: "dm".into(),
@@ -2816,7 +2816,7 @@ mod tests {
 
     #[test]
     fn sent_action_optimistically_appends_message_to_active_conversation() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.active_conversation = Some(xmtp_ipc::ConversationItem {
             id: "conv-1".into(),
@@ -2854,7 +2854,7 @@ mod tests {
 
     #[test]
     fn history_event_keeps_selection_when_not_at_end_even_if_messages_panel_is_unfocused() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.focus = Focus::Conversations;
         app.messages = vec![
@@ -2915,7 +2915,7 @@ mod tests {
 
     #[test]
     fn history_event_auto_scrolls_when_selection_was_already_at_end() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.focus = Focus::Conversations;
         app.messages = vec![
@@ -2976,7 +2976,7 @@ mod tests {
 
     #[test]
     fn history_event_does_not_auto_scroll_when_messages_panel_is_focused() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.focus = Focus::Messages;
         app.messages = vec![
@@ -3037,7 +3037,7 @@ mod tests {
 
     #[test]
     fn conversation_updated_event_updates_list_and_active_name() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.conversations = vec![xmtp_ipc::ConversationItem {
             id: "group-1".into(),
             kind: "group".into(),
@@ -3068,7 +3068,7 @@ mod tests {
 
     #[test]
     fn group_members_updated_event_refreshes_active_group_members() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation = Some(xmtp_ipc::ConversationItem {
             id: "group-1".into(),
             kind: "group".into(),
@@ -3105,7 +3105,7 @@ mod tests {
 
     #[test]
     fn group_members_loaded_updates_self_permission_level() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.status = Some(
             serde_json::from_value(serde_json::json!({
                 "daemon_state": "running",
@@ -3142,7 +3142,7 @@ mod tests {
 
     #[test]
     fn add_members_precheck_blocks_member_without_permission() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation = Some(xmtp_ipc::ConversationItem {
             id: "grp-1".into(),
             kind: "group".into(),
@@ -3180,7 +3180,7 @@ mod tests {
 
     #[test]
     fn esc_from_input_returns_to_conversations_without_quitting() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
             KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
@@ -3193,7 +3193,7 @@ mod tests {
 
     #[test]
     fn esc_in_input_clears_reply_state_before_leaving_input() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Input;
         app.reply_to_message_id = Some("msg-1".into());
 
@@ -3210,7 +3210,7 @@ mod tests {
 
     #[test]
     fn esc_twice_in_conversations_quits() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Conversations;
         let first = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(KeyEvent::new(
             KeyCode::Esc,
@@ -3230,7 +3230,7 @@ mod tests {
 
     #[test]
     fn esc_closes_modal_without_arming_exit() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.modal = Modal::CreateDm;
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
             KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
@@ -3243,7 +3243,7 @@ mod tests {
 
     #[test]
     fn switching_conversation_preserves_draft_and_clears_reply_state() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.active_conversation = Some(xmtp_ipc::ConversationItem {
             id: "conv-1".into(),
@@ -3293,7 +3293,7 @@ mod tests {
 
     #[test]
     fn switching_to_different_conversation_resets_selected_message_to_end() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.active_conversation = Some(ConversationItem {
             id: "conv-1".into(),
@@ -3326,7 +3326,7 @@ mod tests {
 
     #[test]
     fn leaving_messages_focus_resets_selected_message_to_end() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Messages;
         app.messages = vec![
             sample_history_item("msg-1", "one"),
@@ -3343,7 +3343,7 @@ mod tests {
 
     #[test]
     fn reactivating_same_conversation_keeps_selected_message_position() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.active_conversation_id = Some("conv-1".into());
         app.active_conversation = Some(ConversationItem {
             id: "conv-1".into(),

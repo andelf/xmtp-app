@@ -10,34 +10,36 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use crossterm::event::EventStream;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use crossterm::{event::Event, execute};
 use futures_util::StreamExt;
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use xmtp_config::load_config;
 
 use crate::app::App;
 use crate::event::AppEvent;
 use crate::ipc::Runtime;
 
-pub fn run(data_dir: PathBuf) -> anyhow::Result<()> {
+pub fn run(data_dir: PathBuf, enable_read_receipt: bool) -> anyhow::Result<()> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(run_async(data_dir)))
+        tokio::task::block_in_place(|| handle.block_on(run_async(data_dir, enable_read_receipt)))
     } else {
         tokio::runtime::Runtime::new()
             .context("create tokio runtime for TUI")?
-            .block_on(run_async(data_dir))
+            .block_on(run_async(data_dir, enable_read_receipt))
     }
 }
 
-async fn run_async(data_dir: PathBuf) -> anyhow::Result<()> {
+async fn run_async(data_dir: PathBuf, enable_read_receipt: bool) -> anyhow::Result<()> {
     enable_raw_mode().context("enable raw mode")?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen).context("enter alternate screen")?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create terminal")?;
-    let result = run_app(&mut terminal, data_dir).await;
+    let result = run_app(&mut terminal, data_dir, enable_read_receipt).await;
     disable_raw_mode().ok();
     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
     terminal.show_cursor().ok();
@@ -47,9 +49,10 @@ async fn run_async(data_dir: PathBuf) -> anyhow::Result<()> {
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     data_dir: PathBuf,
+    enable_read_receipt: bool,
 ) -> anyhow::Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let (mut app, initial_effects) = App::new();
+    let (mut app, initial_effects) = App::new(enable_read_receipt);
     if let Ok(config) = load_config(&data_dir.join("config.json")) {
         app.xmtp_env = Some(config.xmtp_env);
     }
@@ -67,7 +70,9 @@ async fn run_app(
 
     let mut terminal_events = EventStream::new();
     loop {
-        terminal.draw(|frame| ui::render(frame, &app)).context("draw TUI frame")?;
+        terminal
+            .draw(|frame| ui::render(frame, &app))
+            .context("draw TUI frame")?;
 
         tokio::select! {
             maybe_event = terminal_events.next() => {

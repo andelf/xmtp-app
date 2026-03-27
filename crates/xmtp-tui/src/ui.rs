@@ -1287,7 +1287,7 @@ mod tests {
 
     #[test]
     fn conversations_panel_shows_unread_badge() {
-        let (mut app, _) = App::new();
+        let (mut app, _) = App::new(false);
         app.focus = Focus::Conversations;
         app.conversations = vec![
             xmtp_ipc::ConversationItem {
