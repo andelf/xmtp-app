@@ -15,6 +15,7 @@ use tokio::process::Command;
 use tokio::task::LocalSet;
 use tokio::time::{Duration, sleep};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use xmtp_daemon::resolve_conversation_id;
 use xmtp_ipc::{
     ApiErrorBody, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
     HistoryItem, SendMessageRequest, StatusResponse,
@@ -58,6 +59,8 @@ async fn run_acp_inner(
     let status: StatusResponse = http_get(&data_dir, "/v1/status")
         .await
         .context("load daemon status")?;
+    let conversation_id = resolve_conversation_id(&data_dir, &conversation_id, None)
+        .context("resolve conversation ID")?;
     ensure_acp_send_endpoint(&data_dir)
         .await
         .context("verify ACP daemon endpoints")?;
@@ -736,7 +739,7 @@ fn send_processing_reaction(
             .post(format!("{base_url}/v1/messages/{message_id}/react"))
             .json(&EmojiRequest {
                 emoji: "👀".to_owned(),
-                action: Some("added".to_owned()),
+                action: Some("add".to_owned()),
                 conversation_id: Some(conversation_id.clone()),
             })
             .send()
