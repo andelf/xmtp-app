@@ -332,7 +332,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
                 kind: MessageRowKind::Message(index),
                 item: ListItem::new(Line::from(Span::styled(
                     " ... (Enter: view full)",
-                    Style::default().fg(Color::Yellow).bg(Color::Reset),
+                    Style::default().fg(Color::Yellow),
                 )))
                 .style(message_style),
             });
