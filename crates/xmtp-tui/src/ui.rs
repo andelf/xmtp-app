@@ -242,6 +242,11 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
         } else {
             unselected_style
         };
+        let row_bg = if index == app.selected_message {
+            Color::DarkGray
+        } else {
+            Color::Reset
+        };
         let content = item.content.replace('\n', " ");
         let sender_display = if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) {
             "You".to_owned()
@@ -253,12 +258,12 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             header,
             Style::default()
                 .fg(app.color_for_message(item))
-                .bg(Color::Reset),
+                .bg(row_bg),
         )];
         if app.self_inbox_id() == Some(item.sender_inbox_id.as_str()) && !item.read_by.is_empty() {
             header_spans.push(Span::styled(
                 " ✓",
-                Style::default().fg(Color::DarkGray).bg(Color::Reset),
+                Style::default().fg(Color::DarkGray).bg(row_bg),
             ));
         }
         rows.push(MessageRow {
@@ -281,14 +286,14 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
                             segment,
                             Style::default()
                                 .fg(app.color_for_message(item))
-                                .bg(Color::Reset),
+                                .bg(row_bg),
                         ))
                     })
                     .collect::<Vec<_>>()
             } else {
                 rendered
                     .into_iter()
-                    .map(|line| line.style(Style::default().bg(Color::Reset)))
+                    .map(|line| line.style(Style::default().bg(row_bg)))
                     .collect::<Vec<_>>()
             }
         } else {
@@ -299,7 +304,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
                         segment,
                         Style::default()
                             .fg(app.color_for_message(item))
-                            .bg(Color::Reset),
+                            .bg(row_bg),
                     ))
                 })
                 .collect::<Vec<_>>()
@@ -310,7 +315,7 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
                 content.clone(),
                 Style::default()
                     .fg(app.color_for_message(item))
-                    .bg(Color::Reset),
+                    .bg(row_bg),
             )));
         }
 
