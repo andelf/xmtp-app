@@ -6,7 +6,10 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "lint": "eslint src/ app/",
+    "lint:fix": "eslint src/ app/ --fix",
+    "format": "prettier --write 'src/**/*.{ts,tsx}' 'app/**/*.{ts,tsx}'"
   },
   "dependencies": {
     "@shopify/flash-list": "^2.3.1",
@@ -36,6 +39,11 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "eslint": "^9.39.4",
+    "eslint-config-expo": "^55.0.1-canary-20260328-2049187",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "prettier": "^3.8.1",
     "typescript": "~5.9.2"
   },
   "private": true

@@ -3,10 +3,6 @@
  * and handles initial auth restoration.
  */
 import { Buffer } from "buffer";
-// Polyfill Buffer for Hermes — required by @xmtp/react-native-sdk internals
-if (typeof globalThis.Buffer === "undefined") {
-  globalThis.Buffer = Buffer as any;
-}
 
 import { useEffect } from "react";
 import { Slot } from "expo-router";
@@ -16,6 +12,10 @@ import { StatusBar } from "expo-status-bar";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { useAuthStore } from "../src/store/auth";
 import { log } from "../src/utils/logger";
+// Polyfill Buffer for Hermes — required by @xmtp/react-native-sdk internals
+if (typeof globalThis.Buffer === "undefined") {
+  globalThis.Buffer = Buffer as any;
+}
 
 const theme = {
   ...MD3DarkTheme,

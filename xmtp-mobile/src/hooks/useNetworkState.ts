@@ -40,11 +40,17 @@ export function useNetworkState(options?: UseNetworkStateOptions) {
           const client = getClient();
           if (!client) return;
 
-          useConversationStore.getState().fetchAll().catch(() => {});
+          useConversationStore
+            .getState()
+            .fetchAll()
+            .catch(() => {});
 
           const conversationId = optionsRef.current?.currentConversationId;
           if (conversationId) {
-            useMessageStore.getState().fetchMessages(conversationId, { limit: 30 }).catch(() => {});
+            useMessageStore
+              .getState()
+              .fetchMessages(conversationId, { limit: 30 })
+              .catch(() => {});
           }
         }
       } catch {

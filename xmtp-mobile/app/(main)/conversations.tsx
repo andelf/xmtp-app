@@ -105,7 +105,7 @@ export default function ConversationsScreen() {
     (item: ConversationItem) => {
       router.push(`/conversation/${item.id}` as any);
     },
-    [router],
+    [router]
   );
 
   const handleNewConversation = useCallback(() => {
@@ -119,16 +119,11 @@ export default function ConversationsScreen() {
 
   // Renderers
   const renderItem: ListRenderItem<ConversationItem> = useCallback(
-    ({ item }) => (
-      <ConversationListItem item={item} onPress={handleConversationPress} />
-    ),
-    [handleConversationPress],
+    ({ item }) => <ConversationListItem item={item} onPress={handleConversationPress} />,
+    [handleConversationPress]
   );
 
-  const renderSeparator = useCallback(
-    () => <Divider style={styles.divider} />,
-    [],
-  );
+  const renderSeparator = useCallback(() => <Divider style={styles.divider} />, []);
 
   const renderEmpty = useCallback(
     () => (
@@ -160,7 +155,7 @@ export default function ConversationsScreen() {
         </Button>
       </View>
     ),
-    [handleNewConversation],
+    [handleNewConversation]
   );
 
   return (
@@ -168,16 +163,8 @@ export default function ConversationsScreen() {
       {/* AppBar */}
       <Appbar.Header style={styles.appbar} elevated>
         <Appbar.Content title="Messages" titleStyle={styles.appbarTitle} />
-        <Appbar.Action
-          icon="plus"
-          onPress={handleNewConversation}
-          iconColor="#E6E1E5"
-        />
-        <Appbar.Action
-          icon="logout"
-          onPress={handleLogout}
-          iconColor="#E6E1E5"
-        />
+        <Appbar.Action icon="plus" onPress={handleNewConversation} iconColor="#E6E1E5" />
+        <Appbar.Action icon="logout" onPress={handleLogout} iconColor="#E6E1E5" />
       </Appbar.Header>
 
       {/* Conversation list */}

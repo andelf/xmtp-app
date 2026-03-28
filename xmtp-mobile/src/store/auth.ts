@@ -4,11 +4,7 @@
 import { create } from "zustand";
 import * as SecureStore from "expo-secure-store";
 import type { Client } from "@xmtp/react-native-sdk";
-import {
-  initClient,
-  disconnectClient,
-  generateDbEncryptionKey,
-} from "../xmtp/client";
+import { initClient, disconnectClient, generateDbEncryptionKey } from "../xmtp/client";
 
 // ---------------------------------------------------------------------------
 // Secure storage keys
@@ -127,8 +123,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         return;
       }
       const env = (await SecureStore.getItemAsync(ENV_STORE)) ?? "dev";
-      const customLocalHost =
-        (await SecureStore.getItemAsync(LOCAL_HOST_STORE)) ?? undefined;
+      const customLocalHost = (await SecureStore.getItemAsync(LOCAL_HOST_STORE)) ?? undefined;
       // Delegate to init which handles DB key retrieval
       await get().init(privateKey, env, customLocalHost);
     } catch (err: any) {

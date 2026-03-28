@@ -22,8 +22,7 @@ let _client: Client | null = null;
  */
 function walletToSigner(wallet: Wallet): Signer {
   return {
-    getIdentifier: async () =>
-      new PublicIdentity(wallet.address.toLowerCase(), "ETHEREUM"),
+    getIdentifier: async () => new PublicIdentity(wallet.address.toLowerCase(), "ETHEREUM"),
     getChainId: () => undefined,
     getBlockNumber: () => undefined,
     signerType: () => "EOA" as const,

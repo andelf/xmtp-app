@@ -7,9 +7,7 @@
 import type { DecodedMessage } from "@xmtp/react-native-sdk";
 
 /** Access the undocumented nativeContent field, centralising the cast. */
-export function getNativeContent(
-  msg: DecodedMessage
-): Record<string, any> | undefined {
+export function getNativeContent(msg: DecodedMessage): Record<string, any> | undefined {
   return (msg as any).nativeContent as Record<string, any> | undefined;
 }
 

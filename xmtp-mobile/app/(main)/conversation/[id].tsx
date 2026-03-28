@@ -55,7 +55,9 @@ export default function ConversationScreen() {
   const [replyTo, setReplyTo] = useState<MessageItem | null>(null);
 
   const scrollToBottom = useCallback(() => {
-    try { listRef.current?.scrollToOffset({ offset: 0, animated: true }); } catch {}
+    try {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    } catch {}
   }, []);
 
   // Scroll to bottom when keyboard appears (only if already at bottom)
@@ -67,7 +69,10 @@ export default function ConversationScreen() {
     const hideSub = Keyboard.addListener("keyboardDidHide", () => {
       setKeyboardVisible(false);
     });
-    return () => { showSub.remove(); hideSub.remove(); };
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
   }, []);
 
   // Track scroll position — inverted list: offset near 0 means at bottom
@@ -79,9 +84,7 @@ export default function ConversationScreen() {
   }, []);
 
   // Messages from store
-  const storeMessages = useMessageStore(
-    (s) => s.byConversation[id ?? ""] ?? EMPTY_MESSAGES
-  );
+  const storeMessages = useMessageStore((s) => s.byConversation[id ?? ""] ?? EMPTY_MESSAGES);
   const storeLoading = useMessageStore((s) => s.isLoading);
 
   const messages = useMemo(() => {
@@ -119,7 +122,7 @@ export default function ConversationScreen() {
       }
       setTimeout(scrollToBottom, 100);
     },
-    [id, replyTo, scrollToBottom],
+    [id, replyTo, scrollToBottom]
   );
 
   const handleReply = useCallback((item: MessageItem) => {
@@ -134,15 +137,10 @@ export default function ConversationScreen() {
     ({ item, index }) => {
       const prevItem = index + 1 < messages.length ? messages[index + 1] : null;
       return (
-        <MessageBubble
-          item={item}
-          prevItem={prevItem}
-          isGroup={isGroup}
-          onReply={handleReply}
-        />
+        <MessageBubble item={item} prevItem={prevItem} isGroup={isGroup} onReply={handleReply} />
       );
     },
-    [isGroup, messages, handleReply],
+    [isGroup, messages, handleReply]
   );
 
   const renderFooter = useCallback(() => {
@@ -187,12 +185,10 @@ export default function ConversationScreen() {
         />
 
         {/* Input bar — only pad for nav bar when keyboard is closed */}
-        <View style={{ paddingBottom: keyboardVisible ? 0 : insets.bottom, backgroundColor: "#1a1a2e" }}>
-          <MessageInput
-            onSend={handleSend}
-            replyTo={replyTo}
-            onCancelReply={handleCancelReply}
-          />
+        <View
+          style={{ paddingBottom: keyboardVisible ? 0 : insets.bottom, backgroundColor: "#1a1a2e" }}
+        >
+          <MessageInput onSend={handleSend} replyTo={replyTo} onCancelReply={handleCancelReply} />
         </View>
       </KeyboardAvoidingView>
     </>

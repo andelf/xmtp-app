@@ -2,21 +2,8 @@
  * Login page -- private key input to create XMTP client.
  */
 import { useState } from "react";
-import {
-  View,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-} from "react-native";
-import {
-  TextInput,
-  Button,
-  Text,
-  HelperText,
-  Surface,
-  SegmentedButtons,
-} from "react-native-paper";
+import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { TextInput, Button, Text, HelperText, Surface, SegmentedButtons } from "react-native-paper";
 import { useRouter } from "expo-router";
 import { useAuthStore } from "../src/store/auth";
 
@@ -45,18 +32,12 @@ export default function LoginScreen() {
   const router = useRouter();
 
   const isConnectDisabled =
-    isLoading ||
-    !privateKey.trim() ||
-    (env === "local" && !customLocalHost.trim());
+    isLoading || !privateKey.trim() || (env === "local" && !customLocalHost.trim());
 
   const handleConnect = async () => {
     const trimmed = privateKey.trim();
     if (!trimmed) return;
-    await init(
-      trimmed,
-      env,
-      env === "local" ? customLocalHost.trim() : undefined
-    );
+    await init(trimmed, env, env === "local" ? customLocalHost.trim() : undefined);
   };
 
   // Navigate after successful init
@@ -70,10 +51,7 @@ export default function LoginScreen() {
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <Surface style={styles.card} elevation={2}>
           <Text variant="headlineMedium" style={styles.title}>
             XMTP Mobile
@@ -135,8 +113,8 @@ export default function LoginScreen() {
           </Button>
 
           <Text variant="bodySmall" style={styles.warning}>
-            Your private key is stored securely on-device using expo-secure-store
-            and never transmitted.
+            Your private key is stored securely on-device using expo-secure-store and never
+            transmitted.
           </Text>
         </Surface>
       </ScrollView>

@@ -63,10 +63,7 @@ function colorForTitle(title: string): string {
 // Component
 // ---------------------------------------------------------------------------
 
-function ConversationListItemInner({
-  item,
-  onPress,
-}: ConversationListItemProps) {
+function ConversationListItemInner({ item, onPress }: ConversationListItemProps) {
   const timestamp = item.lastMessageAt ?? item.createdAt;
   const timeLabel = formatRelativeTime(timestamp);
   const initials = getInitials(item.title);

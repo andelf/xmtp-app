@@ -2,26 +2,12 @@
  * New conversation page -- enter an ETH address to create a DM.
  */
 import React, { useCallback, useState } from "react";
-import {
-  View,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-} from "react-native";
-import {
-  Appbar,
-  TextInput,
-  Button,
-  Text,
-  HelperText,
-} from "react-native-paper";
+import { View, StyleSheet, KeyboardAvoidingView, Platform } from "react-native";
+import { Appbar, TextInput, Button, Text, HelperText } from "react-native-paper";
 import { useRouter } from "expo-router";
 
 import { getClient } from "../../src/xmtp/client";
-import {
-  useConversationStore,
-  conversationToItem,
-} from "../../src/store/conversations";
+import { useConversationStore, conversationToItem } from "../../src/store/conversations";
 import { PublicIdentity } from "@xmtp/react-native-sdk";
 
 // ---------------------------------------------------------------------------
@@ -79,7 +65,7 @@ export default function NewConversationScreen() {
       const canReach = Object.values(canMessageResult)[0] ?? false;
       if (!canReach) {
         setError(
-          "This address is not registered on the XMTP network. The recipient must activate XMTP first.",
+          "This address is not registered on the XMTP network. The recipient must activate XMTP first."
         );
         setLoading(false);
         return;
@@ -114,10 +100,7 @@ export default function NewConversationScreen() {
       {/* AppBar */}
       <Appbar.Header style={styles.appbar} elevated>
         <Appbar.BackAction onPress={handleBack} iconColor="#E6E1E5" />
-        <Appbar.Content
-          title="New Conversation"
-          titleStyle={styles.appbarTitle}
-        />
+        <Appbar.Content title="New Conversation" titleStyle={styles.appbarTitle} />
       </Appbar.Header>
 
       <View style={styles.content}>

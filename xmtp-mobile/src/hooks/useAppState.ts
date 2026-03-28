@@ -23,31 +23,34 @@ export function useAppState(options?: UseAppStateOptions) {
   optionsRef.current = options;
 
   useEffect(() => {
-    const subscription = AppState.addEventListener(
-      "change",
-      (nextState: AppStateStatus) => {
-        const prev = appStateRef.current;
+    const subscription = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+      const prev = appStateRef.current;
 
-        if (prev === "active" && nextState.match(/inactive|background/)) {
-          lastActiveRef.current = Date.now();
-        }
-
-        if (prev.match(/inactive|background/) && nextState === "active") {
-          const client = getClient();
-          if (!client) return;
-
-          // Access stores directly (not via selector) to avoid re-render deps
-          useConversationStore.getState().fetchAll().catch(() => {});
-
-          const conversationId = optionsRef.current?.currentConversationId;
-          if (conversationId) {
-            useMessageStore.getState().fetchMessages(conversationId, { limit: 30 }).catch(() => {});
-          }
-        }
-
-        appStateRef.current = nextState;
+      if (prev === "active" && nextState.match(/inactive|background/)) {
+        lastActiveRef.current = Date.now();
       }
-    );
+
+      if (prev.match(/inactive|background/) && nextState === "active") {
+        const client = getClient();
+        if (!client) return;
+
+        // Access stores directly (not via selector) to avoid re-render deps
+        useConversationStore
+          .getState()
+          .fetchAll()
+          .catch(() => {});
+
+        const conversationId = optionsRef.current?.currentConversationId;
+        if (conversationId) {
+          useMessageStore
+            .getState()
+            .fetchMessages(conversationId, { limit: 30 })
+            .catch(() => {});
+        }
+      }
+
+      appStateRef.current = nextState;
+    });
 
     return () => subscription.remove();
   }, []); // no deps — stable forever

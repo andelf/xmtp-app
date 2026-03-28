@@ -27,7 +27,12 @@ export interface MessageInputProps {
 // Component
 // ---------------------------------------------------------------------------
 
-function MessageInputInner({ onSend, disabled = false, replyTo, onCancelReply }: MessageInputProps) {
+function MessageInputInner({
+  onSend,
+  disabled = false,
+  replyTo,
+  onCancelReply,
+}: MessageInputProps) {
   const [text, setText] = useState("");
   const inputRef = useRef<any>(null);
 

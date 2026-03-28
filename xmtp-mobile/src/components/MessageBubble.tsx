@@ -44,10 +44,24 @@ const MD_STYLE_OWN: MarkdownStyle = {
   em: { color: "#FFFFFF" },
   link: { color: "#D0BCFF", underline: true },
   code: { color: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.2)", fontSize: 13 },
-  codeBlock: { color: "#E6E1E5", backgroundColor: "rgba(0,0,0,0.25)", borderRadius: 6, padding: 8, fontSize: 13 },
+  codeBlock: {
+    color: "#E6E1E5",
+    backgroundColor: "rgba(0,0,0,0.25)",
+    borderRadius: 6,
+    padding: 8,
+    fontSize: 13,
+  },
   blockquote: { borderColor: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.15)", color: "#E6E1E5" },
   list: { color: "#FFFFFF", bulletColor: "#D0BCFF" },
-  table: { ...MD_TABLE_COMMON, color: "#FFFFFF", headerBackgroundColor: "rgba(0,0,0,0.2)", headerTextColor: "#FFFFFF", borderColor: "rgba(255,255,255,0.2)", rowEvenBackgroundColor: "rgba(0,0,0,0.1)", rowOddBackgroundColor: "transparent" },
+  table: {
+    ...MD_TABLE_COMMON,
+    color: "#FFFFFF",
+    headerBackgroundColor: "rgba(0,0,0,0.2)",
+    headerTextColor: "#FFFFFF",
+    borderColor: "rgba(255,255,255,0.2)",
+    rowEvenBackgroundColor: "rgba(0,0,0,0.1)",
+    rowOddBackgroundColor: "transparent",
+  },
 };
 
 const MD_STYLE_OTHER: MarkdownStyle = {
@@ -62,10 +76,28 @@ const MD_STYLE_OTHER: MarkdownStyle = {
   em: { color: "#E6E1E5" },
   link: { color: "#D0BCFF", underline: true },
   code: { color: "#D0BCFF", backgroundColor: "rgba(255,255,255,0.08)", fontSize: 13 },
-  codeBlock: { color: "#E6E1E5", backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 6, padding: 8, fontSize: 13 },
-  blockquote: { borderColor: "#BB86FC", backgroundColor: "rgba(255,255,255,0.05)", color: "#CAC4D0" },
+  codeBlock: {
+    color: "#E6E1E5",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderRadius: 6,
+    padding: 8,
+    fontSize: 13,
+  },
+  blockquote: {
+    borderColor: "#BB86FC",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    color: "#CAC4D0",
+  },
   list: { color: "#E6E1E5", bulletColor: "#BB86FC" },
-  table: { ...MD_TABLE_COMMON, color: "#E6E1E5", headerBackgroundColor: "rgba(255,255,255,0.1)", headerTextColor: "#E6E1E5", borderColor: "rgba(255,255,255,0.15)", rowEvenBackgroundColor: "rgba(255,255,255,0.04)", rowOddBackgroundColor: "transparent" },
+  table: {
+    ...MD_TABLE_COMMON,
+    color: "#E6E1E5",
+    headerBackgroundColor: "rgba(255,255,255,0.1)",
+    headerTextColor: "#E6E1E5",
+    borderColor: "rgba(255,255,255,0.15)",
+    rowEvenBackgroundColor: "rgba(255,255,255,0.04)",
+    rowOddBackgroundColor: "transparent",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -89,8 +121,14 @@ const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.75;
 const GROUP_TIME_THRESHOLD = 2 * 60 * 1000;
 
 const SENDER_COLORS = [
-  "#BB86FC", "#03DAC6", "#CF6679", "#FFAB40",
-  "#69F0AE", "#40C4FF", "#FF8A65", "#B388FF",
+  "#BB86FC",
+  "#03DAC6",
+  "#CF6679",
+  "#FFAB40",
+  "#69F0AE",
+  "#40C4FF",
+  "#FF8A65",
+  "#B388FF",
 ];
 
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "🔥", "👀", "🙏"];
@@ -111,10 +149,7 @@ function senderLabel(inboxId: string): string {
   return inboxId.slice(0, 8) + "...";
 }
 
-function shouldShowHeader(
-  item: MessageItem,
-  prevItem: MessageItem | null | undefined,
-): boolean {
+function shouldShowHeader(item: MessageItem, prevItem: MessageItem | null | undefined): boolean {
   if (!prevItem) return true;
   if (prevItem.senderInboxId !== item.senderInboxId) return true;
   if (Math.abs(item.sentAt - prevItem.sentAt) > GROUP_TIME_THRESHOLD) return true;
@@ -138,16 +173,19 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
 
-  const handleLongPress = useCallback((e: any) => {
-    const pageX = e?.nativeEvent?.pageX ?? 0;
-    const pageY = e?.nativeEvent?.pageY ?? 0;
-    // Position menu above the touch point, clamped to screen edges
-    let left = isOwn ? pageX - MENU_WIDTH + 20 : pageX - 20;
-    left = Math.max(8, Math.min(left, SCREEN_WIDTH - MENU_WIDTH - 8));
-    const top = Math.max(8, pageY - 120);
-    setMenuPosition({ x: left, y: top });
-    setMenuVisible(true);
-  }, [isOwn]);
+  const handleLongPress = useCallback(
+    (e: any) => {
+      const pageX = e?.nativeEvent?.pageX ?? 0;
+      const pageY = e?.nativeEvent?.pageY ?? 0;
+      // Position menu above the touch point, clamped to screen edges
+      let left = isOwn ? pageX - MENU_WIDTH + 20 : pageX - 20;
+      left = Math.max(8, Math.min(left, SCREEN_WIDTH - MENU_WIDTH - 8));
+      const top = Math.max(8, pageY - 120);
+      setMenuPosition({ x: left, y: top });
+      setMenuVisible(true);
+    },
+    [isOwn]
+  );
 
   const closeMenu = useCallback(() => setMenuVisible(false), []);
 
@@ -156,10 +194,13 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
     setMenuVisible(false);
   }, [item.text]);
 
-  const handleReaction = useCallback((emoji: string) => {
-    setMenuVisible(false);
-    sendReaction(item.conversationId, item.id as string, emoji);
-  }, [item.conversationId, item.id]);
+  const handleReaction = useCallback(
+    (emoji: string) => {
+      setMenuVisible(false);
+      sendReaction(item.conversationId, item.id as string, emoji);
+    },
+    [item.conversationId, item.id]
+  );
 
   const handleReply = useCallback(() => {
     setMenuVisible(false);
@@ -230,9 +271,7 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
           {Object.entries(item.reactions).map(([emoji, senders]) => (
             <View key={emoji} style={styles.reactionBadge}>
               <Text style={styles.reactionEmoji}>{emoji}</Text>
-              {senders.length > 1 && (
-                <Text style={styles.reactionCount}>{senders.length}</Text>
-              )}
+              {senders.length > 1 && <Text style={styles.reactionCount}>{senders.length}</Text>}
             </View>
           ))}
         </View>

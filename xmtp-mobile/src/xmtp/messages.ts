@@ -7,12 +7,7 @@ import type { ConversationId, MessageId } from "@xmtp/react-native-sdk";
 
 import { getClient } from "./client";
 import { useAuthStore } from "../store/auth";
-import {
-  useMessageStore,
-  decodedToMessageItem,
-  type MessageItem,
-  type ReactionInfo,
-} from "../store/messages";
+import { useMessageStore, type MessageItem } from "../store/messages";
 import { useConversationStore } from "../store/conversations";
 
 /**
@@ -89,9 +84,7 @@ export async function findConversation(conversationId: ConversationId) {
   if (!client) return null;
   const groups = await client.conversations.listGroups();
   const dms = await client.conversations.listDms();
-  const convo = [...groups, ...dms].find(
-    (c) => (c.id as string) === key
-  ) ?? null;
+  const convo = [...groups, ...dms].find((c) => (c.id as string) === key) ?? null;
   if (convo) conversationCache.set(key, convo);
   return convo;
 }

@@ -13,11 +13,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { ConversationId } from "@xmtp/react-native-sdk";
 import { useAuthStore } from "../store/auth";
-import {
-  useMessageStore,
-  decodedToMessageItem,
-  decodedToReaction,
-} from "../store/messages";
+import { useMessageStore, decodedToMessageItem, decodedToReaction } from "../store/messages";
 import { findConversation } from "../xmtp/messages";
 
 const PAGE_SIZE = 30;
@@ -57,11 +53,7 @@ export function useMessages(conversationId: ConversationId | null) {
                 return;
               }
               // Handle regular messages
-              const item = decodedToMessageItem(
-                decodedMsg,
-                conversationId,
-                myInboxId
-              );
+              const item = decodedToMessageItem(decodedMsg, conversationId, myInboxId);
               if (item) {
                 useMessageStore.getState().append(item);
               }

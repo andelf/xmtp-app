@@ -81,8 +81,7 @@ export async function conversationToItem(
       // Try to get peer's address from member list
       const members = await dm.members();
       const peer = members.find((m) => m.inboxId !== myInboxId);
-      const peerAddr =
-        peer?.identities?.[0]?.identifier ?? peerInboxId ?? "Unknown";
+      const peerAddr = peer?.identities?.[0]?.identifier ?? peerInboxId ?? "Unknown";
       title = truncateAddress(peerAddr);
     } catch {
       title = "DM";
@@ -90,7 +89,9 @@ export async function conversationToItem(
   }
 
   // Sync conversation messages before fetching preview
-  try { await conversation.sync(); } catch {}
+  try {
+    await conversation.sync();
+  } catch {}
 
   // Fetch recent messages for preview — skip reactions, read receipts, group updates
   let lastMessageText: string | undefined;
@@ -166,11 +167,7 @@ export interface ConversationActions {
   /** Insert or update a single conversation item. */
   upsert: (item: ConversationItem) => void;
   /** Update the last message preview for a conversation. */
-  updateLastMessage: (
-    conversationId: string,
-    text: string,
-    timestamp: number
-  ) => void;
+  updateLastMessage: (conversationId: string, text: string, timestamp: number) => void;
   /** Clear store on logout. */
   clear: () => void;
   /** Conversations sorted by lastMessageAt descending (derived). */
@@ -210,9 +207,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       const nextItems = new Map<string, ConversationItem>();
       const nextTopicToId = new Map<string, string>();
 
-      const converted = await Promise.all(
-        all.map((c) => conversationToItem(c, myInboxId))
-      );
+      const converted = await Promise.all(all.map((c) => conversationToItem(c, myInboxId)));
 
       for (const item of converted) {
         const idStr = item.id as string;
@@ -267,8 +262,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
   sortedList: () => {
     const { items } = get();
     return Array.from(items.values()).sort(
-      (a, b) =>
-        (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt)
+      (a, b) => (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt)
     );
   },
 

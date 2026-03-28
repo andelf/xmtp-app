@@ -107,7 +107,7 @@ export function decodedToMessageItem(
           } else if (encoded.fallback) {
             text = encoded.fallback;
           }
-        } catch (e) {
+        } catch {
           // encoded parse failed — skip message
         }
       }
@@ -183,11 +183,7 @@ export interface MessageActions {
   /** Add an optimistic "sending" message. Returns the temporary id. */
   addPending: (conversationId: ConversationId, text: string) => string;
   /** Replace a pending message with the confirmed version. */
-  confirmSent: (
-    conversationId: ConversationId,
-    tempId: string,
-    realMessage: MessageItem
-  ) => void;
+  confirmSent: (conversationId: ConversationId, tempId: string, realMessage: MessageItem) => void;
   /** Mark a pending message as failed. */
   markFailed: (conversationId: ConversationId, tempId: string) => void;
   /** Update an existing message (e.g. delivery status change). */
@@ -244,9 +240,9 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
     set({ isLoading: true });
     try {
       // Find conversation by id
-      const conversation = await client.conversations.findConversationByTopic(
-        conversationId as string as any
-      ).catch(() => null);
+      const conversation = await client.conversations
+        .findConversationByTopic(conversationId as string as any)
+        .catch(() => null);
 
       // Fallback: try by listing all and finding by id
       let convo = conversation;
@@ -354,8 +350,7 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
       // matching text — avoids the brief flash of duplicate bubbles.
       if (msg.isOwn) {
         const pendingIdx = existing.findIndex(
-          (m) =>
-            (m.id as string).startsWith("__pending_") && m.text === msg.text
+          (m) => (m.id as string).startsWith("__pending_") && m.text === msg.text
         );
         if (pendingIdx !== -1) {
           const updated = [...existing];
@@ -409,9 +404,7 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
       const existing = state.byConversation[key];
       if (!existing) return state;
       // Remove the pending message and insert the real one
-      const filtered = existing.filter(
-        (m) => (m.id as string) !== tempId
-      );
+      const filtered = existing.filter((m) => (m.id as string) !== tempId);
       // Deduplicate against real message id
       if (filtered.some((m) => m.id === realMessage.id)) {
         return {
@@ -451,9 +444,7 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
       return {
         byConversation: {
           ...state.byConversation,
-          [key]: existing.map((m) =>
-            m.id === messageId ? { ...m, ...patch } : m
-          ),
+          [key]: existing.map((m) => (m.id === messageId ? { ...m, ...patch } : m)),
         },
       };
     });
@@ -464,9 +455,7 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
       const key = reaction.conversationId as string;
       const existing = state.byConversation[key];
       if (!existing) return state;
-      const idx = existing.findIndex(
-        (m) => (m.id as string) === reaction.referenceMessageId
-      );
+      const idx = existing.findIndex((m) => (m.id as string) === reaction.referenceMessageId);
       if (idx === -1) return state;
       const msg = existing[idx];
       const prev = msg.reactions ?? {};

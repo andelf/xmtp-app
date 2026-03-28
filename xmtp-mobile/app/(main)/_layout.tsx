@@ -23,14 +23,8 @@ export default function MainLayout() {
         contentStyle: { backgroundColor: "#1a1a2e" },
       }}
     >
-      <Stack.Screen
-        name="conversations"
-        options={{ title: "Conversations", headerShown: false }}
-      />
-      <Stack.Screen
-        name="conversation/[id]"
-        options={{ title: "Chat" }}
-      />
+      <Stack.Screen name="conversations" options={{ title: "Conversations", headerShown: false }} />
+      <Stack.Screen name="conversation/[id]" options={{ title: "Chat" }} />
       <Stack.Screen
         name="new-conversation"
         options={{ title: "New Conversation", headerShown: false }}
