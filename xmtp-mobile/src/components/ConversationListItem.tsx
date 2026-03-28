@@ -26,13 +26,16 @@ export interface ConversationListItemProps {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Extract initials for the avatar (first 1-2 chars of the title). */
+/** Extract initials for the avatar. For ETH addresses (0x...), use chars after the prefix. */
 function getInitials(title: string): string {
+  // ETH address: skip "0x" prefix, take next 2 hex chars
+  if (title.startsWith("0x") && title.length > 4) {
+    return title.slice(2, 4).toUpperCase();
+  }
   const parts = title.trim().split(/\s+/);
   if (parts.length >= 2) {
     return (parts[0][0] + parts[1][0]).toUpperCase();
   }
-  // Single word -- take first two chars (or 1 if very short)
   return title.slice(0, 2).toUpperCase();
 }
 
