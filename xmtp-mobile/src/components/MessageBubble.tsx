@@ -138,14 +138,15 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
   const bubbleRef = useRef<View>(null);
 
-  const handleLongPress = useCallback(() => {
-    bubbleRef.current?.measureInWindow((x, y, _width, _height) => {
-      // Center menu horizontally over bubble, clamp to screen edges
-      let left = isOwn ? x + _width - MENU_WIDTH : x;
-      left = Math.max(8, Math.min(left, SCREEN_WIDTH - MENU_WIDTH - 8));
-      setMenuPosition({ x: left, y: y - 90 });
-      setMenuVisible(true);
-    });
+  const handleLongPress = useCallback((e: any) => {
+    const pageX = e?.nativeEvent?.pageX ?? 0;
+    const pageY = e?.nativeEvent?.pageY ?? 0;
+    // Position menu above the touch point, clamped to screen edges
+    let left = isOwn ? pageX - MENU_WIDTH + 20 : pageX - 20;
+    left = Math.max(8, Math.min(left, SCREEN_WIDTH - MENU_WIDTH - 8));
+    const top = Math.max(8, pageY - 120);
+    setMenuPosition({ x: left, y: top });
+    setMenuVisible(true);
   }, [isOwn]);
 
   const closeMenu = useCallback(() => setMenuVisible(false), []);
