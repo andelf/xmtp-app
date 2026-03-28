@@ -517,6 +517,11 @@ async fn bridge_history_to_acp(
                     if let DaemonEventData::HistoryItem { item, .. } = envelope.payload
                         && should_forward_item(&item, self_inbox_id)
                     {
+                        eprintln!(
+                            ">> received [{}] {}",
+                            sender_short_id(&item.sender_inbox_id),
+                            truncate_display(&item.content, 80),
+                        );
                         if enable_reaction {
                             send_processing_reaction(
                                 data_dir,
@@ -546,6 +551,10 @@ async fn bridge_history_to_acp(
                         )
                         .await?;
                         if !reply.trim().is_empty() {
+                            eprintln!(
+                                "<< sending reply ({}B)",
+                                reply.len(),
+                            );
                             let sent = daemon_send_conversation(
                                 data_dir,
                                 conversation_id,
@@ -558,6 +567,7 @@ async fn bridge_history_to_acp(
                                     "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
                                 )
                             })?;
+                            eprintln!("<< reply sent (message_id={})", sender_short_id(&sent.message_id));
                             log_acp_event(
                                 data_dir,
                                 conversation_id,
@@ -608,12 +618,14 @@ async fn prompt_agent(
             "content": content,
         }),
     );
+    eprintln!("<< prompting agent...");
     conn.prompt(acp::PromptRequest::new(
         session_id.clone(),
         vec![content.clone().into()],
     ))
     .await
     .context("ACP prompt")?;
+    eprintln!("<< agent responded");
 
     // Allow any final session notifications to land before we read the buffered chunks.
     sleep(Duration::from_millis(100)).await;
@@ -722,6 +734,15 @@ fn next_retry_delay(current: Duration) -> Duration {
 
 fn sender_short_id(sender_inbox_id: &str) -> String {
     sender_inbox_id.chars().take(8).collect()
+}
+
+fn truncate_display(s: &str, max: usize) -> String {
+    let single_line: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
+    if single_line.len() <= max {
+        single_line
+    } else {
+        format!("{}...", &single_line[..max])
+    }
 }
 
 fn send_processing_reaction(
