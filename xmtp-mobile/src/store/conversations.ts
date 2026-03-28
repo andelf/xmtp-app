@@ -96,11 +96,21 @@ export async function conversationToItem(
   let lastMessageAt: number | undefined;
   try {
     const messages = await conversation.messages({ limit: 5 });
+    let firstReactionEmoji: string | undefined;
+    let firstReactionAt: number | undefined;
     for (const msg of messages) {
       const nc = (msg as any).nativeContent as Record<string, any> | undefined;
       if (!nc) continue;
-      // Skip non-content messages
-      if (nc.reaction || nc.reactionV2 || nc.readReceipt !== undefined || nc.groupUpdated) continue;
+      // Track first reaction as fallback
+      const r = nc.reaction ?? nc.reactionV2;
+      if (r) {
+        if (!firstReactionEmoji) {
+          firstReactionEmoji = r.content;
+          firstReactionAt = msg.sentNs ? msg.sentNs / 1_000_000 : undefined;
+        }
+        continue;
+      }
+      if (nc.readReceipt !== undefined || nc.groupUpdated) continue;
 
       if (nc.text != null) {
         lastMessageText = typeof nc.text === "string" ? nc.text : String(nc.text);
@@ -117,7 +127,12 @@ export async function conversationToItem(
         } catch {}
       }
       lastMessageAt = msg.sentNs ? msg.sentNs / 1_000_000 : undefined;
-      break; // found a content message
+      break;
+    }
+    // Fallback: show last reaction emoji if no content message found
+    if (!lastMessageText && firstReactionEmoji) {
+      lastMessageText = `[react] ${firstReactionEmoji}`;
+      lastMessageAt = firstReactionAt;
     }
   } catch {
     // Non-critical -- leave preview empty
