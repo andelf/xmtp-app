@@ -41,16 +41,8 @@ export async function sendMessage(
   const tempId = store.addPending(conversationId, text);
 
   try {
-    // Find the conversation
-    const groups = await client.conversations.listGroups();
-    const dms = await client.conversations.listDms();
-    const all = [...groups, ...dms];
-    const convo = all.find(
-      (c) => (c.id as string) === (conversationId as string)
-    );
-
+    const convo = await findConversation(conversationId);
     if (!convo) {
-      console.error("[sendMessage] Conversation not found:", conversationId);
       store.markFailed(conversationId, tempId);
       return null;
     }
@@ -87,15 +79,21 @@ export async function sendMessage(
   }
 }
 
-/** Find a conversation object by id. */
-async function findConversation(conversationId: ConversationId) {
+/** Find a conversation object by id, with module-level cache. */
+const conversationCache = new Map<string, any>();
+
+export async function findConversation(conversationId: ConversationId) {
+  const key = conversationId as string;
+  if (conversationCache.has(key)) return conversationCache.get(key)!;
   const client = getClient();
   if (!client) return null;
   const groups = await client.conversations.listGroups();
   const dms = await client.conversations.listDms();
-  return [...groups, ...dms].find(
-    (c) => (c.id as string) === (conversationId as string)
+  const convo = [...groups, ...dms].find(
+    (c) => (c.id as string) === key
   ) ?? null;
+  if (convo) conversationCache.set(key, convo);
+  return convo;
 }
 
 /**

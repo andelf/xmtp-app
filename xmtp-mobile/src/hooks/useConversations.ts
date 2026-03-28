@@ -11,6 +11,7 @@
 import { useEffect, useRef } from "react";
 import { getClient } from "../xmtp/client";
 import { extractMarkdownPreview } from "../utils/markdown";
+import { extractNativeText, getNativeContent } from "../utils/nativeContent";
 import {
   useConversationStore,
   conversationToItem,
@@ -93,29 +94,16 @@ export function useConversations() {
               if (!conversationId) return;
             }
 
+            const raw = extractNativeText(message);
+            if (!raw) return; // skip reactions, read receipts, group updates
+            const isMarkdown = (message as any).contentTypeId?.includes("markdown");
             let text: string | undefined;
-            const nc = (message as any).nativeContent as Record<string, any> | undefined;
-            if (!nc) return;
-            if (nc.text != null) {
-              text = typeof nc.text === "string" ? nc.text : String(nc.text);
-            } else if (nc.reply) {
-              text = nc.reply.content?.text ?? "[reply]";
-            } else if (nc.unknown) {
-              const unk = nc.unknown as { content?: string };
-              text = unk.content ?? (message as any).fallback;
-            } else if (nc.encoded) {
-              try {
-                const encoded = JSON.parse(nc.encoded);
-                if (encoded.content) {
-                  const raw = globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
-                  const preview = extractMarkdownPreview(raw);
-                  text = preview ? `[md] ${preview}` : "[md]";
-                } else if (encoded.fallback) {
-                  text = encoded.fallback;
-                }
-              } catch {}
+            if (isMarkdown) {
+              const preview = extractMarkdownPreview(raw);
+              text = preview ? `[md] ${preview}` : "[md]";
+            } else {
+              text = raw;
             }
-            // Skip reactions, read receipts, group updates for preview
 
             const timestamp = message.sentNs
               ? message.sentNs / 1_000_000

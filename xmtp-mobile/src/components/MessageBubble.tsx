@@ -5,7 +5,7 @@
  *   Row 1: Quick-react emoji bar (tap to send reaction — placeholder)
  *   Row 2: Copy | Reply action buttons
  */
-import React, { memo, useState, useCallback, useRef, useMemo } from "react";
+import React, { memo, useState, useCallback } from "react";
 import {
   View,
   StyleSheet,
@@ -20,7 +20,6 @@ import { Text, Icon } from "react-native-paper";
 import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-markdown";
 
 import type { MessageItem } from "../store/messages";
-import { useMessageStore } from "../store/messages";
 import { sendReaction } from "../xmtp/messages";
 import { formatMessageTime } from "../utils/time";
 
@@ -138,7 +137,6 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
   // Context menu state
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
-  const bubbleRef = useRef<View>(null);
 
   const handleLongPress = useCallback((e: any) => {
     const pageX = e?.nativeEvent?.pageX ?? 0;
@@ -168,14 +166,6 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
     onReply?.(item);
   }, [onReply, item]);
 
-  // Resolve reply reference text from store
-  let replyText: string | undefined;
-  if (item.replyRef) {
-    const msgs = useMessageStore.getState().getMessages(item.conversationId);
-    const refId = item.replyRef.referenceMessageId;
-    replyText = msgs.find((m) => (m.id as string) === refId)?.text;
-  }
-
   return (
     <View style={[styles.row, isOwn ? styles.rowOwn : styles.rowOther]}>
       {/* Header: sender + time */}
@@ -203,7 +193,7 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
         <View style={[styles.replyBar, isOwn ? styles.replyBarOwn : styles.replyBarOther]}>
           <Icon source="reply" size={12} color="#938F99" />
           <Text variant="labelSmall" numberOfLines={1} style={styles.replyText}>
-            {replyText ?? item.replyRef.referenceText ?? "..."}
+            {item.replyRef.referenceText ?? "..."}
           </Text>
         </View>
       )}
@@ -211,7 +201,6 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
       {/* Bubble — long-pressable */}
       <Pressable onLongPress={handleLongPress} delayLongPress={300}>
         <View
-          ref={bubbleRef}
           style={[
             styles.bubble,
             isOwn ? styles.bubbleOwn : styles.bubbleOther,

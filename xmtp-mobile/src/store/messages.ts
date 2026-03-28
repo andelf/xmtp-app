@@ -13,6 +13,7 @@ import type {
 } from "@xmtp/react-native-sdk";
 import { getClient } from "../xmtp/client";
 import { useAuthStore } from "./auth";
+import { getNativeContent } from "../utils/nativeContent";
 
 // ---------------------------------------------------------------------------
 // Shared types (exported for Coder-2)
@@ -64,9 +65,7 @@ export function decodedToMessageItem(
   let text: string = "";
   let replyRef: ReplyRef | undefined;
 
-  // Access nativeContent directly — msg.content() throws for unregistered
-  // codecs (reply, reaction, groupUpdated) so we bypass it entirely.
-  const nc = (msg as any).nativeContent as Record<string, any> | undefined;
+  const nc = getNativeContent(msg);
   if (!nc) return null;
 
   try {
@@ -149,7 +148,7 @@ export function decodedToReaction(
   msg: DecodedMessage,
   conversationId: ConversationId
 ): ReactionInfo | null {
-  const nc = (msg as any).nativeContent as Record<string, any> | undefined;
+  const nc = getNativeContent(msg);
   if (!nc) return null;
   const r = nc.reaction ?? nc.reactionV2;
   if (!r) return null;
@@ -291,6 +290,14 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
 
       // Sort ascending by sentAt
       items.sort((a, b) => a.sentAt - b.sentAt);
+
+      // Resolve reply reference text while all messages are in memory
+      for (const item of items) {
+        if (item.replyRef && !item.replyRef.referenceText) {
+          const ref = items.find((m) => (m.id as string) === item.replyRef!.referenceMessageId);
+          if (ref) item.replyRef.referenceText = ref.text;
+        }
+      }
 
       // Apply reactions to their referenced messages
       for (const r of reactions) {

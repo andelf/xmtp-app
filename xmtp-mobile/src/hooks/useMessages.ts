@@ -12,13 +12,13 @@
  */
 import { useEffect, useRef, useCallback } from "react";
 import type { ConversationId } from "@xmtp/react-native-sdk";
-import { getClient } from "../xmtp/client";
 import { useAuthStore } from "../store/auth";
 import {
   useMessageStore,
   decodedToMessageItem,
   decodedToReaction,
 } from "../store/messages";
+import { findConversation } from "../xmtp/messages";
 
 const PAGE_SIZE = 30;
 
@@ -29,9 +29,6 @@ export function useMessages(conversationId: ConversationId | null) {
   useEffect(() => {
     if (!conversationId) return;
 
-    const client = getClient();
-    if (!client) return;
-
     // 1. Fetch initial history (access store directly, not via selector)
     useMessageStore.getState().fetchMessages(conversationId, { limit: PAGE_SIZE });
 
@@ -41,13 +38,7 @@ export function useMessages(conversationId: ConversationId | null) {
       if (streamStarted.current) return;
 
       try {
-        const groups = await client.conversations.listGroups();
-        const dms = await client.conversations.listDms();
-        const all = [...groups, ...dms];
-        const convo = all.find(
-          (c) => (c.id as string) === (conversationId as string)
-        );
-
+        const convo = await findConversation(conversationId);
         if (!convo || cancelled) return;
 
         conversationRef.current = convo;

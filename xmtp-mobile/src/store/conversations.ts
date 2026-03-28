@@ -16,6 +16,7 @@ import type { Group } from "@xmtp/react-native-sdk/build/lib/Group";
 import type { Dm } from "@xmtp/react-native-sdk/build/lib/Dm";
 import { getClient } from "../xmtp/client";
 import { extractMarkdownPreview } from "../utils/markdown";
+import { getNativeContent, extractNativeText, extractReactionEmoji } from "../utils/nativeContent";
 
 // ---------------------------------------------------------------------------
 // Shared types (exported for Coder-2)
@@ -99,37 +100,32 @@ export async function conversationToItem(
     let firstReactionEmoji: string | undefined;
     let firstReactionAt: number | undefined;
     for (const msg of messages) {
-      const nc = (msg as any).nativeContent as Record<string, any> | undefined;
+      const nc = getNativeContent(msg);
       if (!nc) continue;
-      // Track first reaction as fallback
-      const r = nc.reaction ?? nc.reactionV2;
-      if (r) {
+      const emoji = extractReactionEmoji(nc);
+      if (emoji) {
         if (!firstReactionEmoji) {
-          firstReactionEmoji = r.content;
+          firstReactionEmoji = emoji;
           firstReactionAt = msg.sentNs ? msg.sentNs / 1_000_000 : undefined;
         }
         continue;
       }
       if (nc.readReceipt !== undefined || nc.groupUpdated) continue;
 
-      if (nc.text != null) {
-        lastMessageText = typeof nc.text === "string" ? nc.text : String(nc.text);
-      } else if (nc.reply) {
-        lastMessageText = nc.reply.content?.text ?? "[reply]";
-      } else if (nc.encoded) {
-        try {
-          const encoded = JSON.parse(nc.encoded);
-          if (encoded.content) {
-            const raw = globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
-            const preview = extractMarkdownPreview(raw);
-            lastMessageText = preview ? `[md] ${preview}` : "[md]";
-          }
-        } catch {}
+      const raw = extractNativeText(msg);
+      if (raw) {
+        // Add [md] prefix for markdown content
+        const isMarkdown = (msg as any).contentTypeId?.includes("markdown");
+        if (isMarkdown) {
+          const preview = extractMarkdownPreview(raw);
+          lastMessageText = preview ? `[md] ${preview}` : "[md]";
+        } else {
+          lastMessageText = raw;
+        }
       }
       lastMessageAt = msg.sentNs ? msg.sentNs / 1_000_000 : undefined;
       break;
     }
-    // Fallback: show last reaction emoji if no content message found
     if (!lastMessageText && firstReactionEmoji) {
       lastMessageText = `[react] ${firstReactionEmoji}`;
       lastMessageAt = firstReactionAt;
@@ -245,12 +241,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
   updateLastMessage: (conversationId, text, timestamp) => {
     set((state) => {
       const existing = state.items.get(conversationId);
-      if (!existing) {
-        // Log keys for debugging
-        const keys = Array.from(state.items.keys()).join(", ");
-        console.log(`[updateLastMessage] NOT FOUND id=${conversationId} keys=[${keys}]`);
-        return state;
-      }
+      if (!existing) return state;
 
       // Only skip if we already have a preview AND the timestamp is not newer
       if (
