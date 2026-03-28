@@ -15,6 +15,7 @@ import { View, StyleSheet, Dimensions } from "react-native";
 import { Text, Icon } from "react-native-paper";
 
 import type { MessageItem } from "../store/messages";
+import { useMessageStore } from "../store/messages";
 import { formatMessageTime } from "../utils/time";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,21 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
   const isSending = item.status === "sending";
   const isFailed = item.status === "failed";
 
+  // Resolve reply reference text from store
+  let replyText: string | undefined;
+  if (item.replyRef) {
+    const msgs = useMessageStore.getState().getMessages(item.conversationId);
+    const refId = item.replyRef.referenceMessageId;
+    const found = msgs.find((m) => (m.id as string) === refId);
+    replyText = found?.text;
+
+    // Debug: log ID comparison
+    if (!found) {
+      const sampleIds = msgs.slice(0, 5).map((m) => m.id as string);
+      console.log("[ReplyLookup] MISS refId=", refId, "sampleMsgIds=", sampleIds);
+    }
+  }
+
   return (
     <View style={[styles.row, isOwn ? styles.rowOwn : styles.rowOther]}>
       {/* Header: sender + time, outside the bubble */}
@@ -105,13 +121,26 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
         </View>
       )}
 
-      {/* Bubble: just the text */}
+      {/* Reply quote — above the bubble */}
+      {item.replyRef && (
+        <View style={[styles.replyBar, isOwn ? styles.replyBarOwn : styles.replyBarOther]}>
+          <Icon source="reply" size={12} color="#938F99" />
+          <Text
+            variant="labelSmall"
+            numberOfLines={1}
+            style={styles.replyText}
+          >
+            {replyText ?? item.replyRef.referenceText ?? "..."}
+          </Text>
+        </View>
+      )}
+
+      {/* Bubble */}
       <View
         style={[
           styles.bubble,
           isOwn ? styles.bubbleOwn : styles.bubbleOther,
-          // Tighter top margin when grouped (no header)
-          !showHeader && styles.bubbleGrouped,
+          !showHeader && !item.replyRef && styles.bubbleGrouped,
         ]}
       >
         <Text
@@ -171,7 +200,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   bubbleGrouped: {
-    marginTop: 1, // tighter spacing for consecutive same-sender bubbles
+    marginTop: 1,
   },
   bubbleOwn: {
     backgroundColor: "#6750A4",
@@ -186,5 +215,25 @@ const styles = StyleSheet.create({
   },
   textOther: {
     color: "#E6E1E5",
+  },
+  replyBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    maxWidth: MAX_BUBBLE_WIDTH,
+    marginBottom: 2,
+    paddingHorizontal: 4,
+  },
+  replyBarOwn: {
+    justifyContent: "flex-end",
+  },
+  replyBarOther: {
+    justifyContent: "flex-start",
+  },
+  replyText: {
+    color: "#938F99",
+    fontSize: 11,
+    fontStyle: "italic",
+    flexShrink: 1,
   },
 });

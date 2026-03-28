@@ -93,13 +93,26 @@ export function useConversations() {
             }
 
             let text: string | undefined;
-            try {
-              const content = message.content();
-              text = typeof content === "string" ? content : undefined;
-            } catch {
-              log("MsgStream", "content decode failed");
-              return;
+            const nc = (message as any).nativeContent as Record<string, any> | undefined;
+            if (!nc) return;
+            if (nc.text != null) {
+              text = typeof nc.text === "string" ? nc.text : String(nc.text);
+            } else if (nc.reply) {
+              text = nc.reply.content?.text ?? "[reply]";
+            } else if (nc.unknown) {
+              const unk = nc.unknown as { content?: string };
+              text = unk.content ?? (message as any).fallback;
+            } else if (nc.encoded) {
+              try {
+                const encoded = JSON.parse(nc.encoded);
+                if (encoded.content) {
+                  text = globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
+                } else if (encoded.fallback) {
+                  text = encoded.fallback;
+                }
+              } catch {}
             }
+            // Skip reactions, read receipts, group updates for preview
 
             const timestamp = message.sentNs
               ? message.sentNs / 1_000_000

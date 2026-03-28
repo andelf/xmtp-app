@@ -18,11 +18,18 @@ import { useAuthStore } from "./auth";
 // Shared types (exported for Coder-2)
 // ---------------------------------------------------------------------------
 
+export interface ReplyRef {
+  /** ID of the original message being replied to */
+  referenceMessageId: string;
+  /** Preview text of the original message (if available) */
+  referenceText?: string;
+}
+
 export interface MessageItem {
   id: MessageId;
   conversationId: ConversationId;
   senderInboxId: string;
-  /** Decoded text content (for text messages) */
+  /** Decoded text content */
   text: string;
   /** Original content type URI (e.g. "xmtp.org/text:1.0") */
   contentType: string;
@@ -32,6 +39,8 @@ export interface MessageItem {
   status: MessageDeliveryStatus | "sending" | "failed";
   /** True if sent by the current user */
   isOwn: boolean;
+  /** Reply reference (if this message is a reply) */
+  replyRef?: ReplyRef;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,21 +49,71 @@ export interface MessageItem {
 
 /**
  * Convert an XMTP DecodedMessage to our MessageItem.
- * Returns null if the message cannot be decoded (e.g. unsupported content type).
+ * Supports: text, reply. Returns null for unsupported types (reaction, read receipt, etc.)
  */
 export function decodedToMessageItem(
   msg: DecodedMessage,
   conversationId: ConversationId,
   myInboxId: string | null
 ): MessageItem | null {
-  let text: string;
+  let text: string = "";
+  let replyRef: ReplyRef | undefined;
+
+  // Access nativeContent directly — msg.content() throws for unregistered
+  // codecs (reply, reaction, groupUpdated) so we bypass it entirely.
+  const nc = (msg as any).nativeContent as Record<string, any> | undefined;
+  if (!nc) return null;
+
   try {
-    const content = msg.content();
-    if (typeof content !== "string") return null;
-    text = content;
+    if (nc.text != null) {
+      // Plain text message
+      text = typeof nc.text === "string" ? nc.text : String(nc.text);
+    } else if (nc.reply) {
+      // Reply: { reply: { reference, content: { text }, contentType } }
+      const reply = nc.reply;
+      text = reply.content?.text ?? "[reply]";
+      replyRef = {
+        referenceMessageId: reply.reference ?? "",
+        referenceText: undefined, // resolved at render time from store
+      };
+    } else if (nc.reaction || nc.reactionV2) {
+      return null;
+    } else if (nc.readReceipt !== undefined) {
+      return null;
+    } else if (nc.groupUpdated) {
+      return null;
+    } else if (nc.unknown) {
+      // Unknown content type (e.g. markdown) — try to extract text from
+      // the encoded payload or fallback text.
+      const unk = nc.unknown as { contentTypeId?: string; content?: string };
+      if (unk.content) {
+        text = unk.content;
+      } else if ((msg as any).fallback) {
+        text = (msg as any).fallback;
+      } else {
+        return null;
+      }
+    } else {
+      // Try to decode from encoded payload (e.g. markdown, custom content types)
+      if (nc.encoded) {
+        try {
+          const encoded = JSON.parse(nc.encoded);
+          if (encoded.content) {
+            text = globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
+          } else if (encoded.fallback) {
+            text = encoded.fallback;
+          }
+        } catch (e) {
+          // encoded parse failed — skip message
+        }
+      }
+      if (!text) return null;
+    }
   } catch {
     return null;
   }
+
+  if (!text) return null;
 
   return {
     id: msg.id as MessageId,
@@ -65,6 +124,7 @@ export function decodedToMessageItem(
     sentAt: msg.sentNs ? msg.sentNs / 1_000_000 : Date.now(),
     status: msg.deliveryStatus ?? ("published" as MessageDeliveryStatus),
     isOwn: msg.senderInboxId === myInboxId,
+    replyRef,
   };
 }
 
