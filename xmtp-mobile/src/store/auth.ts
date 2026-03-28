@@ -16,6 +16,8 @@ import {
 
 const PRIVATE_KEY_STORE = "xmtp_private_key";
 const DB_KEY_STORE = "xmtp_db_encryption_key";
+const ENV_STORE = "xmtp_env";
+const LOCAL_HOST_STORE = "xmtp_local_host";
 
 /** Encode Uint8Array to hex string for SecureStore (which only stores strings). */
 function toHex(bytes: Uint8Array): string {
@@ -41,6 +43,7 @@ export interface AuthState {
   client: Client | null;
   address: string | null;
   inboxId: string | null;
+  env: string | null;
   isReady: boolean;
   isLoading: boolean;
   error: string | null;
@@ -48,7 +51,7 @@ export interface AuthState {
 
 export interface AuthActions {
   /** Initialise from a raw private key. Stores key securely. */
-  init: (privateKey: string) => Promise<void>;
+  init: (privateKey: string, env?: string, customLocalHost?: string) => Promise<void>;
   /** Try to restore session from SecureStore on app launch. */
   restore: () => Promise<void>;
   /** Log out -- clear client and stored keys. */
@@ -66,12 +69,14 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   client: null,
   address: null,
   inboxId: null,
+  env: null,
   isReady: false,
   isLoading: false,
   error: null,
 
   // Actions
-  init: async (privateKey: string) => {
+  init: async (privateKey: string, env?: string, customLocalHost?: string) => {
+    const resolvedEnv = (env ?? "dev") as "dev" | "production" | "local";
     set({ isLoading: true, error: null });
     try {
       // Retrieve or generate DB encryption key
@@ -85,10 +90,14 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         await SecureStore.setItemAsync(DB_KEY_STORE, dbKeyHex);
       }
 
-      const result = await initClient(privateKey, dbKey);
+      const result = await initClient(privateKey, dbKey, resolvedEnv, customLocalHost);
 
-      // Persist private key securely
+      // Persist private key and env settings securely
       await SecureStore.setItemAsync(PRIVATE_KEY_STORE, privateKey);
+      await SecureStore.setItemAsync(ENV_STORE, resolvedEnv);
+      if (customLocalHost) {
+        await SecureStore.setItemAsync(LOCAL_HOST_STORE, customLocalHost);
+      }
 
       // ----- SDK feasibility verification (console only) -----
       console.log("[XMTP] Client created successfully");
@@ -136,6 +145,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         client: result.client,
         address: result.address,
         inboxId: result.inboxId,
+        env: resolvedEnv,
         isReady: true,
         isLoading: false,
       });
@@ -156,8 +166,11 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         set({ isLoading: false });
         return;
       }
+      const env = (await SecureStore.getItemAsync(ENV_STORE)) ?? "dev";
+      const customLocalHost =
+        (await SecureStore.getItemAsync(LOCAL_HOST_STORE)) ?? undefined;
       // Delegate to init which handles DB key retrieval
-      await get().init(privateKey);
+      await get().init(privateKey, env, customLocalHost);
     } catch (err: any) {
       console.error("[XMTP] Restore failed:", err);
       set({ error: err?.message ?? String(err), isLoading: false });
@@ -168,6 +181,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     disconnectClient();
     await SecureStore.deleteItemAsync(PRIVATE_KEY_STORE);
     // Keep DB key so the user can re-login and access history
+    // Keep env/customLocalHost settings so the user doesn't have to re-select
     set({
       client: null,
       address: null,

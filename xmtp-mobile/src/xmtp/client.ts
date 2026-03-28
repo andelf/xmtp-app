@@ -76,10 +76,14 @@ export interface InitClientResult {
  *
  * @param privateKey  Hex string, with or without 0x prefix
  * @param dbEncryptionKey  32-byte key for local DB encryption
+ * @param env  XMTP environment: "dev" | "production" | "local" (default: "dev")
+ * @param customLocalHost  Custom host URL when env is "local"
  */
 export async function initClient(
   privateKey: string,
-  dbEncryptionKey: Uint8Array
+  dbEncryptionKey: Uint8Array,
+  env: "dev" | "production" | "local" = "dev",
+  customLocalHost?: string
 ): Promise<InitClientResult> {
   // Normalise key
   const pk = privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`;
@@ -87,8 +91,9 @@ export async function initClient(
   const signer = walletToSigner(wallet);
 
   const options: ClientOptions = {
-    env: "dev" as const,
+    env,
     dbEncryptionKey,
+    ...(env === "local" && customLocalHost ? { customLocalHost } : {}),
   };
 
   const client = await Client.create(signer, options);

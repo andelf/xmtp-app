@@ -65,16 +65,6 @@ export default function ConversationScreen() {
     return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
-  // Auto-scroll to bottom when new messages arrive (only if at bottom)
-  const prevMessageCount = useRef(0);
-  useEffect(() => {
-    const len = messages?.length ?? 0;
-    if (len > prevMessageCount.current && len > 0 && isAtBottomRef.current) {
-      scrollToBottom();
-    }
-    prevMessageCount.current = len;
-  }, [messages]);
-
   // Track scroll position — inverted list: offset near 0 means at bottom
   const handleScroll = useCallback((e: any) => {
     try {
@@ -93,6 +83,16 @@ export default function ConversationScreen() {
     if (!storeMessages || storeMessages.length === 0) return [];
     return [...storeMessages].sort((a, b) => b.sentAt - a.sentAt);
   }, [storeMessages]);
+
+  // Auto-scroll to bottom when new messages arrive (only if at bottom)
+  const prevMessageCount = useRef(0);
+  useEffect(() => {
+    const len = messages?.length ?? 0;
+    if (len > prevMessageCount.current && len > 0 && isAtBottomRef.current) {
+      scrollToBottom();
+    }
+    prevMessageCount.current = len;
+  }, [messages, scrollToBottom]);
 
   const [loadingMore, setLoadingMore] = useState(false);
 
