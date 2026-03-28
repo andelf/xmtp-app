@@ -1,12 +1,9 @@
 /**
  * Message bubble with optional header (sender + time) above the bubble.
  *
- * Header is shown when:
- * - It's the first message, OR
- * - Different sender from previous message, OR
- * - Same sender but >2 min gap from previous message
- *
- * Long-press on the bubble shows a context menu (Copy / Reaction / Reply).
+ * Long-press shows a horizontal context menu:
+ *   Row 1: Quick-react emoji bar (tap to send reaction — placeholder)
+ *   Row 2: Copy | Reply action buttons
  */
 import React, { memo, useState, useCallback, useRef } from "react";
 import {
@@ -30,9 +27,7 @@ import { formatMessageTime } from "../utils/time";
 
 export interface MessageBubbleProps {
   item: MessageItem;
-  /** Previous message in the list (for grouping consecutive messages). */
   prevItem?: MessageItem | null;
-  /** Whether this is a group conversation. */
   isGroup?: boolean;
 }
 
@@ -42,12 +37,15 @@ export interface MessageBubbleProps {
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.75;
-const GROUP_TIME_THRESHOLD = 2 * 60 * 1000; // 2 minutes in ms
+const GROUP_TIME_THRESHOLD = 2 * 60 * 1000;
 
 const SENDER_COLORS = [
   "#BB86FC", "#03DAC6", "#CF6679", "#FFAB40",
   "#69F0AE", "#40C4FF", "#FF8A65", "#B388FF",
 ];
+
+const QUICK_EMOJIS = ["👍", "❤️", "😂", "🔥", "👀", "🙏"];
+const MENU_WIDTH = 240;
 
 function senderColor(inboxId: string): string {
   let hash = 0;
@@ -64,7 +62,6 @@ function senderLabel(inboxId: string): string {
   return inboxId.slice(0, 8) + "...";
 }
 
-/** Should we show the header (sender + time) above this bubble? */
 function shouldShowHeader(
   item: MessageItem,
   prevItem: MessageItem | null | undefined,
@@ -73,17 +70,6 @@ function shouldShowHeader(
   if (prevItem.senderInboxId !== item.senderInboxId) return true;
   if (Math.abs(item.sentAt - prevItem.sentAt) > GROUP_TIME_THRESHOLD) return true;
   return false;
-}
-
-// ---------------------------------------------------------------------------
-// Context menu items
-// ---------------------------------------------------------------------------
-
-interface MenuItem {
-  label: string;
-  icon: string;
-  onPress: () => void;
-  disabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,11 +89,11 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
   const bubbleRef = useRef<View>(null);
 
   const handleLongPress = useCallback(() => {
-    bubbleRef.current?.measureInWindow((x, y, width, height) => {
-      setMenuPosition({
-        x: isOwn ? x + width - MENU_WIDTH : x,
-        y: y - MENU_HEIGHT - 4,
-      });
+    bubbleRef.current?.measureInWindow((x, y, _width, _height) => {
+      // Center menu horizontally over bubble, clamp to screen edges
+      let left = isOwn ? x + _width - MENU_WIDTH : x;
+      left = Math.max(8, Math.min(left, SCREEN_WIDTH - MENU_WIDTH - 8));
+      setMenuPosition({ x: left, y: y - 90 });
       setMenuVisible(true);
     });
   }, [isOwn]);
@@ -119,11 +105,15 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
     setMenuVisible(false);
   }, [item.text]);
 
-  const menuItems: MenuItem[] = [
-    { label: "Copy", icon: "content-copy", onPress: handleCopy },
-    { label: "React", icon: "emoticon-outline", onPress: closeMenu, disabled: true },
-    { label: "Reply", icon: "reply", onPress: closeMenu, disabled: true },
-  ];
+  const handleReaction = useCallback((_emoji: string) => {
+    // TODO: send reaction via XMTP
+    setMenuVisible(false);
+  }, []);
+
+  const handleReply = useCallback(() => {
+    // TODO: set reply context in input bar
+    setMenuVisible(false);
+  }, []);
 
   // Resolve reply reference text from store
   let replyText: string | undefined;
@@ -150,12 +140,8 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
           <Text variant="labelSmall" style={styles.headerTime}>
             {timeLabel}
           </Text>
-          {isSending && (
-            <Icon source="clock-outline" size={11} color="#938F99" />
-          )}
-          {isFailed && (
-            <Icon source="alert-circle-outline" size={11} color="#F2B8B5" />
-          )}
+          {isSending && <Icon source="clock-outline" size={11} color="#938F99" />}
+          {isFailed && <Icon source="alert-circle-outline" size={11} color="#F2B8B5" />}
         </View>
       )}
 
@@ -163,11 +149,7 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
       {item.replyRef && (
         <View style={[styles.replyBar, isOwn ? styles.replyBarOwn : styles.replyBarOther]}>
           <Icon source="reply" size={12} color="#938F99" />
-          <Text
-            variant="labelSmall"
-            numberOfLines={1}
-            style={styles.replyText}
-          >
+          <Text variant="labelSmall" numberOfLines={1} style={styles.replyText}>
             {replyText ?? item.replyRef.referenceText ?? "..."}
           </Text>
         </View>
@@ -183,42 +165,70 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
             !showHeader && !item.replyRef && styles.bubbleGrouped,
           ]}
         >
-          <Text
-            variant="bodyMedium"
-            style={isOwn ? styles.textOwn : styles.textOther}
-          >
+          <Text variant="bodyMedium" style={isOwn ? styles.textOwn : styles.textOther}>
             {item.text}
           </Text>
         </View>
       </Pressable>
 
-      {/* Context menu modal */}
-      <Modal
-        visible={menuVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closeMenu}
-      >
+      {/* Reaction badges */}
+      {item.reactions && Object.keys(item.reactions).length > 0 && (
+        <View style={[styles.reactionsRow, isOwn ? styles.reactionsOwn : styles.reactionsOther]}>
+          {Object.entries(item.reactions).map(([emoji, senders]) => (
+            <View key={emoji} style={styles.reactionBadge}>
+              <Text style={styles.reactionEmoji}>{emoji}</Text>
+              {senders.length > 1 && (
+                <Text style={styles.reactionCount}>{senders.length}</Text>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Context menu */}
+      <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={closeMenu}>
         <TouchableWithoutFeedback onPress={closeMenu}>
           <View style={styles.menuOverlay}>
-            <View style={[styles.menuContainer, { left: menuPosition.x, top: menuPosition.y }]}>
-              {menuItems.map((mi) => (
-                <Pressable
-                  key={mi.label}
-                  style={({ pressed }) => [
-                    styles.menuItem,
-                    pressed && !mi.disabled && styles.menuItemPressed,
-                    mi.disabled && styles.menuItemDisabled,
-                  ]}
-                  onPress={mi.disabled ? undefined : mi.onPress}
-                >
-                  <Icon source={mi.icon} size={16} color={mi.disabled ? "#5E5A5F" : "#E6E1E5"} />
-                  <Text style={[styles.menuLabel, mi.disabled && styles.menuLabelDisabled]}>
-                    {mi.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+            <TouchableWithoutFeedback>
+              <View style={[styles.menuContainer, { left: menuPosition.x, top: menuPosition.y }]}>
+                {/* Emoji quick-react row */}
+                <View style={styles.emojiRow}>
+                  {QUICK_EMOJIS.map((emoji) => (
+                    <Pressable
+                      key={emoji}
+                      style={({ pressed }) => [styles.emojiBtn, pressed && styles.emojiBtnPressed]}
+                      onPress={() => handleReaction(emoji)}
+                    >
+                      <Text style={styles.emojiText}>{emoji}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                {/* Divider */}
+                <View style={styles.menuDivider} />
+
+                {/* Action row */}
+                <View style={styles.actionRow}>
+                  <Pressable
+                    style={({ pressed }) => [styles.actionBtn, pressed && styles.actionBtnPressed]}
+                    onPress={handleCopy}
+                  >
+                    <Icon source="content-copy" size={16} color="#E6E1E5" />
+                    <Text style={styles.actionLabel}>Copy</Text>
+                  </Pressable>
+
+                  <View style={styles.actionDivider} />
+
+                  <Pressable
+                    style={({ pressed }) => [styles.actionBtn, pressed && styles.actionBtnPressed]}
+                    onPress={handleReply}
+                  >
+                    <Icon source="reply" size={16} color="#E6E1E5" />
+                    <Text style={styles.actionLabel}>Reply</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
       </Modal>
@@ -231,9 +241,6 @@ export const MessageBubble = memo(MessageBubbleInner);
 // ---------------------------------------------------------------------------
 // Styles
 // ---------------------------------------------------------------------------
-
-const MENU_WIDTH = 140;
-const MENU_HEIGHT = 3 * 40; // 3 items * ~40px each
 
 const styles = StyleSheet.create({
   row: {
@@ -311,6 +318,36 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     flexShrink: 1,
   },
+  // Reaction badges
+  reactionsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    marginTop: 2,
+    paddingHorizontal: 4,
+  },
+  reactionsOwn: {
+    justifyContent: "flex-end",
+  },
+  reactionsOther: {
+    justifyContent: "flex-start",
+  },
+  reactionBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    gap: 2,
+  },
+  reactionEmoji: {
+    fontSize: 14,
+  },
+  reactionCount: {
+    fontSize: 11,
+    color: "#CAC4D0",
+  },
   // Context menu
   menuOverlay: {
     flex: 1,
@@ -319,32 +356,61 @@ const styles = StyleSheet.create({
     position: "absolute",
     width: MENU_WIDTH,
     backgroundColor: "#2B2930",
-    borderRadius: 12,
-    paddingVertical: 4,
+    borderRadius: 14,
+    paddingVertical: 6,
     elevation: 8,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
   },
-  menuItem: {
+  emojiRow: {
+    flexDirection: "row",
+    justifyContent: "space-evenly",
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  emojiBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emojiBtnPressed: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  emojiText: {
+    fontSize: 20,
+  },
+  menuDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    marginHorizontal: 10,
+    marginVertical: 4,
+  },
+  actionRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
   },
-  menuItemPressed: {
+  actionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+  },
+  actionBtnPressed: {
     backgroundColor: "rgba(255,255,255,0.08)",
   },
-  menuItemDisabled: {
-    opacity: 0.4,
+  actionDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 20,
+    backgroundColor: "rgba(255,255,255,0.12)",
   },
-  menuLabel: {
+  actionLabel: {
     color: "#E6E1E5",
-    fontSize: 14,
-  },
-  menuLabelDisabled: {
-    color: "#5E5A5F",
+    fontSize: 13,
   },
 });

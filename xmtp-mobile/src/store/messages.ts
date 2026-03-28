@@ -25,6 +25,9 @@ export interface ReplyRef {
   referenceText?: string;
 }
 
+/** Aggregated reactions on a message: emoji → set of sender inboxIds */
+export type Reactions = Record<string, string[]>;
+
 export interface MessageItem {
   id: MessageId;
   conversationId: ConversationId;
@@ -41,6 +44,8 @@ export interface MessageItem {
   isOwn: boolean;
   /** Reply reference (if this message is a reply) */
   replyRef?: ReplyRef;
+  /** Aggregated reactions keyed by emoji */
+  reactions?: Reactions;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +133,36 @@ export function decodedToMessageItem(
   };
 }
 
+/**
+ * Extract a reaction from a DecodedMessage, if it is one.
+ * Returns null for non-reaction messages.
+ */
+export interface ReactionInfo {
+  conversationId: ConversationId;
+  referenceMessageId: string;
+  emoji: string;
+  action: "added" | "removed";
+  senderInboxId: string;
+}
+
+export function decodedToReaction(
+  msg: DecodedMessage,
+  conversationId: ConversationId
+): ReactionInfo | null {
+  const nc = (msg as any).nativeContent as Record<string, any> | undefined;
+  if (!nc) return null;
+  const r = nc.reaction ?? nc.reactionV2;
+  if (!r) return null;
+  if (r.action !== "added" && r.action !== "removed") return null;
+  return {
+    conversationId,
+    referenceMessageId: r.reference ?? "",
+    emoji: r.content ?? "",
+    action: r.action,
+    senderInboxId: msg.senderInboxId,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Store types
 // ---------------------------------------------------------------------------
@@ -162,6 +197,8 @@ export interface MessageActions {
     messageId: MessageId,
     patch: Partial<MessageItem>
   ) => void;
+  /** Apply a reaction (add/remove) to a message. */
+  applyReaction: (reaction: ReactionInfo) => void;
   /** Get sorted messages for a conversation (sentAt ascending). */
   getMessages: (conversationId: ConversationId) => MessageItem[];
   /** Clear messages for a conversation or all. */
@@ -241,13 +278,35 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
       const myInboxId = useAuthStore.getState().inboxId;
 
       const items: MessageItem[] = [];
+      const reactions: ReactionInfo[] = [];
       for (const msg of sdkMessages) {
+        const reaction = decodedToReaction(msg, conversationId);
+        if (reaction) {
+          reactions.push(reaction);
+          continue;
+        }
         const item = decodedToMessageItem(msg, conversationId, myInboxId);
         if (item) items.push(item);
       }
 
       // Sort ascending by sentAt
       items.sort((a, b) => a.sentAt - b.sentAt);
+
+      // Apply reactions to their referenced messages
+      for (const r of reactions) {
+        const target = items.find((m) => (m.id as string) === r.referenceMessageId);
+        if (!target) continue;
+        const prev = target.reactions ?? {};
+        const senders = prev[r.emoji] ?? [];
+        if (r.action === "added" && !senders.includes(r.senderInboxId)) {
+          target.reactions = { ...prev, [r.emoji]: [...senders, r.senderInboxId] };
+        } else if (r.action === "removed") {
+          const next = senders.filter((s) => s !== r.senderInboxId);
+          target.reactions = { ...prev };
+          if (next.length > 0) target.reactions[r.emoji] = next;
+          else delete target.reactions[r.emoji];
+        }
+      }
 
       set((state) => {
         const key = conversationId as string;
@@ -389,6 +448,39 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
             m.id === messageId ? { ...m, ...patch } : m
           ),
         },
+      };
+    });
+  },
+
+  applyReaction: (reaction) => {
+    set((state) => {
+      const key = reaction.conversationId as string;
+      const existing = state.byConversation[key];
+      if (!existing) return state;
+      const idx = existing.findIndex(
+        (m) => (m.id as string) === reaction.referenceMessageId
+      );
+      if (idx === -1) return state;
+      const msg = existing[idx];
+      const prev = msg.reactions ?? {};
+      const senders = prev[reaction.emoji] ?? [];
+      let next: string[];
+      if (reaction.action === "added") {
+        if (senders.includes(reaction.senderInboxId)) return state;
+        next = [...senders, reaction.senderInboxId];
+      } else {
+        next = senders.filter((s) => s !== reaction.senderInboxId);
+      }
+      const reactions = { ...prev };
+      if (next.length > 0) {
+        reactions[reaction.emoji] = next;
+      } else {
+        delete reactions[reaction.emoji];
+      }
+      const updated = [...existing];
+      updated[idx] = { ...msg, reactions };
+      return {
+        byConversation: { ...state.byConversation, [key]: updated },
       };
     });
   },
