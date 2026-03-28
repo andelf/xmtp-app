@@ -63,8 +63,16 @@ export function useConversations() {
         await client.conversations.streamAllMessages(async (message) => {
           try {
             const topicStr = message.topic as string;
-            const conversationId = store().getIdByTopic(topicStr);
-            if (!conversationId) return;
+            let conversationId = store().getIdByTopic(topicStr);
+
+            // Unknown topic — new conversation we haven't synced yet.
+            // Refresh the full list so it appears in the UI.
+            if (!conversationId) {
+              await store().fetchAll();
+              // Try again after refresh
+              conversationId = store().getIdByTopic(topicStr);
+              if (!conversationId) return; // still unknown, give up
+            }
 
             let text: string | undefined;
             try {

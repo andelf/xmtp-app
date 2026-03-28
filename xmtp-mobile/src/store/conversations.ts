@@ -87,6 +87,9 @@ export async function conversationToItem(
     }
   }
 
+  // Sync conversation messages before fetching preview
+  try { await conversation.sync(); } catch {}
+
   // Fetch last message for preview
   let lastMessageText: string | undefined;
   let lastMessageAt: number | undefined;
