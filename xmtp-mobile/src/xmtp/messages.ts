@@ -10,6 +10,7 @@ import {
   useMessageStore,
   decodedToMessageItem,
   type MessageItem,
+  type ReactionInfo,
 } from "../store/messages";
 import { useConversationStore } from "../store/conversations";
 
@@ -82,5 +83,57 @@ export async function sendMessage(
     console.error("[sendMessage] Failed:", err);
     store.markFailed(conversationId, tempId);
     return null;
+  }
+}
+
+/** Find a conversation object by id. */
+async function findConversation(conversationId: ConversationId) {
+  const client = getClient();
+  if (!client) return null;
+  const groups = await client.conversations.listGroups();
+  const dms = await client.conversations.listDms();
+  return [...groups, ...dms].find(
+    (c) => (c.id as string) === (conversationId as string)
+  ) ?? null;
+}
+
+/**
+ * Send a reaction to a message.
+ * Passes NativeMessageContent directly to convo.send() to avoid codec registration.
+ */
+export async function sendReaction(
+  conversationId: ConversationId,
+  referenceMessageId: string,
+  emoji: string,
+  action: "added" | "removed" = "added"
+): Promise<boolean> {
+  try {
+    const convo = await findConversation(conversationId);
+    if (!convo) return false;
+
+    // Send as NativeMessageContent — the native bridge handles it directly
+    await convo.send({
+      reaction: {
+        reference: referenceMessageId,
+        action,
+        schema: "unicode",
+        content: emoji,
+      },
+    } as any);
+
+    // Optimistically apply locally
+    const myInboxId = useAuthStore.getState().inboxId ?? "";
+    useMessageStore.getState().applyReaction({
+      conversationId,
+      referenceMessageId,
+      emoji,
+      action,
+      senderInboxId: myInboxId,
+    });
+
+    return true;
+  } catch (err) {
+    console.error("[sendReaction] Failed:", err);
+    return false;
   }
 }

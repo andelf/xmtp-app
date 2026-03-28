@@ -19,6 +19,7 @@ import { Text, Icon } from "react-native-paper";
 
 import type { MessageItem } from "../store/messages";
 import { useMessageStore } from "../store/messages";
+import { sendReaction } from "../xmtp/messages";
 import { formatMessageTime } from "../utils/time";
 
 // ---------------------------------------------------------------------------
@@ -105,10 +106,10 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
     setMenuVisible(false);
   }, [item.text]);
 
-  const handleReaction = useCallback((_emoji: string) => {
-    // TODO: send reaction via XMTP
+  const handleReaction = useCallback((emoji: string) => {
     setMenuVisible(false);
-  }, []);
+    sendReaction(item.conversationId, item.id as string, emoji);
+  }, [item.conversationId, item.id]);
 
   const handleReply = useCallback(() => {
     // TODO: set reply context in input bar
