@@ -99,47 +99,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         await SecureStore.setItemAsync(LOCAL_HOST_STORE, customLocalHost);
       }
 
-      // ----- SDK feasibility verification (console only) -----
-      console.log("[XMTP] Client created successfully");
-      console.log("[XMTP] Address:", result.address);
-      console.log("[XMTP] InboxId:", result.inboxId);
-
-      try {
-        // Sync conversations first
-        await result.client.conversations.sync();
-        const groups = await result.client.conversations.listGroups();
-        const dms = await result.client.conversations.listDms();
-        console.log(
-          `[XMTP] Conversations: ${groups.length} groups, ${dms.length} DMs`
-        );
-
-        // Try sending a message if there's an existing conversation
-        const allConvos = [...groups, ...dms];
-        if (allConvos.length > 0) {
-          const first = allConvos[0];
-          console.log("[XMTP] First conversation id:", first.id);
-          const messages = await first.messages({ limit: 5 });
-          console.log(
-            `[XMTP] Last ${messages.length} messages in first conversation loaded`
-          );
-        }
-
-        // Verify streaming works
-        console.log("[XMTP] Starting streamAllMessages test (5s)...");
-        await result.client.conversations.streamAllMessages(
-          async (msg) => {
-            console.log("[XMTP][Stream] New message:", msg.id);
-          }
-        );
-        // Let it stream for 5 seconds then cancel
-        setTimeout(() => {
-          result.client.conversations.cancelStreamAllMessages();
-          console.log("[XMTP] Stream test ended");
-        }, 5000);
-      } catch (verifyErr) {
-        console.warn("[XMTP] Verification step warning:", verifyErr);
-      }
-      // ----- End verification -----
+      console.log("[XMTP] Client created:", result.address, result.inboxId);
 
       set({
         client: result.client,

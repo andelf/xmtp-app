@@ -54,23 +54,40 @@ export function useMessages(conversationId: ConversationId | null) {
 
         const myInboxId = useAuthStore.getState().inboxId;
 
-        await convo.streamMessages(async (decodedMsg: any) => {
-          if (cancelled) return;
-          try {
-            const item = decodedToMessageItem(
-              decodedMsg,
-              conversationId,
-              myInboxId
-            );
-            if (item) {
-              useMessageStore.getState().append(item);
+        await convo.streamMessages(
+          async (decodedMsg: any) => {
+            if (cancelled) return;
+            try {
+              const item = decodedToMessageItem(
+                decodedMsg,
+                conversationId,
+                myInboxId
+              );
+              if (item) {
+                useMessageStore.getState().append(item);
+              }
+            } catch (err) {
+              console.error("[useMessages] Failed to process streamed message:", err);
             }
-          } catch (err) {
-            console.error("[useMessages] Failed to process streamed message:", err);
+          },
+          // onClose: stream disconnected — restart if still mounted
+          () => {
+            if (!cancelled) {
+              console.warn("[useMessages] message stream closed, restarting...");
+              streamStarted.current = false;
+              startStream();
+            }
           }
-        });
+        );
       } catch (err) {
         console.error("[useMessages] streamMessages() failed:", err);
+        // Retry after delay
+        if (!cancelled) {
+          setTimeout(() => {
+            streamStarted.current = false;
+            startStream();
+          }, 3000);
+        }
       }
     };
 

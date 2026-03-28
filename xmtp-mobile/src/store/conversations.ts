@@ -217,10 +217,19 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
   updateLastMessage: (conversationId, text, timestamp) => {
     set((state) => {
       const existing = state.items.get(conversationId);
-      if (!existing) return state;
+      if (!existing) {
+        // Log keys for debugging
+        const keys = Array.from(state.items.keys()).join(", ");
+        console.log(`[updateLastMessage] NOT FOUND id=${conversationId} keys=[${keys}]`);
+        return state;
+      }
 
-      // Only update if this message is newer
-      if (existing.lastMessageAt && existing.lastMessageAt >= timestamp) {
+      // Only skip if we already have a preview AND the timestamp is not newer
+      if (
+        existing.lastMessageText &&
+        existing.lastMessageAt &&
+        existing.lastMessageAt >= timestamp
+      ) {
         return state;
       }
 

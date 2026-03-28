@@ -15,6 +15,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { useAuthStore } from "../src/store/auth";
+import { log } from "../src/utils/logger";
 
 const theme = {
   ...MD3DarkTheme,
@@ -29,6 +30,7 @@ export default function RootLayout() {
   const restore = useAuthStore((s) => s.restore);
 
   useEffect(() => {
+    log("App", "=== App started ===");
     restore();
   }, [restore]);
 

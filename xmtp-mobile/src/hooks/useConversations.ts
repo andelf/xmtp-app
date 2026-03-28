@@ -4,9 +4,9 @@
  * On mount: fetches all conversations, starts streams for new conversations
  * and all messages (to update lastMessage previews).
  *
- * On unmount: cancels all streams.
+ * Streams use onClose callback to detect disconnection and auto-reconnect.
  *
- * All store access uses getState() to avoid selector-induced re-renders.
+ * On unmount: cancels all streams.
  */
 import { useEffect, useRef } from "react";
 import { getClient } from "../xmtp/client";
@@ -14,9 +14,10 @@ import {
   useConversationStore,
   conversationToItem,
 } from "../store/conversations";
+import { log } from "../utils/logger";
 
-const STREAM_RECONNECT_DELAY = 3000;
-const MAX_RECONNECT_ATTEMPTS = 10;
+const RECONNECT_DELAY = 3000;
+const MAX_RECONNECT = 10;
 
 export function useConversations() {
   const unmountedRef = useRef(false);
@@ -29,49 +30,66 @@ export function useConversations() {
     unmountedRef.current = false;
     const store = useConversationStore.getState;
 
-    // 1. Initial fetch
+    // Initial fetch
+    log("Convos", "Starting initial fetchAll + streams");
     store().fetchAll();
 
-    // 2. Start conversation stream with auto-reconnect
+    // --- Conversation stream with onClose reconnect ---
     let convoRetries = 0;
-    const startConvoStream = async () => {
+    const startConvoStream = () => {
       if (unmountedRef.current) return;
-      try {
-        await client.conversations.stream(async (conversation) => {
+
+      client.conversations.stream(
+        async (conversation) => {
           try {
             const item = await conversationToItem(conversation, client.inboxId);
             store().upsert(item);
           } catch (err) {
             console.error("[useConversations] convert streamed conv failed:", err);
           }
-        });
-        convoRetries = 0;
-      } catch (err) {
-        if (!unmountedRef.current && convoRetries < MAX_RECONNECT_ATTEMPTS) {
-          convoRetries++;
-          store().fetchAll().catch(() => {});
-          setTimeout(startConvoStream, STREAM_RECONNECT_DELAY);
+        },
+        "all",
+        // onClose: stream disconnected — reconnect
+        () => {
+          if (unmountedRef.current) return;
+          if (convoRetries < MAX_RECONNECT) {
+            convoRetries++;
+            console.warn(`[useConversations] convo stream closed, reconnecting (${convoRetries})...`);
+            store().fetchAll().catch(() => {});
+            setTimeout(startConvoStream, RECONNECT_DELAY);
+          }
         }
-      }
+      ).catch((err) => {
+        if (unmountedRef.current) return;
+        console.error("[useConversations] convo stream error:", err);
+        if (convoRetries < MAX_RECONNECT) {
+          convoRetries++;
+          setTimeout(startConvoStream, RECONNECT_DELAY);
+        }
+      });
     };
 
-    // 3. Start allMessages stream with auto-reconnect
+    // --- All messages stream with onClose reconnect ---
     let msgRetries = 0;
-    const startMsgStream = async () => {
+    const startMsgStream = () => {
       if (unmountedRef.current) return;
-      try {
-        await client.conversations.streamAllMessages(async (message) => {
+
+      client.conversations.streamAllMessages(
+        async (message) => {
           try {
             const topicStr = message.topic as string;
-            let conversationId = store().getIdByTopic(topicStr);
+            log("MsgStream", `received msg id=${message.id} topic=${topicStr}`);
 
-            // Unknown topic — new conversation we haven't synced yet.
-            // Refresh the full list so it appears in the UI.
+            let conversationId = store().getIdByTopic(topicStr);
+            log("MsgStream", `topicLookup: convId=${conversationId ?? "NULL"} topicToIdSize=${store().topicToId.size}`);
+
+            // Unknown topic — new conversation, refresh list
             if (!conversationId) {
+              log("MsgStream", "unknown topic, doing fetchAll...");
               await store().fetchAll();
-              // Try again after refresh
               conversationId = store().getIdByTopic(topicStr);
-              if (!conversationId) return; // still unknown, give up
+              log("MsgStream", `after fetchAll: convId=${conversationId ?? "STILL NULL"}`);
+              if (!conversationId) return;
             }
 
             let text: string | undefined;
@@ -79,6 +97,7 @@ export function useConversations() {
               const content = message.content();
               text = typeof content === "string" ? content : undefined;
             } catch {
+              log("MsgStream", "content decode failed");
               return;
             }
 
@@ -87,25 +106,43 @@ export function useConversations() {
               : Date.now();
 
             if (text) {
+              log("MsgStream", `updateLastMessage convId=${conversationId} text="${text.slice(0,30)}" ts=${timestamp}`);
               store().updateLastMessage(conversationId, text, timestamp);
+              log("MsgStream", `after update, item.lastMessageText="${store().items.get(conversationId)?.lastMessageText}"`);
             }
           } catch (err) {
             console.error("[useConversations] process streamed msg failed:", err);
           }
-        });
-        msgRetries = 0;
-      } catch (err) {
-        if (!unmountedRef.current && msgRetries < MAX_RECONNECT_ATTEMPTS) {
-          msgRetries++;
-          setTimeout(startMsgStream, STREAM_RECONNECT_DELAY);
+        },
+        "all",       // type: groups + dms
+        undefined,   // consentStates: all (no filter)
+        // onClose: stream disconnected — reconnect
+        () => {
+          log("MsgStream", "*** onClose triggered — stream disconnected ***");
+          if (unmountedRef.current) return;
+          if (msgRetries < MAX_RECONNECT) {
+            msgRetries++;
+            store().fetchAll().catch(() => {});
+            setTimeout(startMsgStream, RECONNECT_DELAY);
+          }
         }
-      }
+      ).catch((err) => {
+        if (unmountedRef.current) return;
+        console.error("[useConversations] msg stream error:", err);
+        if (msgRetries < MAX_RECONNECT) {
+          msgRetries++;
+          setTimeout(startMsgStream, RECONNECT_DELAY);
+        }
+      });
     };
 
     if (!streamsStarted.current) {
       streamsStarted.current = true;
+      log("Convos", "Starting convo stream...");
       startConvoStream();
+      log("Convos", "Starting msg stream...");
       startMsgStream();
+      log("Convos", "Both streams started");
     }
 
     return () => {
@@ -116,5 +153,5 @@ export function useConversations() {
         streamsStarted.current = false;
       }
     };
-  }, []); // empty deps — runs once on mount
+  }, []);
 }
