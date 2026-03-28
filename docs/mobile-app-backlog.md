@@ -1,0 +1,208 @@
+# XMTP Mobile App — Backlog & Roadmap
+
+> Last updated: 2026-03-28
+
+## Current State (MVP Complete)
+
+### What's Working
+- Private key login with SecureStore persistence
+- Server environment selector (dev / production / local)
+- Conversation list with real-time stream updates (new convos + lastMessage preview)
+- Chat screen with inverted FlashList
+- Text message send/receive with optimistic UI + dedup
+- New DM creation with address validation + canMessage check
+- Keyboard avoidance (react-native-keyboard-controller, translate-with-padding)
+- Auto-scroll to bottom on new messages (respects scroll position)
+- Foreground sync + network recovery (useAppState / useNetworkState)
+- Stream auto-reconnect via onClose callbacks
+
+### Known Issues
+- [ ] App startup shows empty conversation list briefly before fetchAll completes (loading state missing)
+- [ ] OPPO/OnePlus HansManager freezes app process immediately on background → streams die, no recovery until manual foreground return
+- [ ] No unread message count / badge on conversation list items
+- [ ] `expo-file-system` write doesn't work in release builds (logger workaround: dev bundle + adb logcat)
+- [ ] package-lock.json not committed (node_modules reproducibility)
+- [ ] android/ directory in .gitignore — prebuild artifacts not tracked
+
+---
+
+## P1 — High Priority (Next Sprint)
+
+### P1.1 Push Notifications (FCM)
+**Why**: Without push, users miss all messages when app is backgrounded. Core chat UX.
+
+Tasks:
+- [ ] Install `@react-native-firebase/messaging` + `expo-notifications`
+- [ ] FCM token registration on login
+- [ ] Investigate XMTP push notification server integration (SDK built-in `client.registerPushToken()` vs self-hosted `notification-server-go`)
+- [ ] Background notification display (title: sender, body: message preview)
+- [ ] Notification tap → deep link to conversation
+- [ ] Foreground: suppress notification (stream already handles it)
+
+### P1.2 Reply (Quoted Reply)
+**Why**: Basic chat UX — users expect to reply to specific messages.
+
+Tasks:
+- [ ] Long-press message → action menu (bottom sheet)
+- [ ] "Reply" action → show quoted message preview above input bar
+- [ ] Send reply via XMTP `ContentTypeReply` (confirm SDK support)
+- [ ] Display replied-to message reference in bubble
+- [ ] Tap quoted section → scroll to original message
+
+### P1.3 Reaction (Emoji)
+**Why**: Lightweight engagement, standard in all chat apps.
+
+Tasks:
+- [ ] Long-press message → emoji picker (5 preset: 👍❤️😂🔥👀)
+- [ ] Send via XMTP `ContentTypeReaction` (confirm SDK codec registration)
+- [ ] Display reaction summary below message bubble (emoji + count)
+- [ ] Tap same emoji to remove reaction
+- [ ] Receive and display others' reactions in real-time
+
+### P1.4 Message Action Menu
+**Why**: Prerequisite for Reply, Reaction, and future actions (copy, delete).
+
+Tasks:
+- [ ] `MessageActionSheet` bottom sheet component
+- [ ] Long-press gesture on MessageBubble
+- [ ] Context-aware actions: Reply, React, Copy Text, View Details
+- [ ] Shared component for P1.2, P1.3, P2.5
+
+### P1.5 Unread Count + New Message Indicator
+**Why**: Users can't tell which conversations have new messages.
+
+Tasks:
+- [ ] Track `lastReadAt` per conversation in local store
+- [ ] Calculate unread count on conversation list items
+- [ ] Badge display on ConversationListItem (number or dot)
+- [ ] Mark as read when entering conversation
+- [ ] "New messages" floating chip when scrolled up in chat
+
+---
+
+## P2 — Medium Priority
+
+### P2.1 New Group Creation
+**Why**: Users need to create group chats, not just DMs.
+
+Tasks:
+- [ ] "New Group" option on new-conversation page (or separate page)
+- [ ] Group name input + multi-member address input (chip/tag UI)
+- [ ] Address validation for each member
+- [ ] `client.conversations.newGroup(members, { name })` API integration
+- [ ] Navigate to new group conversation after creation
+
+### P2.2 Read Receipt
+**Why**: Sender knows if message was seen. Optional feature with toggle.
+
+Tasks:
+- [ ] Send `ContentTypeReadReceipt` when viewing conversation (throttled)
+- [ ] Global toggle in settings (default off, matching TUI behavior)
+- [ ] Display read status indicator on own messages (single/double check)
+- [ ] Persist toggle preference in SecureStore
+
+### P2.3 Markdown Rendering
+**Why**: XMTP supports markdown content type, some messages come as markdown.
+
+Tasks:
+- [ ] Detect `content_type === "markdown"` in message stream
+- [ ] Render markdown in MessageBubble (react-native-markdown-display or similar)
+- [ ] Send as markdown when message contains formatting
+
+### P2.4 Message Detail View
+**Why**: Inspect message metadata (full sender address, timestamps, delivery status).
+
+Tasks:
+- [ ] "Details" action in message action menu
+- [ ] Bottom sheet showing: sender full address, message ID, sent timestamp, delivery status, content type
+- [ ] List of reactions with sender info
+
+### P2.5 Conversation Search
+**Why**: Find conversations by name or address as list grows.
+
+Tasks:
+- [ ] Search bar at top of conversation list
+- [ ] Filter by conversation title / peer address
+- [ ] Highlight matching text
+
+### P2.6 Loading States & Error UX
+**Why**: App feels broken without feedback during network operations.
+
+Tasks:
+- [ ] Skeleton loader on conversation list during initial fetch
+- [ ] Loading indicator on chat screen while fetching messages
+- [ ] Error toast/snackbar for failed operations (send fail, network error)
+- [ ] Retry button on failed messages
+- [ ] Connection status indicator (connected / reconnecting / offline)
+
+---
+
+## P3 — Low Priority (Future)
+
+### P3.1 Group Management
+- [ ] View group info (name, description, member count)
+- [ ] View member list
+- [ ] Add/remove members (permission-aware)
+- [ ] Rename group
+- [ ] Leave group with confirmation
+- [ ] Group permissions view/edit
+
+### P3.2 Attachment Support
+- [ ] Image send/receive (camera + gallery picker)
+- [ ] File attachment support
+- [ ] Inline image preview in chat
+- [ ] Download/save attachment to device
+
+### P3.3 WalletConnect Integration
+- [ ] Replace raw private key login with WalletConnect v2
+- [ ] Support MetaMask, Coinbase Wallet, Rainbow
+- [ ] Proper wallet signature UX flow
+- [ ] Remove private key input (or keep as "advanced" option)
+
+### P3.4 ENS Resolution
+- [ ] Resolve ENS names in new conversation address input
+- [ ] Display ENS name as conversation title when available
+- [ ] ENS avatar display
+
+### P3.5 Disappearing Messages
+- [ ] Set message expiration per conversation
+- [ ] Timer display on expiring messages
+- [ ] Auto-delete expired messages locally
+
+### P3.6 Performance Optimization
+- [ ] Profile and optimize FlashList rendering (large message lists)
+- [ ] Lazy load conversation list (virtual scroll)
+- [ ] Image caching strategy
+- [ ] Reduce bundle size (tree-shake unused react-native-paper components)
+
+### P3.7 iOS Support
+- [ ] Expo prebuild for iOS
+- [ ] Test all screens on iOS
+- [ ] APNs push notification integration
+- [ ] iOS keyboard handling verification
+- [ ] App Store preparation
+
+---
+
+## Technical Debt
+
+- [ ] Remove `debuggable true` from release build.gradle before production
+- [ ] Remove dev bundle export workflow — use production .hbc for release
+- [ ] Clean up unused imports across components
+- [ ] Add TypeScript strict mode
+- [ ] Add unit tests for store logic (messages dedup, conversation sorting)
+- [ ] Add integration tests for XMTP SDK flows
+- [ ] Set up CI/CD (EAS Build)
+- [ ] Proper app icon and splash screen
+- [ ] Configure proper package name (not `com.anonymous.xmtpmobile`)
+
+---
+
+## Architecture Notes
+
+- **No daemon dependency**: App uses XMTP React Native SDK directly (Plan C)
+- **State management**: Zustand with getState() pattern in hooks to avoid selector re-render loops
+- **Keyboard**: react-native-keyboard-controller with `behavior="translate-with-padding"` (edge-to-edge compatible)
+- **Lists**: @shopify/flash-list with inverted mode for chat
+- **Storage**: expo-secure-store for credentials, XMTP SDK's built-in SQLite for messages
+- **Streaming**: SDK event-based streams with onClose auto-reconnect
