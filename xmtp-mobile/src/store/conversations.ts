@@ -91,31 +91,33 @@ export async function conversationToItem(
   // Sync conversation messages before fetching preview
   try { await conversation.sync(); } catch {}
 
-  // Fetch last message for preview
+  // Fetch recent messages for preview — skip reactions, read receipts, group updates
   let lastMessageText: string | undefined;
   let lastMessageAt: number | undefined;
   try {
-    const messages = await conversation.messages({ limit: 1 });
-    if (messages.length > 0) {
-      const msg = messages[0];
+    const messages = await conversation.messages({ limit: 5 });
+    for (const msg of messages) {
       const nc = (msg as any).nativeContent as Record<string, any> | undefined;
-      if (nc) {
-        if (nc.text != null) {
-          lastMessageText = typeof nc.text === "string" ? nc.text : String(nc.text);
-        } else if (nc.reply) {
-          lastMessageText = nc.reply.content?.text ?? "[reply]";
-        } else if (nc.encoded) {
-          try {
-            const encoded = JSON.parse(nc.encoded);
-            if (encoded.content) {
-              const raw = globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
-              const preview = extractMarkdownPreview(raw);
-              lastMessageText = preview ? `[md] ${preview}` : "[md]";
-            }
-          } catch {}
-        }
+      if (!nc) continue;
+      // Skip non-content messages
+      if (nc.reaction || nc.reactionV2 || nc.readReceipt !== undefined || nc.groupUpdated) continue;
+
+      if (nc.text != null) {
+        lastMessageText = typeof nc.text === "string" ? nc.text : String(nc.text);
+      } else if (nc.reply) {
+        lastMessageText = nc.reply.content?.text ?? "[reply]";
+      } else if (nc.encoded) {
+        try {
+          const encoded = JSON.parse(nc.encoded);
+          if (encoded.content) {
+            const raw = globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
+            const preview = extractMarkdownPreview(raw);
+            lastMessageText = preview ? `[md] ${preview}` : "[md]";
+          }
+        } catch {}
       }
       lastMessageAt = msg.sentNs ? msg.sentNs / 1_000_000 : undefined;
+      break; // found a content message
     }
   } catch {
     // Non-critical -- leave preview empty
