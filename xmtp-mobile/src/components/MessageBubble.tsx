@@ -5,7 +5,7 @@
  *   Row 1: Quick-react emoji bar (tap to send reaction — placeholder)
  *   Row 2: Copy | Reply action buttons
  */
-import React, { memo, useState, useCallback, useRef } from "react";
+import React, { memo, useState, useCallback, useRef, useMemo } from "react";
 import {
   View,
   StyleSheet,
@@ -14,13 +14,60 @@ import {
   Clipboard,
   Modal,
   TouchableWithoutFeedback,
+  Linking,
 } from "react-native";
 import { Text, Icon } from "react-native-paper";
+import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-markdown";
 
 import type { MessageItem } from "../store/messages";
 import { useMessageStore } from "../store/messages";
 import { sendReaction } from "../xmtp/messages";
 import { formatMessageTime } from "../utils/time";
+
+// Dark theme markdown styles
+const MD_TABLE_COMMON = {
+  fontSize: 12,
+  cellPaddingHorizontal: 4,
+  cellPaddingVertical: 3,
+  borderWidth: 1,
+  borderRadius: 4,
+};
+
+const MD_STYLE_OWN: MarkdownStyle = {
+  paragraph: { color: "#FFFFFF", fontSize: 14, marginBottom: 0, marginTop: 0 },
+  h1: { color: "#FFFFFF", fontSize: 20, fontWeight: "700", marginBottom: 4, marginTop: 4 },
+  h2: { color: "#FFFFFF", fontSize: 18, fontWeight: "700", marginBottom: 4, marginTop: 4 },
+  h3: { color: "#FFFFFF", fontSize: 16, fontWeight: "600", marginBottom: 2, marginTop: 2 },
+  h4: { color: "#FFFFFF", fontSize: 15, fontWeight: "600", marginBottom: 2, marginTop: 2 },
+  h5: { color: "#FFFFFF", fontSize: 14, fontWeight: "600" },
+  h6: { color: "#FFFFFF", fontSize: 14, fontWeight: "600" },
+  strong: { color: "#FFFFFF" },
+  em: { color: "#FFFFFF" },
+  link: { color: "#D0BCFF", underline: true },
+  code: { color: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.2)", fontSize: 13 },
+  codeBlock: { color: "#E6E1E5", backgroundColor: "rgba(0,0,0,0.25)", borderRadius: 6, padding: 8, fontSize: 13 },
+  blockquote: { borderColor: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.15)", color: "#E6E1E5" },
+  list: { color: "#FFFFFF", bulletColor: "#D0BCFF" },
+  table: { ...MD_TABLE_COMMON, color: "#FFFFFF", headerBackgroundColor: "rgba(0,0,0,0.2)", headerTextColor: "#FFFFFF", borderColor: "rgba(255,255,255,0.2)", rowEvenBackgroundColor: "rgba(0,0,0,0.1)", rowOddBackgroundColor: "transparent" },
+};
+
+const MD_STYLE_OTHER: MarkdownStyle = {
+  paragraph: { color: "#E6E1E5", fontSize: 14, marginBottom: 0, marginTop: 0 },
+  h1: { color: "#E6E1E5", fontSize: 20, fontWeight: "700", marginBottom: 4, marginTop: 4 },
+  h2: { color: "#E6E1E5", fontSize: 18, fontWeight: "700", marginBottom: 4, marginTop: 4 },
+  h3: { color: "#E6E1E5", fontSize: 16, fontWeight: "600", marginBottom: 2, marginTop: 2 },
+  h4: { color: "#E6E1E5", fontSize: 15, fontWeight: "600", marginBottom: 2, marginTop: 2 },
+  h5: { color: "#E6E1E5", fontSize: 14, fontWeight: "600" },
+  h6: { color: "#E6E1E5", fontSize: 14, fontWeight: "600" },
+  strong: { color: "#E6E1E5" },
+  em: { color: "#E6E1E5" },
+  link: { color: "#D0BCFF", underline: true },
+  code: { color: "#D0BCFF", backgroundColor: "rgba(255,255,255,0.08)", fontSize: 13 },
+  codeBlock: { color: "#E6E1E5", backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 6, padding: 8, fontSize: 13 },
+  blockquote: { borderColor: "#BB86FC", backgroundColor: "rgba(255,255,255,0.05)", color: "#CAC4D0" },
+  list: { color: "#E6E1E5", bulletColor: "#BB86FC" },
+  table: { ...MD_TABLE_COMMON, color: "#E6E1E5", headerBackgroundColor: "rgba(255,255,255,0.1)", headerTextColor: "#E6E1E5", borderColor: "rgba(255,255,255,0.15)", rowEvenBackgroundColor: "rgba(255,255,255,0.04)", rowOddBackgroundColor: "transparent" },
+};
 
 // ---------------------------------------------------------------------------
 // Props
@@ -83,6 +130,8 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
   const timeLabel = formatMessageTime(item.sentAt);
   const isSending = item.status === "sending";
   const isFailed = item.status === "failed";
+
+  const isMarkdown = item.contentType?.includes("markdown") === true;
 
   // Context menu state
   const [menuVisible, setMenuVisible] = useState(false);
@@ -164,11 +213,22 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
             styles.bubble,
             isOwn ? styles.bubbleOwn : styles.bubbleOther,
             !showHeader && !item.replyRef && styles.bubbleGrouped,
+            isMarkdown && styles.bubbleMarkdown,
           ]}
         >
-          <Text variant="bodyMedium" style={isOwn ? styles.textOwn : styles.textOther}>
-            {item.text}
-          </Text>
+          {isMarkdown ? (
+            <EnrichedMarkdownText
+              markdown={item.text}
+              markdownStyle={isOwn ? MD_STYLE_OWN : MD_STYLE_OTHER}
+              onLinkPress={(url) => Linking.openURL(url)}
+              allowTrailingMargin={false}
+              flavor="github"
+            />
+          ) : (
+            <Text variant="bodyMedium" style={isOwn ? styles.textOwn : styles.textOther}>
+              {item.text}
+            </Text>
+          )}
         </View>
       </Pressable>
 
@@ -284,6 +344,9 @@ const styles = StyleSheet.create({
   },
   bubbleGrouped: {
     marginTop: 1,
+  },
+  bubbleMarkdown: {
+    maxWidth: SCREEN_WIDTH - 32,
   },
   bubbleOwn: {
     backgroundColor: "#6750A4",
