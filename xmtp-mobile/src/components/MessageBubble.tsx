@@ -6,12 +6,18 @@
  * - Different sender from previous message, OR
  * - Same sender but >2 min gap from previous message
  *
- * In group chats, the header shows sender label (colored) + time.
- * In DMs or for own messages, the header shows only time.
- * The bubble itself contains only the message text + status icon.
+ * Long-press on the bubble shows a context menu (Copy / Reaction / Reply).
  */
-import React, { memo } from "react";
-import { View, StyleSheet, Dimensions } from "react-native";
+import React, { memo, useState, useCallback, useRef } from "react";
+import {
+  View,
+  StyleSheet,
+  Dimensions,
+  Pressable,
+  Clipboard,
+  Modal,
+  TouchableWithoutFeedback,
+} from "react-native";
 import { Text, Icon } from "react-native-paper";
 
 import type { MessageItem } from "../store/messages";
@@ -63,10 +69,21 @@ function shouldShowHeader(
   item: MessageItem,
   prevItem: MessageItem | null | undefined,
 ): boolean {
-  if (!prevItem) return true; // first message
-  if (prevItem.senderInboxId !== item.senderInboxId) return true; // different sender
-  if (Math.abs(item.sentAt - prevItem.sentAt) > GROUP_TIME_THRESHOLD) return true; // >2min gap
+  if (!prevItem) return true;
+  if (prevItem.senderInboxId !== item.senderInboxId) return true;
+  if (Math.abs(item.sentAt - prevItem.sentAt) > GROUP_TIME_THRESHOLD) return true;
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Context menu items
+// ---------------------------------------------------------------------------
+
+interface MenuItem {
+  label: string;
+  icon: string;
+  onPress: () => void;
+  disabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,24 +97,45 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
   const isSending = item.status === "sending";
   const isFailed = item.status === "failed";
 
+  // Context menu state
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+  const bubbleRef = useRef<View>(null);
+
+  const handleLongPress = useCallback(() => {
+    bubbleRef.current?.measureInWindow((x, y, width, height) => {
+      setMenuPosition({
+        x: isOwn ? x + width - MENU_WIDTH : x,
+        y: y - MENU_HEIGHT - 4,
+      });
+      setMenuVisible(true);
+    });
+  }, [isOwn]);
+
+  const closeMenu = useCallback(() => setMenuVisible(false), []);
+
+  const handleCopy = useCallback(() => {
+    Clipboard.setString(item.text);
+    setMenuVisible(false);
+  }, [item.text]);
+
+  const menuItems: MenuItem[] = [
+    { label: "Copy", icon: "content-copy", onPress: handleCopy },
+    { label: "React", icon: "emoticon-outline", onPress: closeMenu, disabled: true },
+    { label: "Reply", icon: "reply", onPress: closeMenu, disabled: true },
+  ];
+
   // Resolve reply reference text from store
   let replyText: string | undefined;
   if (item.replyRef) {
     const msgs = useMessageStore.getState().getMessages(item.conversationId);
     const refId = item.replyRef.referenceMessageId;
-    const found = msgs.find((m) => (m.id as string) === refId);
-    replyText = found?.text;
-
-    // Debug: log ID comparison
-    if (!found) {
-      const sampleIds = msgs.slice(0, 5).map((m) => m.id as string);
-      console.log("[ReplyLookup] MISS refId=", refId, "sampleMsgIds=", sampleIds);
-    }
+    replyText = msgs.find((m) => (m.id as string) === refId)?.text;
   }
 
   return (
     <View style={[styles.row, isOwn ? styles.rowOwn : styles.rowOther]}>
-      {/* Header: sender + time, outside the bubble */}
+      {/* Header: sender + time */}
       {showHeader && (
         <View style={[styles.header, isOwn ? styles.headerOwn : styles.headerOther]}>
           {isGroup && !isOwn && (
@@ -135,21 +173,55 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
         </View>
       )}
 
-      {/* Bubble */}
-      <View
-        style={[
-          styles.bubble,
-          isOwn ? styles.bubbleOwn : styles.bubbleOther,
-          !showHeader && !item.replyRef && styles.bubbleGrouped,
-        ]}
-      >
-        <Text
-          variant="bodyMedium"
-          style={isOwn ? styles.textOwn : styles.textOther}
+      {/* Bubble — long-pressable */}
+      <Pressable onLongPress={handleLongPress} delayLongPress={300}>
+        <View
+          ref={bubbleRef}
+          style={[
+            styles.bubble,
+            isOwn ? styles.bubbleOwn : styles.bubbleOther,
+            !showHeader && !item.replyRef && styles.bubbleGrouped,
+          ]}
         >
-          {item.text}
-        </Text>
-      </View>
+          <Text
+            variant="bodyMedium"
+            style={isOwn ? styles.textOwn : styles.textOther}
+          >
+            {item.text}
+          </Text>
+        </View>
+      </Pressable>
+
+      {/* Context menu modal */}
+      <Modal
+        visible={menuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeMenu}
+      >
+        <TouchableWithoutFeedback onPress={closeMenu}>
+          <View style={styles.menuOverlay}>
+            <View style={[styles.menuContainer, { left: menuPosition.x, top: menuPosition.y }]}>
+              {menuItems.map((mi) => (
+                <Pressable
+                  key={mi.label}
+                  style={({ pressed }) => [
+                    styles.menuItem,
+                    pressed && !mi.disabled && styles.menuItemPressed,
+                    mi.disabled && styles.menuItemDisabled,
+                  ]}
+                  onPress={mi.disabled ? undefined : mi.onPress}
+                >
+                  <Icon source={mi.icon} size={16} color={mi.disabled ? "#5E5A5F" : "#E6E1E5"} />
+                  <Text style={[styles.menuLabel, mi.disabled && styles.menuLabelDisabled]}>
+                    {mi.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
     </View>
   );
 }
@@ -159,6 +231,9 @@ export const MessageBubble = memo(MessageBubbleInner);
 // ---------------------------------------------------------------------------
 // Styles
 // ---------------------------------------------------------------------------
+
+const MENU_WIDTH = 140;
+const MENU_HEIGHT = 3 * 40; // 3 items * ~40px each
 
 const styles = StyleSheet.create({
   row: {
@@ -235,5 +310,41 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontStyle: "italic",
     flexShrink: 1,
+  },
+  // Context menu
+  menuOverlay: {
+    flex: 1,
+  },
+  menuContainer: {
+    position: "absolute",
+    width: MENU_WIDTH,
+    backgroundColor: "#2B2930",
+    borderRadius: 12,
+    paddingVertical: 4,
+    elevation: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  menuItemPressed: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  menuItemDisabled: {
+    opacity: 0.4,
+  },
+  menuLabel: {
+    color: "#E6E1E5",
+    fontSize: 14,
+  },
+  menuLabelDisabled: {
+    color: "#5E5A5F",
   },
 });
