@@ -117,8 +117,12 @@ export default function ConversationScreen() {
   );
 
   const renderItem: ListRenderItem<MessageItem> = useCallback(
-    ({ item }) => <MessageBubble item={item} isGroup={isGroup} />,
-    [isGroup],
+    ({ item, index }) => {
+      // Inverted list: index 0 = newest. Previous message (earlier in time) = index + 1
+      const prevItem = index + 1 < messages.length ? messages[index + 1] : null;
+      return <MessageBubble item={item} prevItem={prevItem} isGroup={isGroup} />;
+    },
+    [isGroup, messages],
   );
 
   const renderFooter = useCallback(() => {

@@ -1,8 +1,14 @@
 /**
- * Single message bubble -- renders text content with timestamp and status.
+ * Message bubble with optional header (sender + time) above the bubble.
  *
- * Own messages are right-aligned with primary colour background;
- * others' messages are left-aligned with surface variant background.
+ * Header is shown when:
+ * - It's the first message, OR
+ * - Different sender from previous message, OR
+ * - Same sender but >2 min gap from previous message
+ *
+ * In group chats, the header shows sender label (colored) + time.
+ * In DMs or for own messages, the header shows only time.
+ * The bubble itself contains only the message text + status icon.
  */
 import React, { memo } from "react";
 import { View, StyleSheet, Dimensions } from "react-native";
@@ -16,9 +22,10 @@ import { formatMessageTime } from "../utils/time";
 // ---------------------------------------------------------------------------
 
 export interface MessageBubbleProps {
-  /** The message data to render. */
   item: MessageItem;
-  /** Whether this is a group conversation (shows sender name for others' messages). */
+  /** Previous message in the list (for grouping consecutive messages). */
+  prevItem?: MessageItem | null;
+  /** Whether this is a group conversation. */
   isGroup?: boolean;
 }
 
@@ -28,17 +35,11 @@ export interface MessageBubbleProps {
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.75;
+const GROUP_TIME_THRESHOLD = 2 * 60 * 1000; // 2 minutes in ms
 
-/** Deterministic color for sender label based on inboxId hash. */
 const SENDER_COLORS = [
-  "#BB86FC", // purple
-  "#03DAC6", // teal
-  "#CF6679", // pink
-  "#FFAB40", // amber
-  "#69F0AE", // green
-  "#40C4FF", // blue
-  "#FF8A65", // orange
-  "#B388FF", // light purple
+  "#BB86FC", "#03DAC6", "#CF6679", "#FFAB40",
+  "#69F0AE", "#40C4FF", "#FF8A65", "#B388FF",
 ];
 
 function senderColor(inboxId: string): string {
@@ -56,79 +57,69 @@ function senderLabel(inboxId: string): string {
   return inboxId.slice(0, 8) + "...";
 }
 
+/** Should we show the header (sender + time) above this bubble? */
+function shouldShowHeader(
+  item: MessageItem,
+  prevItem: MessageItem | null | undefined,
+): boolean {
+  if (!prevItem) return true; // first message
+  if (prevItem.senderInboxId !== item.senderInboxId) return true; // different sender
+  if (Math.abs(item.sentAt - prevItem.sentAt) > GROUP_TIME_THRESHOLD) return true; // >2min gap
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-function MessageBubbleInner({ item, isGroup = false }: MessageBubbleProps) {
+function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubbleProps) {
   const isOwn = item.isOwn;
+  const showHeader = shouldShowHeader(item, prevItem);
   const timeLabel = formatMessageTime(item.sentAt);
-
   const isSending = item.status === "sending";
   const isFailed = item.status === "failed";
 
   return (
-    <View
-      style={[
-        styles.row,
-        isOwn ? styles.rowOwn : styles.rowOther,
-      ]}
-    >
+    <View style={[styles.row, isOwn ? styles.rowOwn : styles.rowOther]}>
+      {/* Header: sender + time, outside the bubble */}
+      {showHeader && (
+        <View style={[styles.header, isOwn ? styles.headerOwn : styles.headerOther]}>
+          {isGroup && !isOwn && (
+            <Text
+              variant="labelSmall"
+              style={[styles.senderText, { color: senderColor(item.senderInboxId) }]}
+              numberOfLines={1}
+            >
+              {senderLabel(item.senderInboxId)}
+            </Text>
+          )}
+          <Text variant="labelSmall" style={styles.headerTime}>
+            {timeLabel}
+          </Text>
+          {isSending && (
+            <Icon source="clock-outline" size={11} color="#938F99" />
+          )}
+          {isFailed && (
+            <Icon source="alert-circle-outline" size={11} color="#F2B8B5" />
+          )}
+        </View>
+      )}
+
+      {/* Bubble: just the text */}
       <View
         style={[
           styles.bubble,
           isOwn ? styles.bubbleOwn : styles.bubbleOther,
+          // Tighter top margin when grouped (no header)
+          !showHeader && styles.bubbleGrouped,
         ]}
       >
-        {/* Show sender label in group chats for others' messages */}
-        {isGroup && !isOwn && (
-          <Text
-            variant="labelSmall"
-            style={[styles.senderLabel, { color: senderColor(item.senderInboxId) }]}
-            numberOfLines={1}
-          >
-            {senderLabel(item.senderInboxId)}
-          </Text>
-        )}
-
         <Text
           variant="bodyMedium"
           style={isOwn ? styles.textOwn : styles.textOther}
         >
           {item.text}
         </Text>
-
-        <View style={styles.meta}>
-          <Text
-            variant="labelSmall"
-            style={[
-              styles.time,
-              isOwn ? styles.timeOwn : styles.timeOther,
-            ]}
-          >
-            {timeLabel}
-          </Text>
-
-          {isSending && (
-            <View style={styles.statusIcon}>
-              <Icon
-                source="clock-outline"
-                size={12}
-                color={isOwn ? "rgba(255,255,255,0.6)" : "#938F99"}
-              />
-            </View>
-          )}
-
-          {isFailed && (
-            <View style={styles.statusIcon}>
-              <Icon
-                source="alert-circle-outline"
-                size={12}
-                color="#F2B8B5"
-              />
-            </View>
-          )}
-        </View>
       </View>
     </View>
   );
@@ -143,7 +134,7 @@ export const MessageBubble = memo(MessageBubbleInner);
 const styles = StyleSheet.create({
   row: {
     paddingHorizontal: 12,
-    marginVertical: 2,
+    marginTop: 1,
   },
   rowOwn: {
     alignItems: "flex-end",
@@ -151,11 +142,36 @@ const styles = StyleSheet.create({
   rowOther: {
     alignItems: "flex-start",
   },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 2,
+    paddingHorizontal: 4,
+  },
+  headerOwn: {
+    justifyContent: "flex-end",
+  },
+  headerOther: {
+    justifyContent: "flex-start",
+  },
+  senderText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  headerTime: {
+    fontSize: 11,
+    color: "#938F99",
+  },
   bubble: {
     maxWidth: MAX_BUBBLE_WIDTH,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
+  },
+  bubbleGrouped: {
+    marginTop: 1, // tighter spacing for consecutive same-sender bubbles
   },
   bubbleOwn: {
     backgroundColor: "#6750A4",
@@ -170,28 +186,5 @@ const styles = StyleSheet.create({
   },
   textOther: {
     color: "#E6E1E5",
-  },
-  meta: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    marginTop: 4,
-  },
-  time: {
-    fontSize: 12,
-  },
-  timeOwn: {
-    color: "rgba(255,255,255,0.6)",
-  },
-  timeOther: {
-    color: "#938F99",
-  },
-  statusIcon: {
-    marginLeft: 4,
-  },
-  senderLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    marginBottom: 2,
   },
 });
