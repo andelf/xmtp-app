@@ -18,6 +18,8 @@ import { formatMessageTime } from "../utils/time";
 export interface MessageBubbleProps {
   /** The message data to render. */
   item: MessageItem;
+  /** Whether this is a group conversation (shows sender name for others' messages). */
+  isGroup?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -27,11 +29,38 @@ export interface MessageBubbleProps {
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const MAX_BUBBLE_WIDTH = SCREEN_WIDTH * 0.75;
 
+/** Deterministic color for sender label based on inboxId hash. */
+const SENDER_COLORS = [
+  "#BB86FC", // purple
+  "#03DAC6", // teal
+  "#CF6679", // pink
+  "#FFAB40", // amber
+  "#69F0AE", // green
+  "#40C4FF", // blue
+  "#FF8A65", // orange
+  "#B388FF", // light purple
+];
+
+function senderColor(inboxId: string): string {
+  let hash = 0;
+  for (let i = 0; i < inboxId.length; i++) {
+    hash = (hash * 31 + inboxId.charCodeAt(i)) | 0;
+  }
+  return SENDER_COLORS[Math.abs(hash) % SENDER_COLORS.length];
+}
+
+function senderLabel(inboxId: string): string {
+  if (inboxId.startsWith("0x") && inboxId.length > 10) {
+    return inboxId.slice(0, 6) + "..." + inboxId.slice(-4);
+  }
+  return inboxId.slice(0, 8) + "...";
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-function MessageBubbleInner({ item }: MessageBubbleProps) {
+function MessageBubbleInner({ item, isGroup = false }: MessageBubbleProps) {
   const isOwn = item.isOwn;
   const timeLabel = formatMessageTime(item.sentAt);
 
@@ -51,6 +80,17 @@ function MessageBubbleInner({ item }: MessageBubbleProps) {
           isOwn ? styles.bubbleOwn : styles.bubbleOther,
         ]}
       >
+        {/* Show sender label in group chats for others' messages */}
+        {isGroup && !isOwn && (
+          <Text
+            variant="labelSmall"
+            style={[styles.senderLabel, { color: senderColor(item.senderInboxId) }]}
+            numberOfLines={1}
+          >
+            {senderLabel(item.senderInboxId)}
+          </Text>
+        )}
+
         <Text
           variant="bodyMedium"
           style={isOwn ? styles.textOwn : styles.textOther}
@@ -148,5 +188,10 @@ const styles = StyleSheet.create({
   },
   statusIcon: {
     marginLeft: 4,
+  },
+  senderLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 2,
   },
 });

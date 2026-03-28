@@ -36,11 +36,15 @@ export default function ConversationScreen() {
   // Load messages + start real-time stream for this conversation
   const { isLoading: messagesLoading, fetchMore } = useMessages(conversationId);
 
-  // Resolve conversation title from store
+  // Resolve conversation title and kind from store
   const conversationTitle = useConversationStore((s) => {
     if (!id) return "Chat";
     const item = s.items.get(id);
     return item?.title ?? shortenAddress(id);
+  });
+  const isGroup = useConversationStore((s) => {
+    if (!id) return false;
+    return s.items.get(id)?.kind === "group";
   });
 
   const listRef = useRef<any>(null);
@@ -113,8 +117,8 @@ export default function ConversationScreen() {
   );
 
   const renderItem: ListRenderItem<MessageItem> = useCallback(
-    ({ item }) => <MessageBubble item={item} />,
-    [],
+    ({ item }) => <MessageBubble item={item} isGroup={isGroup} />,
+    [isGroup],
   );
 
   const renderFooter = useCallback(() => {
