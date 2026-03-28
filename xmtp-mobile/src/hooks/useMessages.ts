@@ -54,17 +54,22 @@ export function useMessages(conversationId: ConversationId | null) {
 
         const myInboxId = useAuthStore.getState().inboxId;
 
+        console.log("[useMessages] streamMessages started for", conversationId);
         await convo.streamMessages(
           async (decodedMsg: any) => {
             if (cancelled) return;
+            console.log("[useMessages] received msg id=", decodedMsg.id, "convId=", conversationId);
             try {
               const item = decodedToMessageItem(
                 decodedMsg,
                 conversationId,
                 myInboxId
               );
+              console.log("[useMessages] decoded item=", item ? "ok" : "null");
               if (item) {
                 useMessageStore.getState().append(item);
+                const stored = useMessageStore.getState().byConversation;
+                console.log("[useMessages] store keys=", Object.keys(stored), "thisConvCount=", stored[conversationId as string]?.length);
               }
             } catch (err) {
               console.error("[useMessages] Failed to process streamed message:", err);

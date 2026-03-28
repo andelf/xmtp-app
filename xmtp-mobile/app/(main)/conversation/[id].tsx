@@ -73,7 +73,7 @@ export default function ConversationScreen() {
   const handleScroll = useCallback((e: any) => {
     try {
       const offset = e?.nativeEvent?.contentOffset?.y ?? 0;
-      isAtBottomRef.current = offset < 50;
+      isAtBottomRef.current = offset < 150;
     } catch {}
   }, []);
 
@@ -93,7 +93,8 @@ export default function ConversationScreen() {
   useEffect(() => {
     const len = messages?.length ?? 0;
     if (len > prevMessageCount.current && len > 0 && isAtBottomRef.current) {
-      scrollToBottom();
+      // Delay to let FlashList finish layout before scrolling
+      setTimeout(scrollToBottom, 50);
     }
     prevMessageCount.current = len;
   }, [messages, scrollToBottom]);
