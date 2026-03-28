@@ -77,6 +77,8 @@ export interface MessageBubbleProps {
   item: MessageItem;
   prevItem?: MessageItem | null;
   isGroup?: boolean;
+  /** Called when user taps Reply in context menu */
+  onReply?: (item: MessageItem) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +126,7 @@ function shouldShowHeader(
 // Component
 // ---------------------------------------------------------------------------
 
-function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubbleProps) {
+function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: MessageBubbleProps) {
   const isOwn = item.isOwn;
   const showHeader = shouldShowHeader(item, prevItem);
   const timeLabel = formatMessageTime(item.sentAt);
@@ -162,9 +164,9 @@ function MessageBubbleInner({ item, prevItem, isGroup = false }: MessageBubblePr
   }, [item.conversationId, item.id]);
 
   const handleReply = useCallback(() => {
-    // TODO: set reply context in input bar
     setMenuVisible(false);
-  }, []);
+    onReply?.(item);
+  }, [onReply, item]);
 
   // Resolve reply reference text from store
   let replyText: string | undefined;

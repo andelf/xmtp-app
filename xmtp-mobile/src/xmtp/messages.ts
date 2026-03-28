@@ -4,6 +4,7 @@
  * Flow: addPending -> conversation.send(text) -> confirmSent / markFailed
  */
 import type { ConversationId, MessageId } from "@xmtp/react-native-sdk";
+
 import { getClient } from "./client";
 import { useAuthStore } from "../store/auth";
 import {
@@ -135,5 +136,64 @@ export async function sendReaction(
   } catch (err) {
     console.error("[sendReaction] Failed:", err);
     return false;
+  }
+}
+
+/**
+ * Send a reply to a message.
+ * Uses NativeMessageContent { reply: { reference, content: { text }, contentType } }.
+ */
+export async function sendReply(
+  conversationId: ConversationId,
+  referenceMessageId: string,
+  text: string
+): Promise<MessageItem | null> {
+  const client = getClient();
+  if (!client) return null;
+
+  const store = useMessageStore.getState();
+  const tempId = store.addPending(conversationId, text);
+
+  try {
+    const convo = await findConversation(conversationId);
+    if (!convo) {
+      store.markFailed(conversationId, tempId);
+      return null;
+    }
+
+    const messageId = await convo.send({
+      reply: {
+        reference: referenceMessageId,
+        content: { text },
+        contentType: "xmtp.org/text:1.0",
+      },
+    } as any);
+
+    const myInboxId = useAuthStore.getState().inboxId ?? "";
+    const confirmed: MessageItem = {
+      id: (messageId ?? tempId) as unknown as MessageId,
+      conversationId,
+      senderInboxId: myInboxId,
+      text,
+      contentType: "xmtp.org/reply:1.0",
+      sentAt: Date.now(),
+      status: "published" as any,
+      isOwn: true,
+      replyRef: {
+        referenceMessageId,
+        referenceText: undefined,
+      },
+    };
+
+    store.confirmSent(conversationId, tempId, confirmed);
+    useConversationStore
+      .getState()
+      .updateLastMessage(conversationId as string, text, confirmed.sentAt);
+
+    return confirmed;
+  } catch (err) {
+    console.error("[sendReply] Failed:", err);
+    store.markFailed(conversationId, tempId);
+    return null;
   }
 }

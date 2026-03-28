@@ -18,7 +18,7 @@ import type { ConversationId } from "@xmtp/react-native-sdk";
 import { useConversationStore } from "../../../src/store/conversations";
 import { useMessageStore } from "../../../src/store/messages";
 import type { MessageItem } from "../../../src/store/messages";
-import { sendMessage } from "../../../src/xmtp/messages";
+import { sendMessage, sendReply } from "../../../src/xmtp/messages";
 import { useMessages } from "../../../src/hooks/useMessages";
 import { MessageBubble } from "../../../src/components/MessageBubble";
 import { MessageInput } from "../../../src/components/MessageInput";
@@ -49,9 +49,10 @@ export default function ConversationScreen() {
 
   const listRef = useRef<any>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
-  // Track whether user is "at bottom" (no scroll offset in inverted list).
-  // In an inverted list, offset 0 = bottom (newest messages visible).
   const isAtBottomRef = useRef(true);
+
+  // Reply state
+  const [replyTo, setReplyTo] = useState<MessageItem | null>(null);
 
   const scrollToBottom = useCallback(() => {
     try { listRef.current?.scrollToOffset({ offset: 0, animated: true }); } catch {}
@@ -93,7 +94,6 @@ export default function ConversationScreen() {
   useEffect(() => {
     const len = messages?.length ?? 0;
     if (len > prevMessageCount.current && len > 0 && isAtBottomRef.current) {
-      // Delay to let FlashList finish layout before scrolling
       setTimeout(scrollToBottom, 50);
     }
     prevMessageCount.current = len;
@@ -110,20 +110,39 @@ export default function ConversationScreen() {
   const handleSend = useCallback(
     (text: string) => {
       if (!id) return;
-      sendMessage(id as unknown as ConversationId, text);
-      // Always scroll to bottom after sending
+      const cid = id as unknown as ConversationId;
+      if (replyTo) {
+        sendReply(cid, replyTo.id as string, text);
+        setReplyTo(null);
+      } else {
+        sendMessage(cid, text);
+      }
       setTimeout(scrollToBottom, 100);
     },
-    [id, scrollToBottom],
+    [id, replyTo, scrollToBottom],
   );
+
+  const handleReply = useCallback((item: MessageItem) => {
+    setReplyTo(item);
+  }, []);
+
+  const handleCancelReply = useCallback(() => {
+    setReplyTo(null);
+  }, []);
 
   const renderItem: ListRenderItem<MessageItem> = useCallback(
     ({ item, index }) => {
-      // Inverted list: index 0 = newest. Previous message (earlier in time) = index + 1
       const prevItem = index + 1 < messages.length ? messages[index + 1] : null;
-      return <MessageBubble item={item} prevItem={prevItem} isGroup={isGroup} />;
+      return (
+        <MessageBubble
+          item={item}
+          prevItem={prevItem}
+          isGroup={isGroup}
+          onReply={handleReply}
+        />
+      );
     },
-    [isGroup, messages],
+    [isGroup, messages, handleReply],
   );
 
   const renderFooter = useCallback(() => {
@@ -169,7 +188,11 @@ export default function ConversationScreen() {
 
         {/* Input bar — only pad for nav bar when keyboard is closed */}
         <View style={{ paddingBottom: keyboardVisible ? 0 : insets.bottom, backgroundColor: "#1a1a2e" }}>
-          <MessageInput onSend={handleSend} />
+          <MessageInput
+            onSend={handleSend}
+            replyTo={replyTo}
+            onCancelReply={handleCancelReply}
+          />
         </View>
       </KeyboardAvoidingView>
     </>
