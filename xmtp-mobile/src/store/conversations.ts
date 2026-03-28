@@ -15,6 +15,7 @@ import {
 import type { Group } from "@xmtp/react-native-sdk/build/lib/Group";
 import type { Dm } from "@xmtp/react-native-sdk/build/lib/Dm";
 import { getClient } from "../xmtp/client";
+import { extractMarkdownPreview } from "../utils/markdown";
 
 // ---------------------------------------------------------------------------
 // Shared types (exported for Coder-2)
@@ -97,13 +98,23 @@ export async function conversationToItem(
     const messages = await conversation.messages({ limit: 1 });
     if (messages.length > 0) {
       const msg = messages[0];
-      try {
-        const content = msg.content();
-        lastMessageText = typeof content === "string" ? content : undefined;
-      } catch {
-        // content decoding failed -- leave preview empty
+      const nc = (msg as any).nativeContent as Record<string, any> | undefined;
+      if (nc) {
+        if (nc.text != null) {
+          lastMessageText = typeof nc.text === "string" ? nc.text : String(nc.text);
+        } else if (nc.reply) {
+          lastMessageText = nc.reply.content?.text ?? "[reply]";
+        } else if (nc.encoded) {
+          try {
+            const encoded = JSON.parse(nc.encoded);
+            if (encoded.content) {
+              const raw = globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
+              const preview = extractMarkdownPreview(raw);
+              lastMessageText = preview ? `[md] ${preview}` : "[md]";
+            }
+          } catch {}
+        }
       }
-      // sentNs is in nanoseconds, convert to ms
       lastMessageAt = msg.sentNs ? msg.sentNs / 1_000_000 : undefined;
     }
   } catch {

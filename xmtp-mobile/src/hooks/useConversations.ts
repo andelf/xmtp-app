@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef } from "react";
 import { getClient } from "../xmtp/client";
+import { extractMarkdownPreview } from "../utils/markdown";
 import {
   useConversationStore,
   conversationToItem,
@@ -106,7 +107,9 @@ export function useConversations() {
               try {
                 const encoded = JSON.parse(nc.encoded);
                 if (encoded.content) {
-                  text = globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
+                  const raw = globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
+                  const preview = extractMarkdownPreview(raw);
+                  text = preview ? `[md] ${preview}` : "[md]";
                 } else if (encoded.fallback) {
                   text = encoded.fallback;
                 }
