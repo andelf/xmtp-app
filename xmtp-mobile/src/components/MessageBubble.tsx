@@ -128,6 +128,8 @@ export interface MessageBubbleProps {
   isGroup?: boolean;
   /** Called when user taps Reply in context menu */
   onReply?: (item: MessageItem) => void;
+  /** Called when user taps Retry on a failed message */
+  onRetry?: (item: MessageItem) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,7 +200,7 @@ function shouldShowHeader(item: MessageItem, prevItem: MessageItem | null | unde
 // Component
 // ---------------------------------------------------------------------------
 
-function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: MessageBubbleProps) {
+function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry }: MessageBubbleProps) {
   const quickReactions = useSettingsStore((s) => s.quickReactions);
   const isOwn = item.isOwn;
   const showHeader = shouldShowHeader(item, prevItem);
@@ -267,7 +269,12 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
             {timeLabel}
           </Text>
           {isSending && <Icon source="clock-outline" size={11} color="#938F99" />}
-          {isFailed && <Icon source="alert-circle-outline" size={11} color="#F2B8B5" />}
+          {isFailed && (
+            <Pressable onPress={() => onRetry?.(item)} style={styles.retryBtn}>
+              <Icon source="alert-circle-outline" size={11} color="#F2B8B5" />
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
+          )}
         </View>
       )}
 
@@ -408,6 +415,15 @@ const styles = StyleSheet.create({
   headerTime: {
     fontSize: 11,
     color: "#938F99",
+  },
+  retryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  retryText: {
+    fontSize: 11,
+    color: "#F2B8B5",
   },
   bubble: {
     maxWidth: MAX_BUBBLE_WIDTH,

@@ -50,6 +50,8 @@ export interface MessageActions {
   confirmSent: (conversationId: string, tempId: string, realMessage: MessageItem) => void;
   /** Mark a pending message as failed. */
   markFailed: (conversationId: string, tempId: string) => void;
+  /** Remove a failed message (used before retry). */
+  removeFailed: (conversationId: string, tempId: string) => void;
   /** Update an existing message (e.g. delivery status change). */
   updateMessage: (
     conversationId: string,
@@ -295,6 +297,20 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
           [key]: existing.map((m) =>
             (m.id as string) === tempId ? { ...m, status: "failed" as const } : m
           ),
+        },
+      };
+    });
+  },
+
+  removeFailed: (conversationId, tempId) => {
+    set((state) => {
+      const key = conversationId as string;
+      const existing = state.byConversation[key];
+      if (!existing) return state;
+      return {
+        byConversation: {
+          ...state.byConversation,
+          [key]: existing.filter((m) => (m.id as string) !== tempId),
         },
       };
     });

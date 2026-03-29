@@ -142,14 +142,23 @@ export default function ConversationScreen() {
     setReplyTo(null);
   }, []);
 
+  const handleRetry = useCallback(
+    (item: MessageItem) => {
+      const store = useMessageStore.getState();
+      store.removeFailed(item.conversationId, item.id as string);
+      sendMessage(item.conversationId as unknown as ConversationId, item.text);
+    },
+    []
+  );
+
   const renderItem: ListRenderItem<MessageItem> = useCallback(
     ({ item, index }) => {
       const prevItem = index + 1 < messages.length ? messages[index + 1] : null;
       return (
-        <MessageBubble item={item} prevItem={prevItem} isGroup={isGroup} onReply={handleReply} />
+        <MessageBubble item={item} prevItem={prevItem} isGroup={isGroup} onReply={handleReply} onRetry={handleRetry} />
       );
     },
-    [isGroup, messages, handleReply]
+    [isGroup, messages, handleReply, handleRetry]
   );
 
   const renderFooter = useCallback(() => {
