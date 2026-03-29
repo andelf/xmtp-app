@@ -181,6 +181,10 @@ pub fn pid_path(data_dir: &Path) -> PathBuf {
     data_dir.join("daemon.pid")
 }
 
+fn process_is_alive(pid: i32) -> bool {
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
 pub struct RealXmtpAdapter;
 
 impl XmtpRuntimeAdapter for RealXmtpAdapter {
@@ -2064,6 +2068,9 @@ struct HistoryStreamState {
 }
 
 impl HistoryStreamState {
+    /// Maximum number of seen message IDs to retain before evicting old entries.
+    const MAX_SEEN_IDS: usize = 10_000;
+
     fn remember(&mut self, item: &HistoryItem) -> bool {
         let message_id = item.message_id.to_lowercase();
         if !self.seen_message_ids.insert(message_id) {
@@ -2073,6 +2080,10 @@ impl HistoryStreamState {
             self.latest_sent_at_ns
                 .map_or(item.sent_at_ns, |current| current.max(item.sent_at_ns)),
         );
+        // Evict when the set grows too large — the watermark prevents re-emitting old items.
+        if self.seen_message_ids.len() > Self::MAX_SEEN_IDS {
+            self.seen_message_ids.clear();
+        }
         true
     }
 }
@@ -3006,21 +3017,25 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
 
     // Prevent duplicate daemon: check if an existing daemon is still alive.
     let pid_file = pid_path(data_dir);
-    if pid_file.exists() {
-        if let Ok(contents) = fs::read_to_string(&pid_file) {
-            if let Ok(existing_pid) = contents.trim().parse::<i32>() {
-                if unsafe { libc::kill(existing_pid, 0) } == 0 {
-                    anyhow::bail!(
-                        "daemon already running (pid {existing_pid}, data_dir={}). \
-                         Stop it first with `daemon stop` or remove {}",
-                        data_dir.display(),
-                        pid_file.display()
-                    );
-                }
+    match fs::read_to_string(&pid_file) {
+        Ok(contents) => {
+            if let Ok(existing_pid) = contents.trim().parse::<i32>()
+                && process_is_alive(existing_pid)
+            {
+                anyhow::bail!(
+                    "daemon already running (pid {existing_pid}, data_dir={}). \
+                     Stop it first with `daemon stop` or remove {}",
+                    data_dir.display(),
+                    pid_file.display()
+                );
             }
+            // Stale pid file — remove it
+            let _ = fs::remove_file(&pid_file);
         }
-        // Stale pid file — remove it
-        let _ = fs::remove_file(&pid_file);
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => {
+            let _ = fs::remove_file(&pid_file);
+        }
     }
 
     daemon_log(
@@ -3046,28 +3061,27 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
 
     // Parent-alive watchdog: if XMTP_DAEMON_PARENT_PID is set, monitor the parent
     // process and trigger graceful shutdown when it exits (prevents orphan daemons).
-    if let Ok(val) = std::env::var("XMTP_DAEMON_PARENT_PID") {
-        if let Ok(parent_pid) = val.parse::<i32>() {
-            let watchdog_tx = shutdown_tx.clone();
-            let watchdog_data_dir = data_dir.to_path_buf();
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    let alive = unsafe { libc::kill(parent_pid, 0) } == 0;
-                    if !alive {
-                        daemon_log(
-                            &watchdog_data_dir,
-                            "info",
-                            format!(
-                                "parent process {parent_pid} exited, shutting down orphan daemon"
-                            ),
-                        );
-                        let _ = watchdog_tx.send(());
-                        break;
-                    }
+    if let Ok(val) = std::env::var("XMTP_DAEMON_PARENT_PID")
+        && let Ok(parent_pid) = val.parse::<i32>()
+    {
+        let watchdog_tx = shutdown_tx.clone();
+        let watchdog_data_dir = data_dir.to_path_buf();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                if !process_is_alive(parent_pid) {
+                    daemon_log(
+                        &watchdog_data_dir,
+                        "info",
+                        format!(
+                            "parent process {parent_pid} exited, shutting down orphan daemon"
+                        ),
+                    );
+                    let _ = watchdog_tx.send(());
+                    break;
                 }
-            });
-        }
+            }
+        });
     }
 
     let (events_tx, _) = broadcast::channel::<DaemonEventEnvelope>(128);

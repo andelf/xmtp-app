@@ -80,7 +80,9 @@ async fn run_acp_inner(
     let child_stdout = child.stdout.take().context("take ACP subprocess stdout")?;
 
     let state = Arc::new(Mutex::new(BridgeState::default()));
+    let base_url = daemon_base_url(&data_dir)?;
     let client = BridgeClient {
+        base_url: base_url.clone(),
         data_dir: data_dir.clone(),
         conversation_id: conversation_id.clone(),
         enable_reaction,
@@ -574,6 +576,7 @@ async fn bridge_history_to_acp(
                         );
                         if enable_reaction {
                             send_reaction(
+                                &base_url,
                                 data_dir,
                                 conversation_id,
                                 &source_message_id,
@@ -605,6 +608,7 @@ async fn bridge_history_to_acp(
                                 eprintln!("ACP prompt failed: {err:#}");
                                 if enable_reaction {
                                     send_reaction(
+                                        &base_url,
                                         data_dir,
                                         conversation_id,
                                         &source_message_id,
@@ -681,6 +685,7 @@ async fn bridge_history_to_acp(
                             );
                             if enable_reaction {
                                 send_reaction(
+                                    &base_url,
                                     data_dir,
                                     conversation_id,
                                     &source_message_id,
@@ -926,26 +931,18 @@ async fn send_bridge_error_message(data_dir: &Path, conversation_id: &str, messa
     }
 }
 
-fn send_reaction(data_dir: &Path, conversation_id: &str, message_id: &str, emoji: ReactionEmoji) {
+fn send_reaction(
+    base_url: &str,
+    data_dir: &Path,
+    conversation_id: &str,
+    message_id: &str,
+    emoji: ReactionEmoji,
+) {
+    let base_url = base_url.to_owned();
     let data_dir = data_dir.to_path_buf();
     let conversation_id = conversation_id.to_owned();
     let message_id = message_id.to_owned();
     tokio::spawn(async move {
-        let base_url = match daemon_base_url(&data_dir) {
-            Ok(base_url) => base_url,
-            Err(err) => {
-                eprintln!("ACP reaction base URL error for message {message_id}: {err:#}");
-                log_acp_event(
-                    &data_dir,
-                    &conversation_id,
-                    serde_json::json!({
-                        "event": "warning",
-                        "message": format!("ACP reaction base URL error for message {message_id}: {err:#}"),
-                    }),
-                );
-                return;
-            }
-        };
         let result = http_client()
             .post(format!("{base_url}/v1/messages/{message_id}/react"))
             .json(&EmojiRequest {
@@ -996,6 +993,7 @@ fn send_reaction(data_dir: &Path, conversation_id: &str, message_id: &str, emoji
 }
 
 struct BridgeClient {
+    base_url: String,
     data_dir: PathBuf,
     conversation_id: String,
     enable_reaction: bool,
@@ -1034,7 +1032,7 @@ impl BridgeClient {
         if let (true, Some(message_id), Some(emoji)) =
             (self.enable_reaction, source_message_id, reaction)
         {
-            send_reaction(&self.data_dir, &self.conversation_id, &message_id, emoji);
+            send_reaction(&self.base_url, &self.data_dir, &self.conversation_id, &message_id, emoji);
         }
     }
 
@@ -1091,10 +1089,11 @@ impl BridgeClient {
 
         if let Some(message_id) = source_message_id {
             if let Some(emoji) = start_reaction {
-                send_reaction(&self.data_dir, &self.conversation_id, &message_id, emoji);
+                send_reaction(&self.base_url, &self.data_dir, &self.conversation_id, &message_id, emoji);
             }
             if failure {
                 send_reaction(
+                    &self.base_url,
                     &self.data_dir,
                     &self.conversation_id,
                     &message_id,
