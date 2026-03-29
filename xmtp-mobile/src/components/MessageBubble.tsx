@@ -10,6 +10,7 @@ import {
   View,
   StyleSheet,
   Dimensions,
+  Platform,
   Pressable,
   Clipboard,
   Modal,
@@ -44,7 +45,7 @@ const MD_STYLE_OWN: MarkdownStyle = {
   strong: { color: "#FFFFFF" },
   em: { color: "#FFFFFF" },
   link: { color: "#D0BCFF", underline: true },
-  code: { color: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.2)", fontSize: 13 },
+  code: { color: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.2)", fontSize: 13, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), borderColor: "transparent" },
   codeBlock: {
     color: "#E6E1E5",
     backgroundColor: "rgba(0,0,0,0.25)",
@@ -52,8 +53,8 @@ const MD_STYLE_OWN: MarkdownStyle = {
     padding: 8,
     fontSize: 13,
   },
-  blockquote: { borderColor: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.15)", color: "#E6E1E5" },
-  list: { color: "#FFFFFF", bulletColor: "#D0BCFF" },
+  blockquote: { borderColor: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.15)", color: "#E6E1E5", fontSize: 14 },
+  list: { color: "#FFFFFF", bulletColor: "#D0BCFF", fontSize: 14 },
   table: {
     ...MD_TABLE_COMMON,
     color: "#FFFFFF",
@@ -76,7 +77,7 @@ const MD_STYLE_OTHER: MarkdownStyle = {
   strong: { color: "#E6E1E5" },
   em: { color: "#E6E1E5" },
   link: { color: "#D0BCFF", underline: true },
-  code: { color: "#D0BCFF", backgroundColor: "rgba(255,255,255,0.08)", fontSize: 13 },
+  code: { color: "#D0BCFF", backgroundColor: "rgba(255,255,255,0.08)", fontSize: 13, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), borderColor: "transparent" },
   codeBlock: {
     color: "#E6E1E5",
     backgroundColor: "rgba(255,255,255,0.06)",
@@ -88,8 +89,9 @@ const MD_STYLE_OTHER: MarkdownStyle = {
     borderColor: "#BB86FC",
     backgroundColor: "rgba(255,255,255,0.05)",
     color: "#CAC4D0",
+    fontSize: 14,
   },
-  list: { color: "#E6E1E5", bulletColor: "#BB86FC" },
+  list: { color: "#E6E1E5", bulletColor: "#BB86FC", fontSize: 14 },
   table: {
     ...MD_TABLE_COMMON,
     color: "#E6E1E5",
