@@ -19,10 +19,12 @@
 ### Known Issues
 - [ ] App startup shows empty conversation list briefly before fetchAll completes (loading state missing)
 - [ ] OPPO/OnePlus HansManager freezes app process immediately on background → streams die, no recovery until manual foreground return
+- [ ] Reaction badges overflow: when a message has too many distinct reaction types, badges may exceed one line — needs wrap or collapse (e.g. "+3 more")
 - [ ] No unread message count / badge on conversation list items
 - [ ] `expo-file-system` write doesn't work in release builds (logger workaround: dev bundle + adb logcat)
 - [ ] package-lock.json not committed (node_modules reproducibility)
 - [ ] android/ directory in .gitignore — prebuild artifacts not tracked
+- [ ] Back button (hardware + header) randomly stops working after returning from background/other apps. Never triggered long-press menu. Suspects: keyboard-controller state desync on resume, KAV translate-with-padding causing header touch offset, or expo-router nav state corruption. Needs `adb logcat` diagnosis during repro.
 
 ---
 

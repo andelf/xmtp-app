@@ -3,7 +3,7 @@
  */
 import React, { useCallback, useMemo, useState } from "react";
 import { View, StyleSheet, RefreshControl } from "react-native";
-import { Appbar, Text, Button, Divider } from "react-native-paper";
+import { Appbar, Menu, Text, Button, Divider } from "react-native-paper";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import { useRouter } from "expo-router";
 
@@ -71,7 +71,6 @@ const MOCK_CONVERSATIONS: ConversationItem[] = [
 
 export default function ConversationsScreen() {
   const router = useRouter();
-  const logout = useAuthStore((s) => s.logout);
 
   // Subscribe to items Map and derive sorted list via useMemo.
   // This avoids creating a new array inside the zustand selector
@@ -89,6 +88,7 @@ export default function ConversationsScreen() {
   const storeError = useConversationStore((s) => s.error);
 
   const [refreshing, setRefreshing] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
 
   // Pull-to-refresh handler
   const handleRefresh = useCallback(async () => {
@@ -112,10 +112,8 @@ export default function ConversationsScreen() {
     router.push("/new-conversation" as any);
   }, [router]);
 
-  const handleLogout = useCallback(async () => {
-    await logout();
-    router.replace("/login");
-  }, [logout, router]);
+  const openMenu = useCallback(() => setMenuVisible(true), []);
+  const closeMenu = useCallback(() => setMenuVisible(false), []);
 
   // Renderers
   const renderItem: ListRenderItem<ConversationItem> = useCallback(
@@ -164,7 +162,39 @@ export default function ConversationsScreen() {
       <Appbar.Header style={styles.appbar} elevated>
         <Appbar.Content title="Messages" titleStyle={styles.appbarTitle} />
         <Appbar.Action icon="plus" onPress={handleNewConversation} iconColor="#E6E1E5" />
-        <Appbar.Action icon="logout" onPress={handleLogout} iconColor="#E6E1E5" />
+        <Menu
+          visible={menuVisible}
+          onDismiss={closeMenu}
+          anchorPosition="bottom"
+          contentStyle={styles.menuContent}
+          anchor={<Appbar.Action icon="dots-vertical" onPress={openMenu} iconColor="#E6E1E5" />}
+        >
+          <Menu.Item
+            leadingIcon="account-group"
+            title="New Group"
+            titleStyle={styles.menuItemTitle}
+            disabled
+            onPress={() => {}}
+          />
+          <Menu.Item
+            leadingIcon="cog"
+            title="Settings"
+            titleStyle={styles.menuItemTitle}
+            onPress={() => {
+              closeMenu();
+              router.push("/settings" as any);
+            }}
+          />
+          <Menu.Item
+            leadingIcon="information"
+            title="About"
+            titleStyle={styles.menuItemTitle}
+            onPress={() => {
+              closeMenu();
+              router.push("/about" as any);
+            }}
+          />
+        </Menu>
       </Appbar.Header>
 
       {/* Conversation list */}
@@ -226,5 +256,11 @@ const styles = StyleSheet.create({
   },
   emptyButton: {
     borderRadius: 20,
+  },
+  menuContent: {
+    backgroundColor: "#2B2930",
+  },
+  menuItemTitle: {
+    color: "#E6E1E5",
   },
 });

@@ -22,6 +22,7 @@ import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-
 
 import type { MessageItem } from "../store/messages";
 import { sendReaction } from "../xmtp/messages";
+import { useSettingsStore } from "../store/settings";
 import { formatMessageTime } from "../utils/time";
 import { getCachedAddress, resolveAddress } from "../utils/addressLookup";
 
@@ -45,7 +46,13 @@ const MD_STYLE_OWN: MarkdownStyle = {
   strong: { color: "#FFFFFF" },
   em: { color: "#FFFFFF" },
   link: { color: "#D0BCFF", underline: true },
-  code: { color: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.2)", fontSize: 13, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), borderColor: "transparent" },
+  code: {
+    color: "#D0BCFF",
+    backgroundColor: "rgba(0,0,0,0.2)",
+    fontSize: 13,
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    borderColor: "transparent",
+  },
   codeBlock: {
     color: "#E6E1E5",
     backgroundColor: "rgba(0,0,0,0.25)",
@@ -53,7 +60,12 @@ const MD_STYLE_OWN: MarkdownStyle = {
     padding: 8,
     fontSize: 13,
   },
-  blockquote: { borderColor: "#D0BCFF", backgroundColor: "rgba(0,0,0,0.15)", color: "#E6E1E5", fontSize: 14 },
+  blockquote: {
+    borderColor: "#D0BCFF",
+    backgroundColor: "rgba(0,0,0,0.15)",
+    color: "#E6E1E5",
+    fontSize: 14,
+  },
   list: { color: "#FFFFFF", bulletColor: "#D0BCFF", fontSize: 14 },
   table: {
     ...MD_TABLE_COMMON,
@@ -77,7 +89,13 @@ const MD_STYLE_OTHER: MarkdownStyle = {
   strong: { color: "#E6E1E5" },
   em: { color: "#E6E1E5" },
   link: { color: "#D0BCFF", underline: true },
-  code: { color: "#D0BCFF", backgroundColor: "rgba(255,255,255,0.08)", fontSize: 13, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), borderColor: "transparent" },
+  code: {
+    color: "#D0BCFF",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    fontSize: 13,
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    borderColor: "transparent",
+  },
   codeBlock: {
     color: "#E6E1E5",
     backgroundColor: "rgba(255,255,255,0.06)",
@@ -134,7 +152,6 @@ const SENDER_COLORS = [
   "#B388FF",
 ];
 
-const QUICK_EMOJIS = ["👍", "❤️", "😂", "🔥", "👀", "🙏"];
 const MENU_WIDTH = 240;
 
 function senderColor(inboxId: string): string {
@@ -165,7 +182,9 @@ function useSenderAddress(inboxId: string): string {
     resolveAddress(inboxId).then((resolved) => {
       if (!cancelled) setAddress(resolved);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [inboxId]);
 
   return address;
@@ -183,6 +202,7 @@ function shouldShowHeader(item: MessageItem, prevItem: MessageItem | null | unde
 // ---------------------------------------------------------------------------
 
 function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: MessageBubbleProps) {
+  const quickReactions = useSettingsStore((s) => s.quickReactions);
   const isOwn = item.isOwn;
   const showHeader = shouldShowHeader(item, prevItem);
   const timeLabel = formatMessageTime(item.sentAt);
@@ -310,7 +330,7 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
               <View style={[styles.menuContainer, { left: menuPosition.x, top: menuPosition.y }]}>
                 {/* Emoji quick-react row */}
                 <View style={styles.emojiRow}>
-                  {QUICK_EMOJIS.map((emoji) => (
+                  {quickReactions.map((emoji) => (
                     <Pressable
                       key={emoji}
                       style={({ pressed }) => [styles.emojiBtn, pressed && styles.emojiBtnPressed]}
@@ -491,17 +511,19 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   emojiBtn: {
-    width: 34,
+    minWidth: 34,
     height: 34,
     borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 4,
   },
   emojiBtnPressed: {
     backgroundColor: "rgba(255,255,255,0.12)",
   },
   emojiText: {
-    fontSize: 20,
+    fontSize: 18,
+    color: "#E6E1E5",
   },
   menuDivider: {
     height: StyleSheet.hairlineWidth,
