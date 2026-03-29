@@ -62,6 +62,46 @@ adb reverse tcp:8081 tcp:8081
 - Check: `adb reverse tcp:8081 tcp:8081` → should print `8081`
 - Check logcat for Metro errors: `adb logcat -d | grep -i metro`
 
+## React Native DevTools
+
+### When to use DevTools vs logcat
+
+| Scenario | DevTools | logcat |
+|----------|:-------:|:------:|
+| Debug component state/props | Yes | No |
+| Breakpoint debugging | Yes | No |
+| Inspect network requests | Yes | No |
+| Quick "did this line run?" check | Either | Yes (faster) |
+| Native crash / module error | No | Yes |
+| App won't load / no JS | No | Yes |
+| Render performance profiling | Yes | No |
+| CI / automated log capture | No | Yes |
+
+**Rule of thumb**: Metro running → DevTools is more powerful. Metro broken or native-layer issue → logcat is the only option.
+
+### How to launch
+
+```bash
+# Metro must be running first
+npx expo start --dev-client
+
+# In Metro terminal:
+#   j → open DevTools (console, sources, network)
+#   shift+m → more tools menu
+
+# React component tree inspector (separate tool)
+npx react-devtools
+```
+
+### Best practices
+
+1. **Prefer breakpoints over console.log** — especially for hooks and state transitions.
+2. **Use Network tab** instead of adding interceptors in code — no code changes needed.
+3. **Use Profiler for jank** — FlashList rendering, excessive re-renders are immediately visible.
+4. **logcat for native logs** — DevTools cannot see native module logs (e.g., `xmtpv3` tag from XMTP SDK).
+5. **Never open multiple debuggers** — they fight for the connection and cause disconnects.
+6. **DevTools requires debug APK + Metro** — does not work with release builds or embedded bundles.
+
 ## Logging
 
 ### Where to see logs
