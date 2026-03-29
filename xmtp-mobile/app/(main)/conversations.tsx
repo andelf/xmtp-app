@@ -3,6 +3,7 @@
  */
 import React, { useCallback, useMemo, useState } from "react";
 import { View, StyleSheet, RefreshControl } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Appbar, Menu, Text, Button, Divider } from "react-native-paper";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import { useRouter } from "expo-router";
@@ -87,6 +88,7 @@ export default function ConversationsScreen() {
   const inboxId = useAuthStore((s) => s.inboxId);
   const storeError = useConversationStore((s) => s.error);
 
+  const insets = useSafeAreaInsets();
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
 
@@ -204,6 +206,7 @@ export default function ConversationsScreen() {
         keyExtractor={(item) => item.id}
         ItemSeparatorComponent={renderSeparator}
         ListEmptyComponent={renderEmpty}
+        contentContainerStyle={{ paddingBottom: insets.bottom }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing || storeLoading}
