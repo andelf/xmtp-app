@@ -5,7 +5,7 @@
  *   Row 1: Quick-react emoji bar (tap to send reaction — placeholder)
  *   Row 2: Copy | Reply action buttons
  */
-import React, { memo, useState, useCallback } from "react";
+import React, { memo, useState, useCallback, useEffect } from "react";
 import {
   View,
   StyleSheet,
@@ -22,6 +22,7 @@ import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-
 import type { MessageItem } from "../store/messages";
 import { sendReaction } from "../xmtp/messages";
 import { formatMessageTime } from "../utils/time";
+import { getCachedAddress, resolveAddress } from "../utils/addressLookup";
 
 // Dark theme markdown styles
 const MD_TABLE_COMMON = {
@@ -142,11 +143,30 @@ function senderColor(inboxId: string): string {
   return SENDER_COLORS[Math.abs(hash) % SENDER_COLORS.length];
 }
 
-function senderLabel(inboxId: string): string {
-  if (inboxId.startsWith("0x") && inboxId.length > 10) {
-    return inboxId.slice(0, 6) + "..." + inboxId.slice(-4);
+function senderLabel(address: string): string {
+  if (address.startsWith("0x") && address.length > 10) {
+    return address.slice(0, 6) + "..." + address.slice(-4);
   }
-  return inboxId.slice(0, 8) + "...";
+  return address.slice(0, 8) + "...";
+}
+
+/** Resolve inboxId to address, using cache-first with async fallback. */
+function useSenderAddress(inboxId: string): string {
+  const [address, setAddress] = useState(() => getCachedAddress(inboxId) ?? inboxId);
+
+  useEffect(() => {
+    if (getCachedAddress(inboxId)) {
+      setAddress(getCachedAddress(inboxId)!);
+      return;
+    }
+    let cancelled = false;
+    resolveAddress(inboxId).then((resolved) => {
+      if (!cancelled) setAddress(resolved);
+    });
+    return () => { cancelled = true; };
+  }, [inboxId]);
+
+  return address;
 }
 
 function shouldShowHeader(item: MessageItem, prevItem: MessageItem | null | undefined): boolean {
@@ -168,6 +188,9 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
   const isFailed = item.status === "failed";
 
   const isMarkdown = item.contentType?.includes("markdown") === true;
+
+  // Resolve sender inboxId to Ethereum address for display
+  const senderAddress = useSenderAddress(item.senderInboxId);
 
   // Context menu state
   const [menuVisible, setMenuVisible] = useState(false);
@@ -215,10 +238,10 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply }: Messag
           {isGroup && !isOwn && (
             <Text
               variant="labelSmall"
-              style={[styles.senderText, { color: senderColor(item.senderInboxId) }]}
+              style={[styles.senderText, { color: senderColor(senderAddress) }]}
               numberOfLines={1}
             >
-              {senderLabel(item.senderInboxId)}
+              {senderLabel(senderAddress)}
             </Text>
           )}
           <Text variant="labelSmall" style={styles.headerTime}>

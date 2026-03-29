@@ -23,6 +23,7 @@ import { useMessages } from "../../../src/hooks/useMessages";
 import { MessageBubble } from "../../../src/components/MessageBubble";
 import { MessageInput } from "../../../src/components/MessageInput";
 import { shortenAddress } from "../../../src/utils/address";
+import { resolveAddresses } from "../../../src/utils/addressLookup";
 
 const EMPTY_MESSAGES: MessageItem[] = [];
 
@@ -91,6 +92,13 @@ export default function ConversationScreen() {
     if (!storeMessages || storeMessages.length === 0) return [];
     return [...storeMessages].sort((a, b) => b.sentAt - a.sentAt);
   }, [storeMessages]);
+
+  // Batch-resolve sender addresses when messages change
+  useEffect(() => {
+    if (!isGroup || storeMessages.length === 0) return;
+    const inboxIds = [...new Set(storeMessages.map((m) => m.senderInboxId))];
+    resolveAddresses(inboxIds);
+  }, [isGroup, storeMessages]);
 
   // Auto-scroll to bottom when new messages arrive (only if at bottom)
   const prevMessageCount = useRef(0);
