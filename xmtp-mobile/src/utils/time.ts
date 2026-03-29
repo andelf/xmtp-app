@@ -55,6 +55,19 @@ export function formatRelativeTime(timestampMs: number): string {
 }
 
 /**
+ * Format a millisecond-epoch timestamp into "YYYY-MM-DD HH:mm" for detail screens.
+ */
+export function formatDateTime(timestampMs: number): string {
+  const d = new Date(timestampMs);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hours = String(d.getHours()).padStart(2, "0");
+  const mins = String(d.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${mins}`;
+}
+
+/**
  * Format a millisecond-epoch timestamp into HH:mm (24-hour) for message bubbles.
  */
 export function formatMessageTime(timestampMs: number): string {

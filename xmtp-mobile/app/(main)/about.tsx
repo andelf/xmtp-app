@@ -2,33 +2,11 @@
  * About page -- displays app version, XMTP environment, and account info.
  */
 import React from "react";
-import { View, StyleSheet, ScrollView, Clipboard } from "react-native";
+import { View, StyleSheet, ScrollView } from "react-native";
 import { Text, Divider } from "react-native-paper";
 import { Stack } from "expo-router";
 import { useAuthStore } from "../../src/store/auth";
-
-function InfoRow({ label, value }: { label: string; value: string | null }) {
-  const handlePress = () => {
-    if (value) Clipboard.setString(value);
-  };
-
-  return (
-    <View style={styles.infoRow}>
-      <Text variant="bodySmall" style={styles.infoLabel}>
-        {label}
-      </Text>
-      <Text
-        variant="bodyMedium"
-        style={styles.infoValue}
-        selectable
-        onPress={handlePress}
-        numberOfLines={2}
-      >
-        {value || "—"}
-      </Text>
-    </View>
-  );
-}
+import { InfoRow } from "../../src/components/InfoRow";
 
 export default function AboutScreen() {
   const address = useAuthStore((s) => s.address);
@@ -111,16 +89,6 @@ const styles = StyleSheet.create({
     color: "#E6E1E5",
     fontWeight: "600",
     marginBottom: 12,
-  },
-  infoRow: {
-    marginBottom: 16,
-  },
-  infoLabel: {
-    color: "#938F99",
-    marginBottom: 2,
-  },
-  infoValue: {
-    color: "#E6E1E5",
   },
   divider: {
     backgroundColor: "#49454F",

@@ -9,9 +9,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { View, StyleSheet, Keyboard } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { ActivityIndicator } from "react-native-paper";
+import { ActivityIndicator, IconButton } from "react-native-paper";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
-import { useLocalSearchParams, Stack } from "expo-router";
+import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { useHeaderHeight } from "@react-navigation/elements";
 import type { ConversationId } from "@xmtp/react-native-sdk";
 
@@ -29,6 +29,7 @@ const EMPTY_MESSAGES: MessageItem[] = [];
 
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const headerHeight = useHeaderHeight();
   const insets = useSafeAreaInsets();
 
@@ -160,6 +161,22 @@ export default function ConversationScreen() {
     );
   }, [loadingMore]);
 
+  const headerRight = useCallback(
+    () => (
+      <IconButton
+        icon="information-outline"
+        iconColor="#E6E1E5"
+        size={22}
+        onPress={() => {
+          if (!id) return;
+          const route = isGroup ? "conversation/group-detail" : "conversation/dm-detail";
+          router.push({ pathname: `/(main)/${route}`, params: { id } });
+        }}
+      />
+    ),
+    [id, isGroup, router]
+  );
+
   return (
     <>
       <Stack.Screen
@@ -169,6 +186,7 @@ export default function ConversationScreen() {
           headerStyle: { backgroundColor: "#1a1a2e" },
           headerTintColor: "#E6E1E5",
           headerTitleStyle: { fontWeight: "600", fontSize: 18 },
+          headerRight,
         }}
       />
 

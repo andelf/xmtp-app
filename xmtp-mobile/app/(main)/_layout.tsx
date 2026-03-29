@@ -37,6 +37,8 @@ export default function MainLayout() {
       />
       <Stack.Screen name="settings" options={{ title: "Settings" }} />
       <Stack.Screen name="about" options={{ title: "About" }} />
+      <Stack.Screen name="conversation/dm-detail" options={{ title: "DM Details" }} />
+      <Stack.Screen name="conversation/group-detail" options={{ title: "Group Details" }} />
     </Stack>
   );
 }
