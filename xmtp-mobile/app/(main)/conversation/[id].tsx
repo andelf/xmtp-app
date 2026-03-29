@@ -177,20 +177,22 @@ export default function ConversationScreen() {
         keyboardVerticalOffset={headerHeight}
         style={styles.container}
       >
-        {/* Message list */}
-        <FlashList
-          ref={listRef}
-          data={messages}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id as string}
-          inverted
-          onScroll={handleScroll}
-          scrollEventThrottle={100}
-          onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.3}
-          ListFooterComponent={renderFooter}
-          contentContainerStyle={styles.listContent}
-        />
+        {/* Message list — flex:1 so it shrinks when input bar grows */}
+        <View style={{ flex: 1 }}>
+          <FlashList
+            ref={listRef}
+            data={messages}
+            renderItem={renderItem}
+            keyExtractor={(item) => item.id as string}
+            inverted
+            onScroll={handleScroll}
+            scrollEventThrottle={100}
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.3}
+            ListFooterComponent={renderFooter}
+            contentContainerStyle={styles.listContent}
+          />
+        </View>
 
         {/* Input bar — only pad for nav bar when keyboard is closed */}
         <View

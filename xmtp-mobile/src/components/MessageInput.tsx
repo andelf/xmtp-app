@@ -76,7 +76,7 @@ function MessageInputInner({
           value={text}
           onChangeText={setText}
           multiline
-          numberOfLines={1}
+          dense
           style={styles.input}
           contentStyle={styles.inputContent}
           outlineStyle={styles.outline}
@@ -120,20 +120,19 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     maxHeight: 120,
-    minHeight: 44,
     backgroundColor: "#2a2a3e",
     fontSize: 16,
   },
   inputContent: {
-    paddingTop: 10,
-    paddingBottom: 10,
+    paddingTop: 12,
+    paddingBottom: 12,
   },
   outline: {
-    borderRadius: 22,
+    borderRadius: 16,
   },
   sendButton: {
     marginLeft: 4,
-    marginBottom: 2,
+    marginBottom: 4,
   },
   replyPreview: {
     flexDirection: "row",
