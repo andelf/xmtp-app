@@ -10,7 +10,8 @@
     "lint": "eslint src/ app/",
     "lint:fix": "eslint src/ app/ --fix",
     "format": "prettier --write 'src/**/*.{ts,tsx}' 'app/**/*.{ts,tsx}'",
-    "test": "jest"
+    "test": "jest",
+    "postinstall": "npx patch-package"
   },
   "dependencies": {
     "@shopify/flash-list": "^2.3.1",

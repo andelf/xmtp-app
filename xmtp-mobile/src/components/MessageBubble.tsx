@@ -10,7 +10,6 @@ import {
   View,
   StyleSheet,
   Dimensions,
-  Platform,
   Pressable,
   Clipboard,
   Modal,
@@ -50,7 +49,6 @@ const MD_STYLE_OWN: MarkdownStyle = {
     color: "#D0BCFF",
     backgroundColor: "rgba(0,0,0,0.2)",
     fontSize: 13,
-    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
     borderColor: "transparent",
   },
   codeBlock: {
@@ -93,7 +91,6 @@ const MD_STYLE_OTHER: MarkdownStyle = {
     color: "#D0BCFF",
     backgroundColor: "rgba(255,255,255,0.08)",
     fontSize: 13,
-    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
     borderColor: "transparent",
   },
   codeBlock: {
