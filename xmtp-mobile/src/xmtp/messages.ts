@@ -75,6 +75,11 @@ export async function sendMessage(
 /** Find a conversation object by id, with module-level cache. */
 const conversationCache = new Map<string, any>();
 
+/** Clear cached conversation objects (call on logout). */
+export function clearConversationCache() {
+  conversationCache.clear();
+}
+
 export async function findConversation(conversationId: string) {
   const key = conversationId;
   if (conversationCache.has(key)) return conversationCache.get(key)!;

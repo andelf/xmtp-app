@@ -42,6 +42,7 @@ export function useConversations() {
         .stream(
           async (conversation) => {
             try {
+              convoRetries = 0;
               const item = await conversationToItem(conversation, client.inboxId);
               store().upsert(item);
             } catch (err) {
@@ -83,6 +84,7 @@ export function useConversations() {
         .streamAllMessages(
           async (message) => {
             try {
+              msgRetries = 0;
               const topicStr = message.topic as string;
               log("MsgStream", `received msg id=${message.id} topic=${topicStr}`);
 
