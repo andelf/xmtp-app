@@ -30,19 +30,24 @@ export function extractNativeText(msg: DecodedMessage): string | null {
       return null;
     }
     if (nc.unknown) {
-      const unk = nc.unknown as { content?: string };
-      return unk.content ?? (msg as any).fallback ?? null;
+      const unk = nc.unknown as { contentTypeId?: string; content?: string };
+      return unk.content ?? (msg as any).fallback ?? `Unsupported content type: ${unk.contentTypeId ?? msg.contentTypeId ?? "unknown"}`;
     }
     if (nc.encoded) {
-      const encoded = JSON.parse(nc.encoded);
-      if (encoded.content) {
-        return globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
-      }
-      return encoded.fallback ?? null;
+      try {
+        const encoded = JSON.parse(nc.encoded);
+        if (encoded.content) {
+          return globalThis.Buffer.from(encoded.content, "base64").toString("utf-8");
+        }
+        if (encoded.fallback) {
+          return encoded.fallback;
+        }
+      } catch {}
+      return `Unsupported content type: ${msg.contentTypeId ?? "unknown"}`;
     }
   } catch {}
 
-  return null;
+  return `Unsupported content type: ${msg.contentTypeId ?? "unknown"}`;
 }
 
 /** Check if a nativeContent is a reaction (not a content message). */

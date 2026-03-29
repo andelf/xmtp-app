@@ -9,7 +9,8 @@
     "web": "expo start --web",
     "lint": "eslint src/ app/",
     "lint:fix": "eslint src/ app/ --fix",
-    "format": "prettier --write 'src/**/*.{ts,tsx}' 'app/**/*.{ts,tsx}'"
+    "format": "prettier --write 'src/**/*.{ts,tsx}' 'app/**/*.{ts,tsx}'",
+    "test": "jest"
   },
   "dependencies": {
     "@shopify/flash-list": "^2.3.1",
@@ -26,6 +27,7 @@
     "expo-splash-screen": "~55.0.12",
     "expo-status-bar": "~55.0.4",
     "react": "19.2.0",
+    "react-dom": "^19.2.4",
     "react-native": "0.83.2",
     "react-native-enriched-markdown": "^0.4.1",
     "react-native-keyboard-controller": "1.20.7",
@@ -38,11 +40,18 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@babel/preset-env": "^7.29.2",
+    "@babel/preset-typescript": "^7.28.5",
+    "@testing-library/jest-native": "^5.4.3",
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.2.2",
     "eslint": "^9.39.4",
     "eslint-config-expo": "^55.0.1-canary-20260328-2049187",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
+    "jest": "^30.3.0",
+    "jest-expo": "~55.0.11",
     "prettier": "^3.8.1",
     "typescript": "~5.9.2"
   },

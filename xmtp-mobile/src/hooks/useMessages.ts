@@ -15,6 +15,7 @@ import type { ConversationId } from "@xmtp/react-native-sdk";
 import { useAuthStore } from "../store/auth";
 import { useMessageStore, decodedToMessageItem, decodedToReaction } from "../store/messages";
 import { findConversation } from "../xmtp/messages";
+import { getNativeContent } from "../utils/nativeContent";
 
 const PAGE_SIZE = 30;
 
@@ -46,6 +47,10 @@ export function useMessages(conversationId: ConversationId | null) {
           async (decodedMsg: any) => {
             if (cancelled) return;
             try {
+              // Debug: log nativeContent for diagnosis
+              const nc = getNativeContent(decodedMsg);
+              console.log("[useMessages] stream msg", decodedMsg.id, "contentTypeId=", (decodedMsg as any).contentTypeId, "nc keys=", nc ? Object.keys(nc) : "null");
+
               // Handle reactions
               const reaction = decodedToReaction(decodedMsg, conversationId);
               if (reaction) {
@@ -54,6 +59,7 @@ export function useMessages(conversationId: ConversationId | null) {
               }
               // Handle regular messages
               const item = decodedToMessageItem(decodedMsg, conversationId, myInboxId);
+              console.log("[useMessages] decoded item=", item ? `text="${item.text.slice(0, 60)}"` : "null");
               if (item) {
                 useMessageStore.getState().append(item);
               }
