@@ -40,6 +40,8 @@ export interface ConversationItem {
   lastMessageAt?: number;
   /** Created at timestamp (epoch ms) */
   createdAt: number;
+  /** Number of unread messages */
+  unreadCount: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +147,7 @@ export async function conversationToItem(
     lastMessageText,
     lastMessageAt,
     createdAt: conversation.createdAt,
+    unreadCount: 0,
   };
 }
 
@@ -168,6 +171,13 @@ export interface ConversationActions {
   upsert: (item: ConversationItem) => void;
   /** Update the last message preview for a conversation. */
   updateLastMessage: (conversationId: string, text: string, timestamp: number) => void;
+  /** Mark a conversation as read (reset unread count). */
+  markRead: (conversationId: string) => void;
+  /** Increment unread count for a conversation. */
+  incrementUnread: (conversationId: string) => void;
+  /** The conversation id currently being viewed (skip unread increment). */
+  activeConversationId: string | null;
+  setActiveConversation: (id: string | null) => void;
   /** Clear store on logout. */
   clear: () => void;
   /** Conversations sorted by lastMessageAt descending (derived). */
@@ -187,6 +197,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
   topicToId: new Map(),
   isLoading: false,
   error: null,
+  activeConversationId: null,
 
   fetchAll: async () => {
     const client = getClient();
@@ -248,16 +259,40 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       }
 
       const next = new Map(state.items);
+      const isActive = state.activeConversationId === conversationId;
       next.set(conversationId, {
         ...existing,
         lastMessageText: text,
         lastMessageAt: timestamp,
+        unreadCount: isActive ? 0 : existing.unreadCount + 1,
       });
       return { items: next };
     });
   },
 
-  clear: () => set({ items: new Map(), topicToId: new Map(), error: null }),
+  markRead: (conversationId) => {
+    set((state) => {
+      const existing = state.items.get(conversationId);
+      if (!existing || existing.unreadCount === 0) return state;
+      const next = new Map(state.items);
+      next.set(conversationId, { ...existing, unreadCount: 0 });
+      return { items: next };
+    });
+  },
+
+  incrementUnread: (conversationId) => {
+    set((state) => {
+      const existing = state.items.get(conversationId);
+      if (!existing) return state;
+      const next = new Map(state.items);
+      next.set(conversationId, { ...existing, unreadCount: existing.unreadCount + 1 });
+      return { items: next };
+    });
+  },
+
+  setActiveConversation: (id) => set({ activeConversationId: id }),
+
+  clear: () => set({ items: new Map(), topicToId: new Map(), error: null, activeConversationId: null }),
 
   sortedList: () => {
     const { items } = get();

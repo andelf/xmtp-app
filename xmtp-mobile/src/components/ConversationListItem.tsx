@@ -90,10 +90,19 @@ function ConversationListItemInner({ item, onPress }: ConversationListItemProps)
           </Text>
         </View>
 
-        {/* Right: timestamp */}
-        <Text variant="labelSmall" style={styles.time}>
-          {timeLabel}
-        </Text>
+        {/* Right: timestamp + unread badge */}
+        <View style={styles.rightCol}>
+          <Text variant="labelSmall" style={styles.time}>
+            {timeLabel}
+          </Text>
+          {item.unreadCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>
+                {item.unreadCount > 99 ? "99+" : item.unreadCount}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
     </TouchableRipple>
   );
@@ -133,9 +142,26 @@ const styles = StyleSheet.create({
     color: "#CAC4D0",
     marginTop: 2,
   },
+  rightCol: {
+    alignItems: "flex-end",
+    gap: 4,
+    marginTop: 2,
+  },
   time: {
     color: "#938F99",
-    alignSelf: "flex-start",
-    marginTop: 2,
+  },
+  badge: {
+    backgroundColor: "#6750A4",
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  badgeText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
   },
 });

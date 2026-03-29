@@ -49,6 +49,16 @@ export default function ConversationScreen() {
     return s.items.get(id)?.kind === "group";
   });
 
+  // Mark conversation as read and set active
+  useEffect(() => {
+    if (!id) return;
+    useConversationStore.getState().setActiveConversation(id);
+    useConversationStore.getState().markRead(id);
+    return () => {
+      useConversationStore.getState().setActiveConversation(null);
+    };
+  }, [id]);
+
   const listRef = useRef<any>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const isAtBottomRef = useRef(true);
