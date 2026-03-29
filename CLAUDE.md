@@ -143,6 +143,7 @@ src/
 ### Known Pitfalls
 
 See `docs/pitfalls/` for detailed writeups:
+- `react-native-debug-workflow.md` — build variants, Metro, logging, testing, and common gotchas
 - `react-native-keyboard-avoidance.md` — 6 failed approaches before finding the right one
 - `xmtp-sdk-stream-cancelled-by-verification.md` — global stream cancel scope + debug method
 
