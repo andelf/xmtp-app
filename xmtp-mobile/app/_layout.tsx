@@ -36,7 +36,7 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
+      <KeyboardProvider>
         <PaperProvider theme={theme}>
           <StatusBar style="light" />
           <Slot />

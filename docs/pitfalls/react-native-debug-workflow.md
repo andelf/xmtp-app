@@ -57,6 +57,18 @@ npx expo start --dev-client
 adb reverse tcp:8081 tcp:8081
 ```
 
+### When to rebuild APK vs rely on Metro hot reload
+
+| What changed | Rebuild APK? | Metro auto-reload? |
+|---|:---:|:---:|
+| JS/TS source code (components, hooks, utils, styles) | **No** | Yes — save file, Metro reloads automatically |
+| package.json / new npm dependency | **Yes** | No |
+| Native code (Java/Kotlin/Swift/ObjC) | **Yes** | No |
+| android/ or ios/ config (build.gradle, Info.plist) | **Yes** | No |
+| Assets (images, fonts added to native bundle) | **Yes** | No |
+
+**Key rule**: If you are only editing `.ts`/`.tsx` files while Metro is running, **never run `assembleDebug` + `adb install`**. Just save the file and Metro will hot-reload within seconds. Unnecessary rebuilds waste ~30s per cycle.
+
 **Common failure**: Metro running but app stuck on splash screen.
 - Check: `curl http://localhost:8081/status` → should return `packager-status:running`
 - Check: `adb reverse tcp:8081 tcp:8081` → should print `8081`

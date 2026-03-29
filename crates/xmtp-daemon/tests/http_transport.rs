@@ -29,6 +29,7 @@ impl DaemonProcess {
             .arg("--data-dir")
             .arg(&data_dir)
             .args(["daemon", "run"])
+            .env("XMTP_DAEMON_PARENT_PID", std::process::id().to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -95,11 +96,14 @@ where
                 }
                 Err(err) => last_error = Some(err),
             },
-            Err(err) => last_error = Some(anyhow::Error::new(err).context(context_message.to_owned())),
+            Err(err) => {
+                last_error = Some(anyhow::Error::new(err).context(context_message.to_owned()))
+            }
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("{context_message} did not succeed before timeout")))
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("{context_message} did not succeed before timeout")))
 }
 
 async fn get_json_with_retry<T>(
@@ -123,11 +127,14 @@ where
                 }
                 Err(err) => last_error = Some(err),
             },
-            Err(err) => last_error = Some(anyhow::Error::new(err).context(context_message.to_owned())),
+            Err(err) => {
+                last_error = Some(anyhow::Error::new(err).context(context_message.to_owned()))
+            }
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("{context_message} did not succeed before timeout")))
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("{context_message} did not succeed before timeout")))
 }
 
 async fn ensure_success(response: Response, context_message: &str) -> anyhow::Result<Response> {
@@ -202,7 +209,9 @@ async fn http_endpoints_smoke_return_expected_json_shapes() -> anyhow::Result<()
     match daemon.login_dev().await {
         Ok(_) => {}
         Err(err) if is_rate_limited(&err) => {
-            eprintln!("skipping http_endpoints_smoke_return_expected_json_shapes due to XMTP rate limit: {err:#}");
+            eprintln!(
+                "skipping http_endpoints_smoke_return_expected_json_shapes due to XMTP rate limit: {err:#}"
+            );
             return Ok(());
         }
         Err(err) => return Err(err),
@@ -213,10 +222,13 @@ async fn http_endpoints_smoke_return_expected_json_shapes() -> anyhow::Result<()
         format!("{}/v1/conversations", daemon.base_url),
         "conversations response status",
     )
-    .await {
+    .await
+    {
         Ok(value) => value,
         Err(err) if is_rate_limited(&err) => {
-            eprintln!("skipping http_endpoints_smoke_return_expected_json_shapes due to XMTP rate limit: {err:#}");
+            eprintln!(
+                "skipping http_endpoints_smoke_return_expected_json_shapes due to XMTP rate limit: {err:#}"
+            );
             return Ok(());
         }
         Err(err) => return Err(err),
@@ -263,7 +275,9 @@ async fn create_group_and_send_message_over_http() -> anyhow::Result<()> {
     let login = match daemon.login_dev().await {
         Ok(login) => login,
         Err(err) if is_rate_limited(&err) => {
-            eprintln!("skipping create_group_and_send_message_over_http due to XMTP rate limit: {err:#}");
+            eprintln!(
+                "skipping create_group_and_send_message_over_http due to XMTP rate limit: {err:#}"
+            );
             return Ok(());
         }
         Err(err) => return Err(err),
@@ -283,10 +297,13 @@ async fn create_group_and_send_message_over_http() -> anyhow::Result<()> {
         }),
         "create group status",
     )
-    .await {
+    .await
+    {
         Ok(created) => created,
         Err(err) if is_rate_limited(&err) => {
-            eprintln!("skipping create_group_and_send_message_over_http due to XMTP rate limit: {err:#}");
+            eprintln!(
+                "skipping create_group_and_send_message_over_http due to XMTP rate limit: {err:#}"
+            );
             return Ok(());
         }
         Err(err) => return Err(err),
@@ -304,10 +321,13 @@ async fn create_group_and_send_message_over_http() -> anyhow::Result<()> {
         }),
         "group send status",
     )
-    .await {
+    .await
+    {
         Ok(sent) => sent,
         Err(err) if is_rate_limited(&err) => {
-            eprintln!("skipping create_group_and_send_message_over_http due to XMTP rate limit: {err:#}");
+            eprintln!(
+                "skipping create_group_and_send_message_over_http due to XMTP rate limit: {err:#}"
+            );
             return Ok(());
         }
         Err(err) => return Err(err),
@@ -324,7 +344,9 @@ async fn group_members_creator_is_super_admin() -> anyhow::Result<()> {
     let login = match daemon.login_dev().await {
         Ok(login) => login,
         Err(err) if is_rate_limited(&err) => {
-            eprintln!("skipping group_members_creator_is_super_admin due to XMTP rate limit: {err:#}");
+            eprintln!(
+                "skipping group_members_creator_is_super_admin due to XMTP rate limit: {err:#}"
+            );
             return Ok(());
         }
         Err(err) => return Err(err),
@@ -344,10 +366,13 @@ async fn group_members_creator_is_super_admin() -> anyhow::Result<()> {
         }),
         "create group status",
     )
-    .await {
+    .await
+    {
         Ok(created) => created,
         Err(err) if is_rate_limited(&err) => {
-            eprintln!("skipping group_members_creator_is_super_admin due to XMTP rate limit: {err:#}");
+            eprintln!(
+                "skipping group_members_creator_is_super_admin due to XMTP rate limit: {err:#}"
+            );
             return Ok(());
         }
         Err(err) => return Err(err),
@@ -362,10 +387,13 @@ async fn group_members_creator_is_super_admin() -> anyhow::Result<()> {
         ),
         "group members status",
     )
-    .await {
+    .await
+    {
         Ok(members) => members,
         Err(err) if is_rate_limited(&err) => {
-            eprintln!("skipping group_members_creator_is_super_admin due to XMTP rate limit: {err:#}");
+            eprintln!(
+                "skipping group_members_creator_is_super_admin due to XMTP rate limit: {err:#}"
+            );
             return Ok(());
         }
         Err(err) => return Err(err),

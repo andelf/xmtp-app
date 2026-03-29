@@ -43,6 +43,9 @@ use xmtp_store::{load_state, save_state};
 
 static TRACING_INIT: OnceLock<()> = OnceLock::new();
 static EVENT_COUNTER: AtomicU64 = AtomicU64::new(1);
+const HISTORY_STREAM_PAGE_LIMIT: usize = 200;
+const HISTORY_STREAM_RETRY_DELAY_MIN_MS: u64 = 100;
+const HISTORY_STREAM_RETRY_DELAY_MAX_MS: u64 = 5_000;
 
 #[derive(Clone, prost::Message)]
 struct GroupUpdatedInbox {
@@ -329,7 +332,7 @@ pub fn resolve_conversation_id(
 
 pub fn watch_history<F>(data_dir: &Path, conversation_id: &str, on_item: F) -> anyhow::Result<()>
 where
-    F: FnMut(HistoryItem),
+    F: FnMut(HistoryItem) -> anyhow::Result<()>,
 {
     watch_history_with_kind(data_dir, conversation_id, None, on_item)
 }
@@ -341,7 +344,7 @@ pub fn watch_history_with_kind<F>(
     mut on_item: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(HistoryItem),
+    F: FnMut(HistoryItem) -> anyhow::Result<()>,
 {
     let client = open_existing_client(data_dir)?;
     let conversation = find_conversation_by_id_with_kind(&client, conversation_id, kind)?;
@@ -350,7 +353,7 @@ where
 
     for event in subscription {
         let item = history_item_by_message_id_with_client(&client, &event.message_id)?;
-        on_item(item);
+        on_item(item)?;
     }
 
     Ok(())
@@ -2054,6 +2057,288 @@ fn send_event(events_tx: &broadcast::Sender<DaemonEventEnvelope>, payload: Daemo
     });
 }
 
+#[derive(Debug, Default)]
+struct HistoryStreamState {
+    seen_message_ids: HashSet<String>,
+    latest_sent_at_ns: Option<i64>,
+}
+
+impl HistoryStreamState {
+    fn remember(&mut self, item: &HistoryItem) -> bool {
+        let message_id = item.message_id.to_lowercase();
+        if !self.seen_message_ids.insert(message_id) {
+            return false;
+        }
+        self.latest_sent_at_ns = Some(
+            self.latest_sent_at_ns
+                .map_or(item.sent_at_ns, |current| current.max(item.sent_at_ns)),
+        );
+        true
+    }
+}
+
+fn next_retry_delay(current: Duration) -> Duration {
+    let next_ms = (current.as_millis() as u64).saturating_mul(2).clamp(
+        HISTORY_STREAM_RETRY_DELAY_MIN_MS,
+        HISTORY_STREAM_RETRY_DELAY_MAX_MS,
+    );
+    Duration::from_millis(next_ms)
+}
+
+fn load_recent_history_items(
+    data_dir: &Path,
+    conversation_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<HistoryItem>> {
+    let client = open_existing_client(data_dir)?;
+    Ok(
+        history_with_client(data_dir, &client, conversation_id, None, None, limit)?
+            .into_iter()
+            .map(history_entry_to_item)
+            .collect(),
+    )
+}
+
+fn history_entry_to_item(item: HistoryEntry) -> HistoryItem {
+    HistoryItem {
+        message_id: item.message_id,
+        sender_inbox_id: item.sender_inbox_id,
+        sent_at_ns: item.sent_at_ns,
+        content_kind: item.content_kind,
+        content: item.content,
+        reply_count: item.reply_count,
+        reaction_count: item.reaction_count,
+        reply_target_message_id: item.reply_target_message_id,
+        reaction_target_message_id: item.reaction_target_message_id,
+        reaction_emoji: item.reaction_emoji,
+        reaction_action: item.reaction_action,
+        attached_reactions: item.attached_reactions,
+        read_by: item.read_by,
+    }
+}
+
+fn collect_catch_up_items(
+    history_pages: Vec<Vec<HistoryItem>>,
+    state: &HistoryStreamState,
+) -> Vec<HistoryItem> {
+    let mut items = Vec::new();
+    let mut emitted_ids = HashSet::new();
+
+    for page in history_pages {
+        for item in page {
+            let message_id = item.message_id.to_lowercase();
+            let seen = state.seen_message_ids.contains(&message_id);
+            let newer_than_watermark = state
+                .latest_sent_at_ns
+                .is_none_or(|latest| item.sent_at_ns > latest);
+            let same_watermark_but_unseen = state
+                .latest_sent_at_ns
+                .is_some_and(|latest| item.sent_at_ns == latest && !seen);
+
+            if !seen
+                && (newer_than_watermark || same_watermark_but_unseen)
+                && emitted_ids.insert(message_id)
+            {
+                items.push(item);
+            }
+        }
+    }
+
+    items.sort_by(|left, right| {
+        left.sent_at_ns
+            .cmp(&right.sent_at_ns)
+            .then_with(|| left.message_id.cmp(&right.message_id))
+    });
+    items
+}
+
+fn load_catch_up_items(
+    data_dir: &Path,
+    conversation_id: &str,
+    state: &HistoryStreamState,
+) -> anyhow::Result<Vec<HistoryItem>> {
+    let Some(latest_sent_at_ns) = state.latest_sent_at_ns else {
+        return Ok(Vec::new());
+    };
+
+    let client = open_existing_client(data_dir)?;
+    let mut pages = Vec::new();
+    let mut before_ns = None;
+
+    for _ in 0..100 {
+        let page_entries = history_with_client(
+            data_dir,
+            &client,
+            conversation_id,
+            None,
+            before_ns,
+            HISTORY_STREAM_PAGE_LIMIT,
+        )?;
+        if page_entries.is_empty() {
+            break;
+        }
+        let page_len = page_entries.len();
+        let page: Vec<HistoryItem> = page_entries
+            .into_iter()
+            .map(history_entry_to_item)
+            .collect();
+
+        let oldest_sent_at_ns = page.first().map(|item| item.sent_at_ns).unwrap_or_default();
+        let next_before_ns = Some(oldest_sent_at_ns);
+        pages.push(page);
+
+        if oldest_sent_at_ns < latest_sent_at_ns {
+            break;
+        }
+        if page_len < HISTORY_STREAM_PAGE_LIMIT || before_ns == next_before_ns {
+            break;
+        }
+
+        before_ns = next_before_ns;
+    }
+
+    Ok(collect_catch_up_items(pages, state))
+}
+
+fn send_history_event(
+    event_tx: &mpsc::UnboundedSender<Result<Event, std::convert::Infallible>>,
+    conversation_id: &str,
+    item: HistoryItem,
+    state: &mut HistoryStreamState,
+) -> bool {
+    if !state.remember(&item) {
+        return true;
+    }
+
+    let envelope = DaemonEventEnvelope {
+        event_id: next_event_id(),
+        payload: DaemonEventData::HistoryItem {
+            conversation_id: conversation_id.to_owned(),
+            item,
+        },
+    };
+    event_tx
+        .send(Ok(sse_event_from_envelope(&envelope)))
+        .is_ok()
+}
+
+fn send_history_stream_error(
+    event_tx: &mpsc::UnboundedSender<Result<Event, std::convert::Infallible>>,
+    message: impl Into<String>,
+) -> bool {
+    let envelope = DaemonEventEnvelope {
+        event_id: next_event_id(),
+        payload: DaemonEventData::DaemonError {
+            message: message.into(),
+        },
+    };
+    event_tx
+        .send(Ok(sse_event_from_envelope(&envelope)))
+        .is_ok()
+}
+
+fn stream_history_events(
+    data_dir: PathBuf,
+    conversation_id: String,
+    event_tx: mpsc::UnboundedSender<Result<Event, std::convert::Infallible>>,
+) {
+    let mut state = HistoryStreamState::default();
+    let mut retry_delay = Duration::from_millis(HISTORY_STREAM_RETRY_DELAY_MIN_MS);
+    let mut initialized = false;
+
+    loop {
+        if !initialized {
+            match load_recent_history_items(&data_dir, &conversation_id, HISTORY_STREAM_PAGE_LIMIT)
+            {
+                Ok(items) => {
+                    for item in &items {
+                        state.remember(item);
+                    }
+                    initialized = true;
+                }
+                Err(err) => {
+                    daemon_log(
+                        &data_dir,
+                        "warn",
+                        format!(
+                            "history stream baseline failed conversation={} error={err:#}",
+                            conversation_id
+                        ),
+                    );
+                    if !send_history_stream_error(&event_tx, format!("{err:#}")) {
+                        break;
+                    }
+                    std::thread::sleep(retry_delay);
+                    retry_delay = next_retry_delay(retry_delay);
+                    continue;
+                }
+            }
+        } else {
+            match load_catch_up_items(&data_dir, &conversation_id, &state) {
+                Ok(items) => {
+                    for item in items {
+                        if !send_history_event(&event_tx, &conversation_id, item, &mut state) {
+                            return;
+                        }
+                    }
+                }
+                Err(err) => {
+                    daemon_log(
+                        &data_dir,
+                        "warn",
+                        format!(
+                            "history stream catch-up failed conversation={} error={err:#}",
+                            conversation_id
+                        ),
+                    );
+                    if !send_history_stream_error(&event_tx, format!("{err:#}")) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let stream_result = watch_history_with_kind(&data_dir, &conversation_id, None, |item| {
+            if !send_history_event(&event_tx, &conversation_id, item, &mut state) {
+                anyhow::bail!("history stream receiver dropped");
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+
+        match stream_result {
+            Ok(()) => {
+                daemon_log(
+                    &data_dir,
+                    "warn",
+                    format!(
+                        "history stream ended conversation={} reconnecting",
+                        conversation_id
+                    ),
+                );
+            }
+            Err(err) => {
+                daemon_log(
+                    &data_dir,
+                    "warn",
+                    format!(
+                        "history stream failed conversation={} error={err:#}",
+                        conversation_id
+                    ),
+                );
+                if err.to_string().contains("history stream receiver dropped") {
+                    break;
+                }
+                if !send_history_stream_error(&event_tx, format!("{err:#}")) {
+                    break;
+                }
+            }
+        }
+
+        std::thread::sleep(retry_delay);
+        retry_delay = next_retry_delay(retry_delay);
+    }
+}
+
 fn publish_snapshot_events(state: &HttpState, status: bool, conversations: bool) {
     let mut guard = state.app.lock().expect("lock daemon app");
     if status && let Some(payload) = guard.next_status_event() {
@@ -2709,28 +2994,7 @@ async fn history_events_handler(
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Result<Event, std::convert::Infallible>>();
     let data_dir_for_thread = data_dir.clone();
     std::thread::spawn(move || {
-        let stream_result =
-            watch_history_with_kind(&data_dir_for_thread, &conversation_id, None, |item| {
-                let envelope = DaemonEventEnvelope {
-                    event_id: next_event_id(),
-                    payload: DaemonEventData::HistoryItem {
-                        conversation_id: conversation_id.clone(),
-                        item,
-                    },
-                };
-                let event = sse_event_from_envelope(&envelope);
-                let _ = event_tx.send(Ok(event));
-            });
-        if let Err(err) = stream_result {
-            let envelope = DaemonEventEnvelope {
-                event_id: next_event_id(),
-                payload: DaemonEventData::DaemonError {
-                    message: format!("{err:#}"),
-                },
-            };
-            let event = sse_event_from_envelope(&envelope);
-            let _ = event_tx.send(Ok(event));
-        }
+        stream_history_events(data_dir_for_thread, conversation_id, event_tx);
     });
 
     Sse::new(UnboundedReceiverStream::new(event_rx)).keep_alive(KeepAlive::default())
@@ -2739,6 +3003,26 @@ async fn history_events_handler(
 pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
     init_tracing();
     fs::create_dir_all(data_dir).context("create daemon data dir")?;
+
+    // Prevent duplicate daemon: check if an existing daemon is still alive.
+    let pid_file = pid_path(data_dir);
+    if pid_file.exists() {
+        if let Ok(contents) = fs::read_to_string(&pid_file) {
+            if let Ok(existing_pid) = contents.trim().parse::<i32>() {
+                if unsafe { libc::kill(existing_pid, 0) } == 0 {
+                    anyhow::bail!(
+                        "daemon already running (pid {existing_pid}, data_dir={}). \
+                         Stop it first with `daemon stop` or remove {}",
+                        data_dir.display(),
+                        pid_file.display()
+                    );
+                }
+            }
+        }
+        // Stale pid file — remove it
+        let _ = fs::remove_file(&pid_file);
+    }
+
     daemon_log(
         data_dir,
         "info",
@@ -2759,6 +3043,33 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
 
     let app = Arc::new(Mutex::new(DaemonApp::new(data_dir.to_path_buf())));
     let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<()>();
+
+    // Parent-alive watchdog: if XMTP_DAEMON_PARENT_PID is set, monitor the parent
+    // process and trigger graceful shutdown when it exits (prevents orphan daemons).
+    if let Ok(val) = std::env::var("XMTP_DAEMON_PARENT_PID") {
+        if let Ok(parent_pid) = val.parse::<i32>() {
+            let watchdog_tx = shutdown_tx.clone();
+            let watchdog_data_dir = data_dir.to_path_buf();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    let alive = unsafe { libc::kill(parent_pid, 0) } == 0;
+                    if !alive {
+                        daemon_log(
+                            &watchdog_data_dir,
+                            "info",
+                            format!(
+                                "parent process {parent_pid} exited, shutting down orphan daemon"
+                            ),
+                        );
+                        let _ = watchdog_tx.send(());
+                        break;
+                    }
+                }
+            });
+        }
+    }
+
     let (events_tx, _) = broadcast::channel::<DaemonEventEnvelope>(128);
     let monitor_app = app.clone();
     let monitor_events_tx = events_tx.clone();
@@ -2901,8 +3212,9 @@ impl Drop for DaemonFilesGuard {
 mod tests {
     use super::{
         ConversationLookup, ConversationSummary, GroupUpdated, GroupUpdatedInbox,
-        MetadataFieldChange, resolve_conversation_lookup_id, resolve_message_id,
-        sort_conversation_summaries, summarize_decoded_content,
+        HistoryStreamState, MetadataFieldChange, collect_catch_up_items,
+        resolve_conversation_lookup_id, resolve_message_id, sort_conversation_summaries,
+        summarize_decoded_content,
     };
     use prost::Message;
     use xmtp::content::{
@@ -3118,5 +3430,71 @@ mod tests {
         assert_ne!(first, second);
         assert!(first.starts_with("evt-"));
         assert!(second.starts_with("evt-"));
+    }
+
+    fn sample_history_item(message_id: &str, sent_at_ns: i64) -> xmtp_ipc::HistoryItem {
+        xmtp_ipc::HistoryItem {
+            message_id: message_id.to_owned(),
+            sender_inbox_id: "peer-1".to_owned(),
+            sent_at_ns,
+            content_kind: "text".to_owned(),
+            content: format!("message-{message_id}"),
+            reply_count: 0,
+            reaction_count: 0,
+            reply_target_message_id: None,
+            reaction_target_message_id: None,
+            reaction_emoji: None,
+            reaction_action: None,
+            attached_reactions: Vec::new(),
+            read_by: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn collect_catch_up_items_returns_only_unseen_newer_messages() {
+        let mut state = HistoryStreamState::default();
+        assert!(state.remember(&sample_history_item("msg-1", 10)));
+        assert!(state.remember(&sample_history_item("msg-2", 20)));
+
+        let catch_up = collect_catch_up_items(
+            vec![vec![
+                sample_history_item("msg-1", 10),
+                sample_history_item("msg-2", 20),
+                sample_history_item("msg-3", 21),
+                sample_history_item("msg-4", 30),
+            ]],
+            &state,
+        );
+
+        assert_eq!(
+            catch_up
+                .iter()
+                .map(|item| item.message_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["msg-3", "msg-4"]
+        );
+    }
+
+    #[test]
+    fn collect_catch_up_items_keeps_unseen_same_timestamp_boundary_messages() {
+        let mut state = HistoryStreamState::default();
+        assert!(state.remember(&sample_history_item("msg-1", 50)));
+
+        let catch_up = collect_catch_up_items(
+            vec![vec![
+                sample_history_item("msg-1", 50),
+                sample_history_item("msg-2", 50),
+                sample_history_item("msg-3", 51),
+            ]],
+            &state,
+        );
+
+        assert_eq!(
+            catch_up
+                .iter()
+                .map(|item| item.message_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["msg-2", "msg-3"]
+        );
     }
 }

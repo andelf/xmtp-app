@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -78,9 +79,12 @@ async fn run_acp_inner(
     let child_stdin = child.stdin.take().context("take ACP subprocess stdin")?;
     let child_stdout = child.stdout.take().context("take ACP subprocess stdout")?;
 
-    let chunks = Arc::new(Mutex::new(HashMap::<String, Vec<String>>::new()));
+    let state = Arc::new(Mutex::new(BridgeState::default()));
     let client = BridgeClient {
-        chunks: Arc::clone(&chunks),
+        data_dir: data_dir.clone(),
+        conversation_id: conversation_id.clone(),
+        enable_reaction,
+        state: Arc::clone(&state),
     };
     let (conn, io_task) = acp::ClientSideConnection::new(
         client,
@@ -114,7 +118,7 @@ async fn run_acp_inner(
         context_prefix,
         &conn,
         &cwd,
-        &chunks,
+        &state,
     )
     .await?;
     eprintln!("ACP session ready: {}", session_id_str(&session_id));
@@ -127,7 +131,7 @@ async fn run_acp_inner(
         enable_reaction,
         &conn,
         &session_id,
-        &chunks,
+        &state,
     )
     .await;
 
@@ -144,6 +148,51 @@ async fn run_acp_inner(
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct PersistedAcpSessions {
     sessions: HashMap<String, String>,
+}
+
+#[derive(Debug, Default)]
+struct BridgeState {
+    sessions: HashMap<String, SessionRuntime>,
+}
+
+#[derive(Debug, Default)]
+struct SessionRuntime {
+    chunks: Vec<String>,
+    tool_calls: HashMap<String, ToolCallSnapshot>,
+    active_turn: Option<ActiveTurn>,
+}
+
+#[derive(Debug, Default)]
+struct ActiveTurn {
+    source_message_id: String,
+    started_tool_calls: HashSet<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ToolCallSnapshot {
+    title: Option<String>,
+    raw_input: Option<serde_json::Value>,
+    raw_output: Option<serde_json::Value>,
+    meta: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReactionEmoji {
+    Eyes,
+    Tool,
+    Subagent,
+    Warning,
+}
+
+impl ReactionEmoji {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Eyes => "👀",
+            Self::Tool => "🛠️",
+            Self::Subagent => "🤖",
+            Self::Warning => "⚠️",
+        }
+    }
 }
 
 fn acp_sessions_path(data_dir: &Path) -> PathBuf {
@@ -229,7 +278,7 @@ async fn ensure_acp_session(
     context_prefix: bool,
     conn: &acp::ClientSideConnection,
     cwd: &Path,
-    chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+    state: &Arc<Mutex<BridgeState>>,
 ) -> anyhow::Result<acp::SessionId> {
     if let Some(saved_session_id) = persisted_session_id(data_dir, conversation_id)? {
         let session_id = acp::SessionId::new(saved_session_id);
@@ -292,7 +341,7 @@ async fn ensure_acp_session(
             self_inbox_id,
             conn,
             &session.session_id,
-            chunks,
+            state,
         )
         .await?;
     }
@@ -330,7 +379,7 @@ async fn bridge_history_to_acp(
     enable_reaction: bool,
     conn: &acp::ClientSideConnection,
     session_id: &acp::SessionId,
-    chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+    state: &Arc<Mutex<BridgeState>>,
 ) -> anyhow::Result<()> {
     let mut retry_delay = Duration::from_millis(100);
     let mut reconnect_attempt: u64 = 0;
@@ -517,17 +566,18 @@ async fn bridge_history_to_acp(
                     if let DaemonEventData::HistoryItem { item, .. } = envelope.payload
                         && should_forward_item(&item, self_inbox_id)
                     {
+                        let source_message_id = item.message_id.clone();
                         eprintln!(
                             ">> received [{}] {}",
                             sender_short_id(&item.sender_inbox_id),
                             truncate_display(&item.content, 80),
                         );
                         if enable_reaction {
-                            send_processing_reaction(
+                            send_reaction(
                                 data_dir,
                                 conversation_id,
-                                &base_url,
-                                &item.message_id,
+                                &source_message_id,
+                                ReactionEmoji::Eyes,
                             );
                         }
                         log_acp_event(
@@ -540,22 +590,50 @@ async fn bridge_history_to_acp(
                                 "content": item.content.clone(),
                             }),
                         );
-                        let reply = prompt_agent(
+                        let reply = match prompt_agent(
                             data_dir,
                             conversation_id,
                             conn,
                             session_id,
-                            chunks,
+                            state,
                             item,
                             context_prefix,
                         )
-                        .await?;
+                        .await {
+                            Ok(reply) => reply,
+                            Err(err) => {
+                                eprintln!("ACP prompt failed: {err:#}");
+                                if enable_reaction {
+                                    send_reaction(
+                                        data_dir,
+                                        conversation_id,
+                                        &source_message_id,
+                                        ReactionEmoji::Warning,
+                                    );
+                                }
+                                log_acp_event(
+                                    data_dir,
+                                    conversation_id,
+                                    serde_json::json!({
+                                        "event": "error",
+                                        "message": format!("ACP prompt failed: {err:#}"),
+                                    }),
+                                );
+                                send_bridge_error_message(
+                                    data_dir,
+                                    conversation_id,
+                                    format_agent_error_message(&err),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
                         if !reply.trim().is_empty() {
                             eprintln!(
                                 "<< sending reply ({}B)",
                                 reply.len(),
                             );
-                            let sent = daemon_send_conversation(
+                            let sent = match daemon_send_conversation(
                                 data_dir,
                                 conversation_id,
                                 &reply,
@@ -566,7 +644,21 @@ async fn bridge_history_to_acp(
                                 format!(
                                     "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
                                 )
-                            })?;
+                            }) {
+                                Ok(sent) => sent,
+                                Err(err) => {
+                                    eprintln!("ACP reply send failed: {err:#}");
+                                    log_acp_event(
+                                        data_dir,
+                                        conversation_id,
+                                        serde_json::json!({
+                                            "event": "error",
+                                            "message": format!("ACP reply send failed: {err:#}"),
+                                        }),
+                                    );
+                                    continue;
+                                }
+                            };
                             eprintln!("<< reply sent (message_id={})", sender_short_id(&sent.message_id));
                             log_acp_event(
                                 data_dir,
@@ -577,6 +669,30 @@ async fn bridge_history_to_acp(
                                     "message_id": sent.message_id,
                                 }),
                             );
+                        } else {
+                            let message = "ACP agent could not produce a reply for this message. Check the agent/session logs for details.".to_owned();
+                            log_acp_event(
+                                data_dir,
+                                conversation_id,
+                                serde_json::json!({
+                                    "event": "warning",
+                                    "message": message,
+                                }),
+                            );
+                            if enable_reaction {
+                                send_reaction(
+                                    data_dir,
+                                    conversation_id,
+                                    &source_message_id,
+                                    ReactionEmoji::Warning,
+                                );
+                            }
+                            send_bridge_error_message(
+                                data_dir,
+                                conversation_id,
+                                "ACP agent could not produce a reply for this message.".to_owned(),
+                            )
+                            .await;
                         }
                     }
                 }
@@ -595,11 +711,11 @@ async fn prompt_agent(
     conversation_id: &str,
     conn: &acp::ClientSideConnection,
     session_id: &acp::SessionId,
-    chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+    state: &Arc<Mutex<BridgeState>>,
     item: HistoryItem,
     context_prefix: bool,
 ) -> anyhow::Result<String> {
-    clear_session_chunks(chunks, session_id_str(session_id));
+    begin_session_turn(state, session_id_str(session_id), &item.message_id);
     let content = if context_prefix {
         format!(
             "[{}] {}",
@@ -619,18 +735,23 @@ async fn prompt_agent(
         }),
     );
     eprintln!("<< prompting agent...");
-    conn.prompt(acp::PromptRequest::new(
-        session_id.clone(),
-        vec![content.clone().into()],
-    ))
-    .await
-    .context("ACP prompt")?;
+    let prompt_result = conn
+        .prompt(acp::PromptRequest::new(
+            session_id.clone(),
+            vec![content.clone().into()],
+        ))
+        .await;
+    if let Err(err) = prompt_result {
+        end_session_turn(state, session_id_str(session_id));
+        return Err(err).context("ACP prompt");
+    }
     eprintln!("<< agent responded");
 
     // Allow any final session notifications to land before we read the buffered chunks.
     sleep(Duration::from_millis(100)).await;
 
-    let reply = take_session_chunks(chunks, session_id_str(session_id)).join("");
+    let reply = take_session_chunks(state, session_id_str(session_id)).join("");
+    end_session_turn(state, session_id_str(session_id));
     log_acp_event(
         data_dir,
         conversation_id,
@@ -649,7 +770,7 @@ async fn send_bootstrap_prompt(
     self_inbox_id: Option<&str>,
     conn: &acp::ClientSideConnection,
     session_id: &acp::SessionId,
-    chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+    state: &Arc<Mutex<BridgeState>>,
 ) -> anyhow::Result<()> {
     let info: ConversationInfoResponse =
         http_get(data_dir, &format!("/v1/conversations/{conversation_id}"))
@@ -662,7 +783,7 @@ async fn send_bootstrap_prompt(
         conversation_id,
         self_inbox_id.unwrap_or("unknown"),
     );
-    clear_session_chunks(chunks, session_id_str(session_id));
+    reset_session_runtime(state, session_id_str(session_id));
     log_acp_event(
         data_dir,
         conversation_id,
@@ -680,7 +801,8 @@ async fn send_bootstrap_prompt(
     .context("ACP bootstrap prompt")?;
 
     sleep(Duration::from_millis(100)).await;
-    let discarded_reply = take_session_chunks(chunks, session_id_str(session_id)).join("");
+    let discarded_reply = take_session_chunks(state, session_id_str(session_id)).join("");
+    reset_session_runtime(state, session_id_str(session_id));
     if !discarded_reply.trim().is_empty() {
         log_acp_event(
             data_dir,
@@ -702,21 +824,42 @@ fn should_forward_item(item: &HistoryItem, self_inbox_id: Option<&str>) -> bool 
     matches!(item.content_kind.as_str(), "text" | "markdown" | "reply")
 }
 
-fn clear_session_chunks(chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>, session_id: &str) {
-    if let Ok(mut chunks) = chunks.lock() {
-        chunks.insert(session_id.to_owned(), Vec::new());
+fn reset_session_runtime(state: &Arc<Mutex<BridgeState>>, session_id: &str) {
+    if let Ok(mut state) = state.lock() {
+        state
+            .sessions
+            .insert(session_id.to_owned(), SessionRuntime::default());
     }
 }
 
-fn take_session_chunks(
-    chunks: &Arc<Mutex<HashMap<String, Vec<String>>>>,
-    session_id: &str,
-) -> Vec<String> {
-    chunks
-        .lock()
-        .ok()
-        .and_then(|mut chunks| chunks.remove(session_id))
-        .unwrap_or_default()
+fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, source_message_id: &str) {
+    if let Ok(mut state) = state.lock() {
+        let runtime = state.sessions.entry(session_id.to_owned()).or_default();
+        runtime.chunks.clear();
+        runtime.tool_calls.clear();
+        runtime.active_turn = Some(ActiveTurn {
+            source_message_id: source_message_id.to_owned(),
+            started_tool_calls: HashSet::new(),
+        });
+    }
+}
+
+fn end_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str) {
+    if let Ok(mut state) = state.lock()
+        && let Some(runtime) = state.sessions.get_mut(session_id)
+    {
+        runtime.active_turn = None;
+        runtime.tool_calls.clear();
+    }
+}
+
+fn take_session_chunks(state: &Arc<Mutex<BridgeState>>, session_id: &str) -> Vec<String> {
+    if let Ok(mut state) = state.lock()
+        && let Some(runtime) = state.sessions.get_mut(session_id)
+    {
+        return std::mem::take(&mut runtime.chunks);
+    }
+    Vec::new()
 }
 
 fn session_id_str(session_id: &acp::SessionId) -> &str {
@@ -738,28 +881,75 @@ fn sender_short_id(sender_inbox_id: &str) -> String {
 
 fn truncate_display(s: &str, max: usize) -> String {
     let single_line: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
-    if single_line.len() <= max {
+    if single_line.chars().count() <= max {
         single_line
     } else {
-        format!("{}...", &single_line[..max])
+        format!("{}...", single_line.chars().take(max).collect::<String>())
     }
 }
 
-fn send_processing_reaction(
-    data_dir: &Path,
-    conversation_id: &str,
-    base_url: &str,
-    message_id: &str,
-) {
+fn format_agent_error_message(err: &anyhow::Error) -> String {
+    let message = truncate_display(&err.to_string(), 240);
+    format!("ACP agent error: {message}")
+}
+
+async fn send_bridge_error_message(data_dir: &Path, conversation_id: &str, message: String) {
+    match daemon_send_conversation(data_dir, conversation_id, &message, Some("text")).await {
+        Ok(sent) => {
+            eprintln!(
+                "<< sent ACP error message (message_id={})",
+                sender_short_id(&sent.message_id)
+            );
+            log_acp_event(
+                data_dir,
+                conversation_id,
+                serde_json::json!({
+                    "event": "xmtp_error_sent",
+                    "conversation_id": conversation_id,
+                    "message_id": sent.message_id,
+                    "content": message,
+                }),
+            );
+        }
+        Err(err) => {
+            eprintln!("ACP error message send failed: {err:#}");
+            log_acp_event(
+                data_dir,
+                conversation_id,
+                serde_json::json!({
+                    "event": "error",
+                    "message": format!("ACP error message send failed: {err:#}"),
+                    "content": message,
+                }),
+            );
+        }
+    }
+}
+
+fn send_reaction(data_dir: &Path, conversation_id: &str, message_id: &str, emoji: ReactionEmoji) {
     let data_dir = data_dir.to_path_buf();
     let conversation_id = conversation_id.to_owned();
-    let base_url = base_url.to_owned();
     let message_id = message_id.to_owned();
     tokio::spawn(async move {
+        let base_url = match daemon_base_url(&data_dir) {
+            Ok(base_url) => base_url,
+            Err(err) => {
+                eprintln!("ACP reaction base URL error for message {message_id}: {err:#}");
+                log_acp_event(
+                    &data_dir,
+                    &conversation_id,
+                    serde_json::json!({
+                        "event": "warning",
+                        "message": format!("ACP reaction base URL error for message {message_id}: {err:#}"),
+                    }),
+                );
+                return;
+            }
+        };
         let result = http_client()
             .post(format!("{base_url}/v1/messages/{message_id}/react"))
             .json(&EmojiRequest {
-                emoji: "👀".to_owned(),
+                emoji: emoji.as_str().to_owned(),
                 action: Some("add".to_owned()),
                 conversation_id: Some(conversation_id.clone()),
             })
@@ -785,7 +975,7 @@ fn send_processing_reaction(
                         serde_json::json!({
                             "event": "reaction_sent",
                             "message_id": message_id,
-                            "emoji": "👀",
+                            "emoji": emoji.as_str(),
                         }),
                     );
                 }
@@ -806,7 +996,211 @@ fn send_processing_reaction(
 }
 
 struct BridgeClient {
-    chunks: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    data_dir: PathBuf,
+    conversation_id: String,
+    enable_reaction: bool,
+    state: Arc<Mutex<BridgeState>>,
+}
+
+impl BridgeClient {
+    fn handle_tool_call(&self, session_id: &str, tool_call: acp::ToolCall) {
+        let tool_call_id = tool_call.tool_call_id.0.to_string();
+        let snapshot = ToolCallSnapshot::from_tool_call(&tool_call);
+        let reaction = reaction_for_tool_start(&snapshot);
+        let mut source_message_id = None;
+
+        if let Ok(mut state) = self.state.lock() {
+            let runtime = state.sessions.entry(session_id.to_owned()).or_default();
+            runtime
+                .tool_calls
+                .insert(tool_call_id.clone(), snapshot.clone());
+            if let Some(active_turn) = runtime.active_turn.as_mut() {
+                active_turn.started_tool_calls.insert(tool_call_id);
+                source_message_id = Some(active_turn.source_message_id.clone());
+            }
+        }
+
+        log_acp_event(
+            &self.data_dir,
+            &self.conversation_id,
+            serde_json::json!({
+                "event": "acp_tool_call",
+                "session_id": session_id,
+                "title": snapshot.title,
+                "reaction": reaction.map(ReactionEmoji::as_str),
+            }),
+        );
+
+        if let (true, Some(message_id), Some(emoji)) =
+            (self.enable_reaction, source_message_id, reaction)
+        {
+            send_reaction(&self.data_dir, &self.conversation_id, &message_id, emoji);
+        }
+    }
+
+    fn handle_tool_call_update(&self, session_id: &str, update: acp::ToolCallUpdate) {
+        let tool_call_id = update.tool_call_id.0.to_string();
+        let (snapshot, source_message_id, should_emit_start) =
+            if let Ok(mut state) = self.state.lock() {
+                let runtime = state.sessions.entry(session_id.to_owned()).or_default();
+                let snapshot = runtime
+                    .tool_calls
+                    .entry(tool_call_id.clone())
+                    .or_insert_with(ToolCallSnapshot::default);
+                snapshot.apply_update(&update);
+
+                let mut source_message_id = None;
+                let mut should_emit_start = false;
+                if let Some(active_turn) = runtime.active_turn.as_mut() {
+                    source_message_id = Some(active_turn.source_message_id.clone());
+                    if matches!(
+                        update.fields.status,
+                        Some(acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress)
+                    ) && active_turn.started_tool_calls.insert(tool_call_id)
+                    {
+                        should_emit_start = true;
+                    }
+                }
+
+                (snapshot.clone(), source_message_id, should_emit_start)
+            } else {
+                (ToolCallSnapshot::default(), None, false)
+            };
+
+        let failure = matches!(update.fields.status, Some(acp::ToolCallStatus::Failed));
+        let start_reaction = should_emit_start
+            .then(|| reaction_for_tool_start(&snapshot))
+            .flatten();
+
+        log_acp_event(
+            &self.data_dir,
+            &self.conversation_id,
+            serde_json::json!({
+                "event": "acp_tool_call_update",
+                "session_id": session_id,
+                "title": snapshot.title,
+                "status": update.fields.status.map(tool_status_label),
+                "start_reaction": start_reaction.map(ReactionEmoji::as_str),
+                "failure": failure,
+            }),
+        );
+
+        if !self.enable_reaction {
+            return;
+        }
+
+        if let Some(message_id) = source_message_id {
+            if let Some(emoji) = start_reaction {
+                send_reaction(&self.data_dir, &self.conversation_id, &message_id, emoji);
+            }
+            if failure {
+                send_reaction(
+                    &self.data_dir,
+                    &self.conversation_id,
+                    &message_id,
+                    ReactionEmoji::Warning,
+                );
+            }
+        }
+    }
+}
+
+impl ToolCallSnapshot {
+    fn from_tool_call(tool_call: &acp::ToolCall) -> Self {
+        Self {
+            title: Some(tool_call.title.clone()),
+            raw_input: tool_call.raw_input.clone(),
+            raw_output: tool_call.raw_output.clone(),
+            meta: tool_call.meta.clone(),
+        }
+    }
+
+    fn apply_update(&mut self, update: &acp::ToolCallUpdate) {
+        if let Some(title) = &update.fields.title {
+            self.title = Some(title.clone());
+        }
+        if let Some(raw_input) = &update.fields.raw_input {
+            self.raw_input = Some(raw_input.clone());
+        }
+        if let Some(raw_output) = &update.fields.raw_output {
+            self.raw_output = Some(raw_output.clone());
+        }
+        if let Some(meta) = &update.meta {
+            self.meta = Some(meta.clone());
+        }
+    }
+}
+
+fn reaction_for_tool_start(snapshot: &ToolCallSnapshot) -> Option<ReactionEmoji> {
+    if infer_subagent_tool(snapshot) {
+        Some(ReactionEmoji::Subagent)
+    } else if snapshot.title.is_some() || snapshot.raw_input.is_some() || snapshot.meta.is_some() {
+        Some(ReactionEmoji::Tool)
+    } else {
+        None
+    }
+}
+
+fn infer_subagent_tool(snapshot: &ToolCallSnapshot) -> bool {
+    if snapshot.title.as_deref().is_some_and(matches_subagent_name) {
+        return true;
+    }
+    if snapshot
+        .meta
+        .as_ref()
+        .is_some_and(meta_contains_subagent_tool_name)
+    {
+        return true;
+    }
+    if snapshot
+        .raw_input
+        .as_ref()
+        .is_some_and(value_contains_subagent_tool_name)
+    {
+        return true;
+    }
+    false
+}
+
+fn meta_contains_subagent_tool_name(meta: &serde_json::Map<String, serde_json::Value>) -> bool {
+    if let Some(tool_name) = meta
+        .get("claudeCode")
+        .and_then(|value| value.get("toolName"))
+        .and_then(serde_json::Value::as_str)
+    {
+        return matches_subagent_name(tool_name);
+    }
+    meta.values().any(value_contains_subagent_tool_name)
+}
+
+fn value_contains_subagent_tool_name(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(s) => matches_subagent_name(s),
+        serde_json::Value::Array(values) => values.iter().any(value_contains_subagent_tool_name),
+        serde_json::Value::Object(map) => {
+            if let Some(tool_name) = map.get("toolName").and_then(serde_json::Value::as_str)
+                && matches_subagent_name(tool_name)
+            {
+                return true;
+            }
+            map.values().any(value_contains_subagent_tool_name)
+        }
+        _ => false,
+    }
+}
+
+fn matches_subagent_name(value: &str) -> bool {
+    matches!(value.trim(), "Agent" | "Task")
+}
+
+fn tool_status_label(status: acp::ToolCallStatus) -> &'static str {
+    match status {
+        acp::ToolCallStatus::Pending => "pending",
+        acp::ToolCallStatus::InProgress => "in_progress",
+        acp::ToolCallStatus::Completed => "completed",
+        acp::ToolCallStatus::Failed => "failed",
+        _ => "other",
+    }
 }
 
 #[async_trait::async_trait(?Send)]
@@ -822,23 +1216,33 @@ impl acp::Client for BridgeClient {
         &self,
         args: acp::SessionNotification,
     ) -> acp::Result<(), acp::Error> {
-        if let acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) =
-            args.update
-        {
-            let text = match content {
-                acp::ContentBlock::Text(text) => text.text,
-                acp::ContentBlock::Image(_) => "<image>".to_owned(),
-                acp::ContentBlock::Audio(_) => "<audio>".to_owned(),
-                acp::ContentBlock::ResourceLink(link) => link.uri,
-                acp::ContentBlock::Resource(_) => "<resource>".to_owned(),
-                _ => "<unsupported>".to_owned(),
-            };
-            if let Ok(mut chunks) = self.chunks.lock() {
-                chunks
-                    .entry(session_id_owned(&args.session_id))
-                    .or_default()
-                    .push(text);
+        let session_id = session_id_owned(&args.session_id);
+        match args.update {
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) => {
+                let text = match content {
+                    acp::ContentBlock::Text(text) => text.text,
+                    acp::ContentBlock::Image(_) => "<image>".to_owned(),
+                    acp::ContentBlock::Audio(_) => "<audio>".to_owned(),
+                    acp::ContentBlock::ResourceLink(link) => link.uri,
+                    acp::ContentBlock::Resource(_) => "<resource>".to_owned(),
+                    _ => "<unsupported>".to_owned(),
+                };
+                if let Ok(mut state) = self.state.lock() {
+                    state
+                        .sessions
+                        .entry(session_id)
+                        .or_default()
+                        .chunks
+                        .push(text);
+                }
             }
+            acp::SessionUpdate::ToolCall(tool_call) => {
+                self.handle_tool_call(&session_id, tool_call);
+            }
+            acp::SessionUpdate::ToolCallUpdate(update) => {
+                self.handle_tool_call_update(&session_id, update);
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -898,5 +1302,97 @@ impl acp::Client for BridgeClient {
 
     async fn ext_notification(&self, _args: acp::ExtNotification) -> acp::Result<()> {
         Err(acp::Error::method_not_found())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::anyhow;
+    use serde_json::json;
+
+    use super::{
+        ReactionEmoji, ToolCallSnapshot, format_agent_error_message, infer_subagent_tool,
+        reaction_for_tool_start, truncate_display,
+    };
+
+    #[test]
+    fn truncate_display_handles_multibyte_text_without_panicking() {
+        let input = "那么BDD看来是没有指导如何编排agents的，对吧，针对BDD这种需求，我们编排agents时候有什么优化点或者注意事项么";
+
+        let truncated = truncate_display(input, 20);
+
+        assert!(truncated.ends_with("..."));
+        assert_eq!(truncated.chars().count(), 23);
+    }
+
+    #[test]
+    fn truncate_display_replaces_newlines_before_truncating() {
+        let truncated = truncate_display("hello\nworld", 7);
+
+        assert_eq!(truncated, "hello w...");
+    }
+
+    #[test]
+    fn format_agent_error_message_prefixes_and_truncates() {
+        let err =
+            anyhow!("Unknown skill: ce:review\nArgs from unknown skill: 当前xmtp-mobile项目的结构");
+
+        let message = format_agent_error_message(&err);
+
+        assert!(message.starts_with("ACP agent error: "));
+        assert!(message.contains("Unknown skill: ce:review"));
+        assert!(!message.contains('\n'));
+    }
+
+    #[test]
+    fn reaction_mapping_marks_regular_tool_as_wrench() {
+        let snapshot = ToolCallSnapshot {
+            title: Some("Read src/main.rs".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+
+        assert_eq!(
+            reaction_for_tool_start(&snapshot),
+            Some(ReactionEmoji::Tool)
+        );
+    }
+
+    #[test]
+    fn reaction_mapping_marks_agent_meta_as_robot() {
+        let snapshot = ToolCallSnapshot {
+            meta: Some(
+                json!({
+                    "claudeCode": {
+                        "toolName": "Agent"
+                    }
+                })
+                .as_object()
+                .cloned()
+                .expect("object"),
+            ),
+            ..ToolCallSnapshot::default()
+        };
+
+        assert!(infer_subagent_tool(&snapshot));
+        assert_eq!(
+            reaction_for_tool_start(&snapshot),
+            Some(ReactionEmoji::Subagent)
+        );
+    }
+
+    #[test]
+    fn reaction_mapping_marks_task_raw_input_as_robot() {
+        let snapshot = ToolCallSnapshot {
+            raw_input: Some(json!({
+                "toolName": "Task"
+            })),
+            ..ToolCallSnapshot::default()
+        };
+
+        assert!(infer_subagent_tool(&snapshot));
+        assert_eq!(
+            reaction_for_tool_start(&snapshot),
+            Some(ReactionEmoji::Subagent)
+        );
     }
 }

@@ -62,8 +62,17 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let dir = logs_dir(temp.path());
 
-        assert_eq!(daemon_stdout_log_path(temp.path()), dir.join("daemon.stdout.log"));
-        assert_eq!(daemon_stderr_log_path(temp.path()), dir.join("daemon.stderr.log"));
-        assert_eq!(daemon_events_log_path(temp.path()), dir.join("daemon.events.log"));
+        assert_eq!(
+            daemon_stdout_log_path(temp.path()),
+            dir.join("daemon.stdout.log")
+        );
+        assert_eq!(
+            daemon_stderr_log_path(temp.path()),
+            dir.join("daemon.stderr.log")
+        );
+        assert_eq!(
+            daemon_events_log_path(temp.path()),
+            dir.join("daemon.events.log")
+        );
     }
 }

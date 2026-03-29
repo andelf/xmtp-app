@@ -47,7 +47,10 @@ fn login_updates_state_with_connected_runtime_info() {
 
     let updated = load_state(&data_dir.join("state.json")).expect("load state");
     assert!(matches!(updated.daemon_state, DaemonState::Running));
-    assert!(matches!(updated.connection_state, ConnectionState::Connected));
+    assert!(matches!(
+        updated.connection_state,
+        ConnectionState::Connected
+    ));
     assert_eq!(updated.inbox_id.as_deref(), Some("inbox-123"));
     assert_eq!(updated.installation_id.as_deref(), Some("install-123"));
 }

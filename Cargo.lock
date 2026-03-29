@@ -5064,6 +5064,7 @@ dependencies = [
  "chrono",
  "eventsource-stream",
  "futures-util",
+ "libc",
  "prost",
  "reqwest",
  "rusqlite",

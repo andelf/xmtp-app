@@ -734,9 +734,6 @@ impl App {
 
     fn handle_conversation_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         if self.conversations.is_empty() {
-            if key.code == KeyCode::Enter {
-                self.focus = Focus::Input;
-            }
             return Vec::new();
         }
         match key.code {
@@ -823,6 +820,11 @@ impl App {
             KeyCode::Enter => {
                 let text = self.input.trim_end().to_owned();
                 if text.is_empty() {
+                    return Vec::new();
+                }
+                if self.active_conversation.is_none() {
+                    self.last_error =
+                        Some("Select a conversation before sending a message".to_owned());
                     return Vec::new();
                 }
                 self.input.clear();
@@ -2196,6 +2198,19 @@ mod tests {
     }
 
     #[test]
+    fn enter_in_conversations_does_nothing_when_no_conversation_exists() {
+        let (mut app, _) = App::new(false);
+        app.focus = Focus::Conversations;
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.focus, Focus::Conversations);
+    }
+
+    #[test]
     fn enter_on_group_conversation_opens_group_management_modal() {
         let (mut app, _) = App::new(false);
         app.focus = Focus::Conversations;
@@ -3189,6 +3204,27 @@ mod tests {
         assert_eq!(app.focus, Focus::Conversations);
         assert!(!app.should_quit);
         assert!(!app.exit_armed);
+    }
+
+    #[test]
+    fn input_enter_without_active_conversation_keeps_text_and_does_not_send() {
+        let (mut app, _) = App::new(false);
+        app.focus = Focus::Input;
+        app.input = "hello".into();
+        app.cursor = app.input.chars().count();
+
+        let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )));
+
+        assert!(effects.is_empty());
+        assert_eq!(app.input, "hello");
+        assert_eq!(app.cursor, 5);
+        assert_eq!(app.pending_status, None);
+        assert_eq!(
+            app.last_error.as_deref(),
+            Some("Select a conversation before sending a message")
+        );
     }
 
     #[test]

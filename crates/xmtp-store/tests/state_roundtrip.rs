@@ -28,6 +28,9 @@ fn state_snapshot_roundtrips_to_json_file() {
 
     assert_eq!(loaded.schema_version, 1);
     assert!(matches!(loaded.daemon_state, DaemonState::Stopped));
-    assert!(matches!(loaded.connection_state, ConnectionState::Disconnected));
+    assert!(matches!(
+        loaded.connection_state,
+        ConnectionState::Disconnected
+    ));
     assert!(matches!(loaded.sync_state.phase, SyncPhase::Idle));
 }

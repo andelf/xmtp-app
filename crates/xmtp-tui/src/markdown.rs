@@ -93,7 +93,9 @@ impl MarkdownRenderer {
                 self.heading_level = Some(level);
                 self.inline_spans.push(Span::styled(
                     format!("{} ", heading_prefix(level)),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
             Tag::Strong => self.strong_depth += 1,
@@ -261,7 +263,9 @@ fn wrap_styled_spans(spans: &[Span<'static>], width: usize) -> Vec<Line<'static>
     for span in spans {
         let text = span.content.as_ref();
         let style = span.style;
-        for segment in split_wrapped_segments(text, width, &mut current_width, &mut lines, &mut current) {
+        for segment in
+            split_wrapped_segments(text, width, &mut current_width, &mut lines, &mut current)
+        {
             if !segment.is_empty() {
                 current.push(Span::styled(segment, style));
             }
