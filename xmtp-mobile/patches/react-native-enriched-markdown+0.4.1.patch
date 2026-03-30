@@ -56,7 +56,7 @@ index 0008d9b..c556b27 100644
          end,
          SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE,
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt
-index 67cb3ff..ece668b 100644
+index 67cb3ff..4e88989 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt
 @@ -1,5 +1,6 @@
@@ -105,7 +105,7 @@ index 67cb3ff..ece668b 100644
  
      /** Cached typeface for font family + style (BOLD, ITALIC, BOLD_ITALIC) */
      fun getTypeface(
-@@ -89,10 +122,11 @@ class SpanStyleCache(
+@@ -89,10 +122,21 @@ class SpanStyleCache(
        return getTypeface(fontFamily, style)
      }
  
@@ -117,8 +117,42 @@ index 67cb3ff..ece668b 100644
 +        getAssetMonoForStyle(currentStyle)
 +          ?: Typeface.create(Typeface.MONOSPACE, currentStyle)
        }
++
++    /** Check if a typeface is one of the known monospace typefaces (asset or system). */
++    fun isMonospaceTypeface(typeface: Typeface?): Boolean {
++      if (typeface == null) return false
++      // Check against cached asset monospace fonts
++      if (typeface === assetMonoRegular || typeface === assetMonoBold ||
++          typeface === assetMonoItalic || typeface === assetMonoBoldItalic) return true
++      // Check against cached monospace typefaces from getMonospaceTypeface()
++      return typefaceCache.values.any { it === typeface }
++    }
    }
  }
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/BaseListSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/BaseListSpan.kt
+index 5635dac..b86b3f6 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/BaseListSpan.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/BaseListSpan.kt
+@@ -85,10 +85,15 @@ abstract class BaseListSpan(
+   private fun applyTextStyle(textPaint: TextPaint) {
+     textPaint.textSize = blockStyle.fontSize
+ 
+-    val preservedStyle = (textPaint.typeface?.style ?: 0) and BOLD_ITALIC_MASK
+-    textPaint.applyBlockStyleFont(blockStyle, context)
+-    if (preservedStyle != 0) {
+-      textPaint.typeface?.let { base -> textPaint.typeface = Typeface.create(base, preservedStyle) }
++    // Skip font override if the paint already carries a monospace typeface set by CodeSpan —
++    // otherwise BaseListSpan (which wraps the entire list item) would clobber it.
++    val isMonospace = SpanStyleCache.isMonospaceTypeface(textPaint.typeface)
++    if (!isMonospace) {
++      val preservedStyle = (textPaint.typeface?.style ?: 0) and BOLD_ITALIC_MASK
++      textPaint.applyBlockStyleFont(blockStyle, context)
++      if (preservedStyle != 0) {
++        textPaint.typeface?.let { base -> textPaint.typeface = Typeface.create(base, preservedStyle) }
++      }
+     }
+ 
+     textPaint.applyColorPreserving(blockStyle.color, *styleCache.colorsToPreserve)
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/CodeSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/CodeSpan.kt
 index 24a42af..7c2832d 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/CodeSpan.kt
