@@ -12,6 +12,7 @@ import { useAuthStore } from "../../src/store/auth";
 import { useConversationStore } from "../../src/store/conversations";
 import type { ConversationItem } from "../../src/store/conversations";
 import { ConversationListItem } from "../../src/components/ConversationListItem";
+import { ConversationListSkeleton } from "../../src/components/ConversationListSkeleton";
 import { shortenAddress } from "../../src/utils/address";
 
 // ---------------------------------------------------------------------------
@@ -200,23 +201,27 @@ export default function ConversationsScreen() {
       </Appbar.Header>
 
       {/* Conversation list */}
-      <FlashList
-        data={conversations}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        ItemSeparatorComponent={renderSeparator}
-        ListEmptyComponent={renderEmpty}
-        contentContainerStyle={{ paddingBottom: insets.bottom }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing || storeLoading}
-            onRefresh={handleRefresh}
-            tintColor="#CAC4D0"
-            colors={["#6750A4"]}
-            progressBackgroundColor="#1a1a2e"
-          />
-        }
-      />
+      {storeLoading && conversations.length === 0 ? (
+        <ConversationListSkeleton />
+      ) : (
+        <FlashList
+          data={conversations}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          ItemSeparatorComponent={renderSeparator}
+          ListEmptyComponent={renderEmpty}
+          contentContainerStyle={{ paddingBottom: insets.bottom }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing || storeLoading}
+              onRefresh={handleRefresh}
+              tintColor="#CAC4D0"
+              colors={["#6750A4"]}
+              progressBackgroundColor="#1a1a2e"
+            />
+          }
+        />
+      )}
     </View>
   );
 }
