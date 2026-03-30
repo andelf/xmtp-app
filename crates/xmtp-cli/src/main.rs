@@ -117,6 +117,20 @@ enum Command {
             help = "React with eyes emoji on incoming messages to indicate processing"
         )]
         enable_reaction: bool,
+        #[arg(
+            long = "reply-mode",
+            value_enum,
+            default_value_t = acp::ReplyMode::FinalBlocks,
+            help = "Reply delivery mode: final-blocks sends markdown blocks after completion, stream-paragraphs streams paragraph blocks and marks completion"
+        )]
+        reply_mode: acp::ReplyMode,
+        #[arg(
+            long = "resume",
+            num_args = 0..=1,
+            default_missing_value = "latest",
+            help = "Resume an ACP session from recent history: omit the value for the latest session, or pass a 1-based recent index / exact session ID"
+        )]
+        resume: Option<String>,
         #[arg(last = true, required = true, help = "ACP agent command and arguments")]
         command: Vec<String>,
     },
@@ -394,6 +408,8 @@ async fn run() -> anyhow::Result<()> {
             conversation_id,
             context_prefix,
             enable_reaction,
+            reply_mode,
+            resume,
             command,
         } => {
             acp::run_acp(
@@ -401,6 +417,8 @@ async fn run() -> anyhow::Result<()> {
                 conversation_id,
                 context_prefix,
                 enable_reaction,
+                reply_mode,
+                resume,
                 command,
             )
             .await
@@ -2014,6 +2032,7 @@ mod tests {
         history_header, render_action_result, render_conversation_row, render_group_info_row,
         render_group_member_row, render_history_line, render_status_row,
     };
+    use crate::acp::ReplyMode;
     use clap::Parser;
     use xmtp_ipc::{
         ActionResponse, ConversationItem, GroupInfoResponse, GroupMemberItem, HistoryItem,
@@ -2431,6 +2450,65 @@ mod tests {
                 assert!(dm);
             }
             _ => panic!("expected history command"),
+        }
+    }
+
+    #[test]
+    fn acp_accepts_resume_and_reply_mode() {
+        let cli = Cli::parse_from([
+            "xmtp-cli",
+            "acp",
+            "--conversation-id",
+            "conv-10",
+            "--resume",
+            "--reply-mode",
+            "stream-paragraphs",
+            "--",
+            "claude-agent-acp",
+        ]);
+
+        match cli.command {
+            Command::Acp {
+                conversation_id,
+                reply_mode,
+                resume,
+                command,
+                ..
+            } => {
+                assert_eq!(conversation_id, "conv-10");
+                assert_eq!(reply_mode, ReplyMode::StreamParagraphs);
+                assert_eq!(resume.as_deref(), Some("latest"));
+                assert_eq!(command, vec!["claude-agent-acp"]);
+            }
+            _ => panic!("expected acp command"),
+        }
+    }
+
+    #[test]
+    fn acp_accepts_resume_selector_value() {
+        let cli = Cli::parse_from([
+            "xmtp-cli",
+            "acp",
+            "--conversation-id",
+            "conv-10",
+            "--resume",
+            "2",
+            "--",
+            "claude-agent-acp",
+        ]);
+
+        match cli.command {
+            Command::Acp {
+                conversation_id,
+                resume,
+                command,
+                ..
+            } => {
+                assert_eq!(conversation_id, "conv-10");
+                assert_eq!(resume.as_deref(), Some("2"));
+                assert_eq!(command, vec!["claude-agent-acp"]);
+            }
+            _ => panic!("expected acp command"),
         }
     }
 
