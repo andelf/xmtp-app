@@ -17,7 +17,7 @@
 - Stream auto-reconnect via onClose callbacks
 
 ### Known Issues
-- [ ] App startup shows empty conversation list briefly before fetchAll completes (loading state missing)
+- [x] ~~App startup shows empty conversation list briefly before fetchAll completes (loading state missing)~~ (fixed 2026-03-30: skeleton loader)
 - [ ] OPPO/OnePlus HansManager freezes app process immediately on background → streams die, no recovery until manual foreground return
 - [x] ~~Stream reconnect storm (useMessages onClose recursive with no delay) causing OOM crash~~ (fixed 2026-03-30: exponential backoff)
 - [x] ~~conversationCache not cleared on logout — stale SDK objects across sessions~~ (fixed 2026-03-30)
@@ -112,7 +112,7 @@ Tasks:
 **Why**: App feels broken without feedback during network operations.
 
 Tasks:
-- [ ] Skeleton loader on conversation list during initial fetch
+- [x] Skeleton loader on conversation list during initial fetch (2026-03-30)
 - [ ] Loading indicator on chat screen while fetching messages
 - [ ] Error toast/snackbar for failed operations (send fail, network error)
 - [x] Retry button on failed messages (2026-03-30)

@@ -18,6 +18,6 @@ Use `react-native-enriched-markdown` (EnrichedMarkdownText) with GitHub flavor f
 ## Consequences
 - Adds a native dependency — requires `npx expo prebuild` / gradle rebuild (not Expo Go compatible)
 - Tables rendered natively may still exceed bubble width; mitigated by compact table styling (12px font, tight padding) and wider bubble maxWidth for markdown
-- Horizontal ScrollView around the native component doesn't work (native view doesn't report intrinsic width to RN layout system)
+- ~~Horizontal ScrollView around the native component doesn't work~~ — **Resolved**: The library's internal `HorizontalScrollView` works after patching `TableContainerView.kt` to override `onInterceptTouchEvent` with `requestDisallowInterceptTouchEvent`, preventing RN's gesture system from stealing horizontal swipes. See [solution doc](../solutions/ui-bugs/markdown-table-horizontal-scroll-gesture-conflict-2026-03-29.md)
 - Dark theme styles must be maintained for both own/other bubble variants
 - `flavor="github"` enables tables and task lists but uses a container-based renderer (slightly different layout behavior than CommonMark single-TextView mode)
