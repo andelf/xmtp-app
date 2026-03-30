@@ -14,14 +14,7 @@ import { extractMarkdownPreview } from "../utils/markdown";
 import { extractNativeText } from "../utils/nativeContent";
 import { useConversationStore, conversationToItem } from "../store/conversations";
 import { log } from "../utils/logger";
-
-const MAX_RECONNECT = 10;
-const BASE_DELAY = 1000;
-const MAX_DELAY = 30000;
-
-function backoffDelay(retries: number): number {
-  return Math.min(BASE_DELAY * Math.pow(2, retries), MAX_DELAY);
-}
+import { MAX_RECONNECT, backoffDelay } from "../utils/reconnect";
 
 export function useConversations() {
   const unmountedRef = useRef(false);

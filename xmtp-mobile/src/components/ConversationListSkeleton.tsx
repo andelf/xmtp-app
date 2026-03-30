@@ -7,7 +7,20 @@ import { View, StyleSheet, Animated } from "react-native";
 
 const SKELETON_COUNT = 8;
 
-function SkeletonRow() {
+function SkeletonRow({ opacity }: { opacity: Animated.Value }) {
+  return (
+    <Animated.View style={[styles.row, { opacity }]}>
+      <View style={styles.avatar} />
+      <View style={styles.body}>
+        <View style={styles.titleBar} />
+        <View style={styles.previewBar} />
+      </View>
+      <View style={styles.timeBar} />
+    </Animated.View>
+  );
+}
+
+export function ConversationListSkeleton() {
   const opacity = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -27,30 +40,12 @@ function SkeletonRow() {
     );
     animation.start();
     return () => animation.stop();
-  }, [opacity]);
+  }, []);
 
-  return (
-    <Animated.View style={[styles.row, { opacity }]}>
-      {/* Avatar placeholder */}
-      <View style={styles.avatar} />
-
-      {/* Text placeholders */}
-      <View style={styles.body}>
-        <View style={styles.titleBar} />
-        <View style={styles.previewBar} />
-      </View>
-
-      {/* Timestamp placeholder */}
-      <View style={styles.timeBar} />
-    </Animated.View>
-  );
-}
-
-export function ConversationListSkeleton() {
   return (
     <View style={styles.container}>
       {Array.from({ length: SKELETON_COUNT }, (_, i) => (
-        <SkeletonRow key={i} />
+        <SkeletonRow key={i} opacity={opacity} />
       ))}
     </View>
   );

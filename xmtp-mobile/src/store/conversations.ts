@@ -162,6 +162,8 @@ export interface ConversationState {
   topicToId: Map<string, string>;
   isLoading: boolean;
   error: string | null;
+  /** The conversation id currently being viewed (skip unread increment). */
+  activeConversationId: string | null;
 }
 
 export interface ConversationActions {
@@ -173,10 +175,6 @@ export interface ConversationActions {
   updateLastMessage: (conversationId: string, text: string, timestamp: number) => void;
   /** Mark a conversation as read (reset unread count). */
   markRead: (conversationId: string) => void;
-  /** Increment unread count for a conversation. */
-  incrementUnread: (conversationId: string) => void;
-  /** The conversation id currently being viewed (skip unread increment). */
-  activeConversationId: string | null;
   setActiveConversation: (id: string | null) => void;
   /** Clear store on logout. */
   clear: () => void;
@@ -276,16 +274,6 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       if (!existing || existing.unreadCount === 0) return state;
       const next = new Map(state.items);
       next.set(conversationId, { ...existing, unreadCount: 0 });
-      return { items: next };
-    });
-  },
-
-  incrementUnread: (conversationId) => {
-    set((state) => {
-      const existing = state.items.get(conversationId);
-      if (!existing) return state;
-      const next = new Map(state.items);
-      next.set(conversationId, { ...existing, unreadCount: existing.unreadCount + 1 });
       return { items: next };
     });
   },

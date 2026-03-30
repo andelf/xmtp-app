@@ -16,6 +16,7 @@ import { useAuthStore } from "../store/auth";
 import { useMessageStore, decodedToMessageItem, decodedToReaction } from "../store/messages";
 import { findConversation } from "../xmtp/messages";
 import { getNativeContent } from "../utils/nativeContent";
+import { MAX_RECONNECT, backoffDelay } from "../utils/reconnect";
 
 const PAGE_SIZE = 30;
 
@@ -32,20 +33,17 @@ export function useMessages(conversationId: ConversationId | null) {
     // 2. Start message stream with bounded reconnect
     let cancelled = false;
     let retries = 0;
-    const MAX_RETRIES = 10;
-    const BASE_DELAY = 1000;
-    const MAX_DELAY = 30000;
 
     const scheduleReconnect = () => {
-      if (cancelled || retries >= MAX_RETRIES) {
-        if (retries >= MAX_RETRIES) {
+      if (cancelled || retries >= MAX_RECONNECT) {
+        if (retries >= MAX_RECONNECT) {
           console.error("[useMessages] max reconnect attempts reached, giving up");
         }
         return;
       }
-      const delay = Math.min(BASE_DELAY * Math.pow(2, retries), MAX_DELAY);
+      const delay = backoffDelay(retries);
       retries++;
-      console.warn(`[useMessages] reconnecting in ${delay}ms (attempt ${retries}/${MAX_RETRIES})...`);
+      console.warn(`[useMessages] reconnecting in ${delay}ms (attempt ${retries}/${MAX_RECONNECT})...`);
       setTimeout(() => {
         streamStarted.current = false;
         startStream();

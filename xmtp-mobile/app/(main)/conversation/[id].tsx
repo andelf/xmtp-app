@@ -52,11 +52,10 @@ export default function ConversationScreen() {
   // Mark conversation as read and set active
   useEffect(() => {
     if (!id) return;
-    useConversationStore.getState().setActiveConversation(id);
-    useConversationStore.getState().markRead(id);
-    return () => {
-      useConversationStore.getState().setActiveConversation(null);
-    };
+    const store = useConversationStore.getState();
+    store.setActiveConversation(id);
+    store.markRead(id);
+    return () => useConversationStore.getState().setActiveConversation(null);
   }, [id]);
 
   const listRef = useRef<any>(null);
