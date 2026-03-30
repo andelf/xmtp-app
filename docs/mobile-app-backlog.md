@@ -1,6 +1,6 @@
 # XMTP Mobile App — Backlog & Roadmap
 
-> Last updated: 2026-03-28
+> Last updated: 2026-03-30
 
 ## Current State (MVP Complete)
 
@@ -19,8 +19,11 @@
 ### Known Issues
 - [ ] App startup shows empty conversation list briefly before fetchAll completes (loading state missing)
 - [ ] OPPO/OnePlus HansManager freezes app process immediately on background → streams die, no recovery until manual foreground return
+- [x] ~~Stream reconnect storm (useMessages onClose recursive with no delay) causing OOM crash~~ (fixed 2026-03-30: exponential backoff)
+- [x] ~~conversationCache not cleared on logout — stale SDK objects across sessions~~ (fixed 2026-03-30)
+- [x] ~~Stream reconnect counter never resets on success — permanent death after 10 disconnects~~ (fixed 2026-03-30)
 - [ ] Reaction badges overflow: when a message has too many distinct reaction types, badges may exceed one line — needs wrap or collapse (e.g. "+3 more")
-- [ ] No unread message count / badge on conversation list items
+- [x] ~~No unread message count / badge on conversation list items~~ (fixed 2026-03-30)
 - [ ] `expo-file-system` write doesn't work in release builds (logger workaround: dev bundle + adb logcat)
 - [ ] package-lock.json not committed (node_modules reproducibility)
 - [ ] android/ directory in .gitignore — prebuild artifacts not tracked
@@ -41,43 +44,26 @@ Tasks:
 - [ ] Notification tap → deep link to conversation
 - [ ] Foreground: suppress notification (stream already handles it)
 
-### P1.2 Reply (Quoted Reply)
-**Why**: Basic chat UX — users expect to reply to specific messages.
+### ~~P1.2 Reply (Quoted Reply)~~ ✅ DONE
+Implemented: long-press → Reply action, quoted preview above input, send via reply content type, display reference in bubble.
+- [ ] Tap quoted section → scroll to original message (remaining)
 
-Tasks:
-- [ ] Long-press message → action menu (bottom sheet)
-- [ ] "Reply" action → show quoted message preview above input bar
-- [ ] Send reply via XMTP `ContentTypeReply` (confirm SDK support)
-- [ ] Display replied-to message reference in bubble
-- [ ] Tap quoted section → scroll to original message
+### ~~P1.3 Reaction (Emoji)~~ ✅ DONE
+Implemented: long-press → 5-emoji quick-react row, send/receive reactions, badge display on bubbles.
+- [ ] Tap same emoji to toggle/remove reaction (remaining)
+- [ ] Reaction badge overflow wrap/collapse (remaining — see Known Issues)
 
-### P1.3 Reaction (Emoji)
-**Why**: Lightweight engagement, standard in all chat apps.
+### ~~P1.4 Message Action Menu~~ ✅ DONE
+Implemented: long-press context menu with emoji quick-react row, Copy, Reply actions.
 
-Tasks:
-- [ ] Long-press message → emoji picker (5 preset: 👍❤️😂🔥👀)
-- [ ] Send via XMTP `ContentTypeReaction` (confirm SDK codec registration)
-- [ ] Display reaction summary below message bubble (emoji + count)
-- [ ] Tap same emoji to remove reaction
-- [ ] Receive and display others' reactions in real-time
-
-### P1.4 Message Action Menu
-**Why**: Prerequisite for Reply, Reaction, and future actions (copy, delete).
-
-Tasks:
-- [ ] `MessageActionSheet` bottom sheet component
-- [ ] Long-press gesture on MessageBubble
-- [ ] Context-aware actions: Reply, React, Copy Text, View Details
-- [ ] Shared component for P1.2, P1.3, P2.5
-
-### P1.5 Unread Count + New Message Indicator
+### P1.5 Unread Count + New Message Indicator (partial ✅)
 **Why**: Users can't tell which conversations have new messages.
 
 Tasks:
-- [ ] Track `lastReadAt` per conversation in local store
-- [ ] Calculate unread count on conversation list items
-- [ ] Badge display on ConversationListItem (number or dot)
-- [ ] Mark as read when entering conversation
+- [x] Track unreadCount per conversation in store (2026-03-30)
+- [x] Calculate unread count on conversation list items (2026-03-30)
+- [x] Badge display on ConversationListItem (2026-03-30)
+- [x] Mark as read when entering conversation (2026-03-30)
 - [ ] "New messages" floating chip when scrolled up in chat
 
 ---
@@ -103,13 +89,8 @@ Tasks:
 - [ ] Display read status indicator on own messages (single/double check)
 - [ ] Persist toggle preference in SecureStore
 
-### P2.3 Markdown Rendering
-**Why**: XMTP supports markdown content type, some messages come as markdown.
-
-Tasks:
-- [ ] Detect `content_type === "markdown"` in message stream
-- [ ] Render markdown in MessageBubble (react-native-markdown-display or similar)
-- [ ] Send as markdown when message contains formatting
+### ~~P2.3 Markdown Rendering~~ ✅ DONE
+Implemented: react-native-enriched-markdown with GitHub flavor, dual theme, table horizontal scroll patch.
 
 ### P2.4 Message Detail View
 **Why**: Inspect message metadata (full sender address, timestamps, delivery status).
@@ -127,14 +108,14 @@ Tasks:
 - [ ] Filter by conversation title / peer address
 - [ ] Highlight matching text
 
-### P2.6 Loading States & Error UX
+### P2.6 Loading States & Error UX (partial ✅)
 **Why**: App feels broken without feedback during network operations.
 
 Tasks:
 - [ ] Skeleton loader on conversation list during initial fetch
 - [ ] Loading indicator on chat screen while fetching messages
 - [ ] Error toast/snackbar for failed operations (send fail, network error)
-- [ ] Retry button on failed messages
+- [x] Retry button on failed messages (2026-03-30)
 - [ ] Connection status indicator (connected / reconnecting / offline)
 
 ---
@@ -191,7 +172,7 @@ Tasks:
 - [ ] Remove `debuggable true` from release build.gradle before production
 - [ ] Remove dev bundle export workflow — use production .hbc for release
 - [ ] Clean up unused imports across components
-- [ ] Add TypeScript strict mode
+- [x] ~~Add TypeScript strict mode~~ (already enabled)
 - [ ] Add unit tests for store logic (messages dedup, conversation sorting)
 - [ ] Add integration tests for XMTP SDK flows
 - [ ] Set up CI/CD (EAS Build)
