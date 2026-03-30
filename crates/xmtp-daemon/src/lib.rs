@@ -91,6 +91,20 @@ struct ReactionV2 {
     schema: i32,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ReactionJsonPayload {
+    reference: String,
+    action: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DecodedReactionPayload {
+    reference: String,
+    action: String,
+    content: String,
+}
+
 fn init_tracing() {
     TRACING_INIT.get_or_init(|| {
         let subscriber = tracing_subscriber::fmt()
@@ -1264,10 +1278,19 @@ fn fetch_reactions_from_db(
             continue;
         }
 
-        let encoded = xmtp::content::EncodedContent::decode(decrypted_message_bytes.as_slice())
-            .context("decode reaction encoded content")?;
-        let reaction =
-            ReactionV2::decode(encoded.content.as_slice()).context("decode reaction payload")?;
+        let reaction = match decode_reaction_from_encoded(&decrypted_message_bytes) {
+            Ok(reaction) => reaction,
+            Err(err) => {
+                warn!(
+                    conversation_id,
+                    reference_id,
+                    sender_inbox_id,
+                    error = %err,
+                    "skipping undecodable reaction payload"
+                );
+                continue;
+            }
+        };
 
         reaction_map
             .entry(reference_id)
@@ -1275,15 +1298,44 @@ fn fetch_reactions_from_db(
             .push(ReactionDetail {
                 sender_inbox_id,
                 emoji: reaction.content,
-                action: match reaction.action {
-                    1 => "added".to_owned(),
-                    2 => "removed".to_owned(),
-                    _ => "unspecified".to_owned(),
-                },
+                action: reaction.action,
             });
     }
 
     Ok(reaction_map)
+}
+
+fn decode_reaction_from_encoded(bytes: &[u8]) -> anyhow::Result<DecodedReactionPayload> {
+    let encoded =
+        xmtp::content::EncodedContent::decode(bytes).context("decode reaction encoded content")?;
+    decode_reaction_payload(&encoded.content)
+}
+
+fn decode_reaction_payload(bytes: &[u8]) -> anyhow::Result<DecodedReactionPayload> {
+    if let Ok(reaction) = ReactionV2::decode(bytes) {
+        return Ok(DecodedReactionPayload {
+            reference: reaction.reference,
+            action: match reaction.action {
+                1 => "added".to_owned(),
+                2 => "removed".to_owned(),
+                _ => "unspecified".to_owned(),
+            },
+            content: reaction.content,
+        });
+    }
+
+    let reaction: ReactionJsonPayload =
+        serde_json::from_slice(bytes).context("decode reaction payload")?;
+
+    Ok(DecodedReactionPayload {
+        reference: reaction.reference,
+        action: match reaction.action.to_ascii_lowercase().as_str() {
+            "added" => "added".to_owned(),
+            "removed" => "removed".to_owned(),
+            _ => "unspecified".to_owned(),
+        },
+        content: reaction.content,
+    })
 }
 
 fn find_conversation_by_id(
@@ -1668,6 +1720,81 @@ impl DaemonApp {
         self.client
             .as_ref()
             .context("daemon client is not initialized")
+    }
+
+    fn refresh_connection_state(&mut self) {
+        let state_path = self.data_dir.join("state.json");
+        let mut state = match load_state(&state_path) {
+            Ok(state) => state,
+            Err(err) => {
+                daemon_log(
+                    &self.data_dir,
+                    "warn",
+                    format!("load state for connection probe: {err:#}"),
+                );
+                return;
+            }
+        };
+
+        if state.daemon_state != DaemonState::Running {
+            return;
+        }
+
+        let was_disconnected = state.connection_state == ConnectionState::Disconnected;
+        let next_state = match self
+            .ensure_client()
+            .and_then(|client| client.sync_welcomes().context("sync welcomes from network"))
+        {
+            Ok(()) => ConnectionState::Connected,
+            Err(err) => {
+                if state.connection_state != ConnectionState::Disconnected {
+                    daemon_log(
+                        &self.data_dir,
+                        "warn",
+                        format!("XMTP connectivity probe failed: {err:#}"),
+                    );
+                }
+                ConnectionState::Disconnected
+            }
+        };
+
+        if state.connection_state == next_state {
+            return;
+        }
+
+        state.connection_state = next_state.clone();
+        if let Err(err) = save_state(&state_path, &state) {
+            daemon_log(
+                &self.data_dir,
+                "error",
+                format!("persist connection state {next_state}: {err:#}"),
+            );
+            return;
+        }
+
+        let message = match next_state {
+            ConnectionState::Connected => "XMTP connection restored".to_owned(),
+            ConnectionState::Disconnected => "XMTP connection lost".to_owned(),
+            ConnectionState::Connecting => "XMTP connection is connecting".to_owned(),
+            ConnectionState::Degraded => "XMTP connection is degraded".to_owned(),
+        };
+        daemon_log(&self.data_dir, "info", message);
+
+        if next_state == ConnectionState::Connected
+            && was_disconnected
+            && let Err(err) = self.ensure_client().and_then(|client| {
+                client
+                    .sync_all(&[])
+                    .context("sync all conversations after reconnect")?;
+                Ok(())
+            })
+        {
+            daemon_log(
+                &self.data_dir,
+                "warn",
+                format!("post-reconnect catch-up sync failed: {err:#}"),
+            );
+        }
     }
 
     fn next_status_event(&mut self) -> Option<DaemonEventData> {
@@ -3073,9 +3200,7 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
                     daemon_log(
                         &watchdog_data_dir,
                         "info",
-                        format!(
-                            "parent process {parent_pid} exited, shutting down orphan daemon"
-                        ),
+                        format!("parent process {parent_pid} exited, shutting down orphan daemon"),
                     );
                     let _ = watchdog_tx.send(());
                     break;
@@ -3095,6 +3220,7 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
                 let app = monitor_app.clone();
                 move || {
                     let mut guard = app.lock().expect("lock daemon app");
+                    guard.refresh_connection_state();
                     let status = guard.next_status_event();
                     let conversations = guard.next_conversation_list_event();
                     (status, conversations)
@@ -3226,11 +3352,13 @@ impl Drop for DaemonFilesGuard {
 mod tests {
     use super::{
         ConversationLookup, ConversationSummary, GroupUpdated, GroupUpdatedInbox,
-        HistoryStreamState, MetadataFieldChange, collect_catch_up_items,
-        resolve_conversation_lookup_id, resolve_message_id, sort_conversation_summaries,
-        summarize_decoded_content,
+        HistoryStreamState, MetadataFieldChange, ReactionV2, collect_catch_up_items,
+        decode_reaction_payload, fetch_reactions_from_db, resolve_conversation_lookup_id,
+        resolve_message_id, sort_conversation_summaries, summarize_decoded_content,
     };
     use prost::Message;
+    use rusqlite::{Connection, params};
+    use tempfile::tempdir;
     use xmtp::content::{
         Content, ContentTypeId, EncodedContent, Reaction, ReactionAction, ReactionSchema, Reply,
     };
@@ -3394,6 +3522,107 @@ mod tests {
     }
 
     #[test]
+    fn decode_reaction_payload_supports_protobuf_and_json() {
+        let protobuf = ReactionV2 {
+            reference: "abcd1234".to_owned(),
+            reference_inbox_id: "inbox-1".to_owned(),
+            action: 1,
+            content: "👍".to_owned(),
+            schema: 1,
+        }
+        .encode_to_vec();
+        let json =
+            r#"{"reference":"dcba4321","action":"removed","content":"🛠️","schema":"unicode"}"#
+                .as_bytes();
+
+        let decoded_protobuf = decode_reaction_payload(&protobuf).expect("decode protobuf");
+        let decoded_json = decode_reaction_payload(json).expect("decode json");
+
+        assert_eq!(decoded_protobuf.reference, "abcd1234");
+        assert_eq!(decoded_protobuf.action, "added");
+        assert_eq!(decoded_protobuf.content, "👍");
+        assert_eq!(decoded_json.reference, "dcba4321");
+        assert_eq!(decoded_json.action, "removed");
+        assert_eq!(decoded_json.content, "🛠️");
+    }
+
+    #[test]
+    fn fetch_reactions_from_db_skips_bad_rows_and_supports_mixed_formats() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("xmtp.db3");
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        conn.execute(
+            "CREATE TABLE group_messages (
+                group_id BLOB NOT NULL,
+                content_type INTEGER NOT NULL,
+                reference_id BLOB,
+                sender_inbox_id TEXT NOT NULL,
+                decrypted_message_bytes BLOB NOT NULL
+            )",
+            [],
+        )
+        .expect("create group_messages");
+
+        let conversation_id =
+            "9daa876eb057335755883d5a2a7a17bc9daa876eb057335755883d5a2a7a17bc".to_owned();
+        let reference_one =
+            "8de8d862731513c066e8551c84e45fc627bd1d2775cfadbaf6adb7da215a1fd9".to_owned();
+        let reference_two =
+            "ace3a8cfafae1083491e6a7fb077fe917776425c15d0a38b3cbef85ad6cfd315".to_owned();
+
+        insert_reaction_row(
+            &conn,
+            &conversation_id,
+            &reference_one,
+            "inbox-old",
+            wrap_reaction_payload(
+                ReactionV2 {
+                    reference: reference_one.clone(),
+                    reference_inbox_id: "inbox-parent".to_owned(),
+                    action: 1,
+                    content: "👍".to_owned(),
+                    schema: 1,
+                }
+                .encode_to_vec(),
+                Some("Reacted with \"👍\" to an earlier message".to_owned()),
+            ),
+        );
+        insert_reaction_row(
+            &conn,
+            &conversation_id,
+            &reference_two,
+            "inbox-new",
+            wrap_reaction_payload(
+                r#"{"reference":"ace3a8cfafae1083491e6a7fb077fe917776425c15d0a38b3cbef85ad6cfd315","action":"removed","content":"🛠️","schema":"unicode"}"#
+                    .as_bytes()
+                    .to_vec(),
+                Some("Reacted with \"🛠️\" to an earlier message".to_owned()),
+            ),
+        );
+        insert_reaction_row(
+            &conn,
+            &conversation_id,
+            &reference_one,
+            "inbox-bad",
+            wrap_reaction_payload(b"not valid reaction".to_vec(), Some("broken".to_owned())),
+        );
+
+        let reactions = fetch_reactions_from_db(
+            temp.path(),
+            &conversation_id,
+            &[reference_one.clone(), reference_two.clone()],
+        )
+        .expect("fetch reactions");
+
+        assert_eq!(reactions[&reference_one].len(), 1);
+        assert_eq!(reactions[&reference_one][0].emoji, "👍");
+        assert_eq!(reactions[&reference_one][0].action, "added");
+        assert_eq!(reactions[&reference_two].len(), 1);
+        assert_eq!(reactions[&reference_two][0].emoji, "🛠️");
+        assert_eq!(reactions[&reference_two][0].action, "removed");
+    }
+
+    #[test]
     fn summarize_decoded_content_formats_unknown_without_dumping_raw_bytes() {
         let summary = summarize_decoded_content(&Content::Unknown {
             content_type: "xmtp.org/group_updated:1.0".to_owned(),
@@ -3444,6 +3673,53 @@ mod tests {
         assert_ne!(first, second);
         assert!(first.starts_with("evt-"));
         assert!(second.starts_with("evt-"));
+    }
+
+    fn wrap_reaction_payload(payload: Vec<u8>, fallback: Option<String>) -> Vec<u8> {
+        EncodedContent {
+            r#type: Some(ContentTypeId {
+                authority_id: "xmtp.org".to_owned(),
+                type_id: "reaction".to_owned(),
+                version_major: 2,
+                version_minor: 0,
+            }),
+            fallback,
+            content: payload,
+            ..EncodedContent::default()
+        }
+        .encode_to_vec()
+    }
+
+    fn insert_reaction_row(
+        conn: &Connection,
+        conversation_id: &str,
+        reference_id: &str,
+        sender_inbox_id: &str,
+        decrypted_message_bytes: Vec<u8>,
+    ) {
+        conn.execute(
+            "INSERT INTO group_messages (group_id, content_type, reference_id, sender_inbox_id, decrypted_message_bytes)
+             VALUES (?1, 4, ?2, ?3, ?4)",
+            params![
+                hex_to_bytes(conversation_id),
+                hex_to_bytes(reference_id),
+                sender_inbox_id,
+                decrypted_message_bytes
+            ],
+        )
+        .expect("insert reaction row");
+    }
+
+    fn hex_to_bytes(value: &str) -> Vec<u8> {
+        assert_eq!(value.len() % 2, 0, "hex string must have even length");
+        value
+            .as_bytes()
+            .chunks(2)
+            .map(|chunk| {
+                let pair = std::str::from_utf8(chunk).expect("valid hex utf8");
+                u8::from_str_radix(pair, 16).expect("valid hex byte")
+            })
+            .collect()
     }
 
     fn sample_history_item(message_id: &str, sent_at_ns: i64) -> xmtp_ipc::HistoryItem {
