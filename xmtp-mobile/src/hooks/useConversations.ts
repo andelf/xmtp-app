@@ -15,8 +15,13 @@ import { extractNativeText } from "../utils/nativeContent";
 import { useConversationStore, conversationToItem } from "../store/conversations";
 import { log } from "../utils/logger";
 
-const RECONNECT_DELAY = 3000;
 const MAX_RECONNECT = 10;
+const BASE_DELAY = 1000;
+const MAX_DELAY = 30000;
+
+function backoffDelay(retries: number): number {
+  return Math.min(BASE_DELAY * Math.pow(2, retries), MAX_DELAY);
+}
 
 export function useConversations() {
   const unmountedRef = useRef(false);
@@ -50,18 +55,19 @@ export function useConversations() {
             }
           },
           "all",
-          // onClose: stream disconnected — reconnect
+          // onClose: stream disconnected — reconnect with backoff
           () => {
             if (unmountedRef.current) return;
             if (convoRetries < MAX_RECONNECT) {
+              const delay = backoffDelay(convoRetries);
               convoRetries++;
               console.warn(
-                `[useConversations] convo stream closed, reconnecting (${convoRetries})...`
+                `[useConversations] convo stream closed, reconnecting in ${delay}ms (${convoRetries}/${MAX_RECONNECT})...`
               );
               store()
                 .fetchAll()
                 .catch(() => {});
-              setTimeout(startConvoStream, RECONNECT_DELAY);
+              setTimeout(startConvoStream, delay);
             }
           }
         )
@@ -69,8 +75,9 @@ export function useConversations() {
           if (unmountedRef.current) return;
           console.error("[useConversations] convo stream error:", err);
           if (convoRetries < MAX_RECONNECT) {
+            const delay = backoffDelay(convoRetries);
             convoRetries++;
-            setTimeout(startConvoStream, RECONNECT_DELAY);
+            setTimeout(startConvoStream, delay);
           }
         });
     };
@@ -133,16 +140,18 @@ export function useConversations() {
           },
           "all", // type: groups + dms
           undefined, // consentStates: all (no filter)
-          // onClose: stream disconnected — reconnect
+          // onClose: stream disconnected — reconnect with backoff
           () => {
             log("MsgStream", "*** onClose triggered — stream disconnected ***");
             if (unmountedRef.current) return;
             if (msgRetries < MAX_RECONNECT) {
+              const delay = backoffDelay(msgRetries);
               msgRetries++;
+              log("MsgStream", `reconnecting in ${delay}ms (${msgRetries}/${MAX_RECONNECT})...`);
               store()
                 .fetchAll()
                 .catch(() => {});
-              setTimeout(startMsgStream, RECONNECT_DELAY);
+              setTimeout(startMsgStream, delay);
             }
           }
         )
@@ -150,8 +159,9 @@ export function useConversations() {
           if (unmountedRef.current) return;
           console.error("[useConversations] msg stream error:", err);
           if (msgRetries < MAX_RECONNECT) {
+            const delay = backoffDelay(msgRetries);
             msgRetries++;
-            setTimeout(startMsgStream, RECONNECT_DELAY);
+            setTimeout(startMsgStream, delay);
           }
         });
     };

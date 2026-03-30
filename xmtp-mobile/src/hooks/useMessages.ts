@@ -29,10 +29,31 @@ export function useMessages(conversationId: ConversationId | null) {
     // 1. Fetch initial history (access store directly, not via selector)
     useMessageStore.getState().fetchMessages(conversationId, { limit: PAGE_SIZE });
 
-    // 2. Start message stream
+    // 2. Start message stream with bounded reconnect
     let cancelled = false;
+    let retries = 0;
+    const MAX_RETRIES = 10;
+    const BASE_DELAY = 1000;
+    const MAX_DELAY = 30000;
+
+    const scheduleReconnect = () => {
+      if (cancelled || retries >= MAX_RETRIES) {
+        if (retries >= MAX_RETRIES) {
+          console.error("[useMessages] max reconnect attempts reached, giving up");
+        }
+        return;
+      }
+      const delay = Math.min(BASE_DELAY * Math.pow(2, retries), MAX_DELAY);
+      retries++;
+      console.warn(`[useMessages] reconnecting in ${delay}ms (attempt ${retries}/${MAX_RETRIES})...`);
+      setTimeout(() => {
+        streamStarted.current = false;
+        startStream();
+      }, delay);
+    };
+
     const startStream = async () => {
-      if (streamStarted.current) return;
+      if (streamStarted.current || cancelled) return;
 
       try {
         const convo = await findConversation(conversationId);
@@ -46,18 +67,17 @@ export function useMessages(conversationId: ConversationId | null) {
         await convo.streamMessages(
           async (decodedMsg: any) => {
             if (cancelled) return;
+            // Reset retries on successful message — stream is healthy
+            retries = 0;
             try {
-              // Debug: log nativeContent for diagnosis
               const nc = getNativeContent(decodedMsg);
               console.log("[useMessages] stream msg", decodedMsg.id, "contentTypeId=", (decodedMsg as any).contentTypeId, "nc keys=", nc ? Object.keys(nc) : "null");
 
-              // Handle reactions
               const reaction = decodedToReaction(decodedMsg, conversationId);
               if (reaction) {
                 useMessageStore.getState().applyReaction(reaction);
                 return;
               }
-              // Handle regular messages
               const item = decodedToMessageItem(decodedMsg, conversationId, myInboxId);
               console.log("[useMessages] decoded item=", item ? `text="${item.text.slice(0, 60)}"` : "null");
               if (item) {
@@ -67,24 +87,18 @@ export function useMessages(conversationId: ConversationId | null) {
               console.error("[useMessages] Failed to process streamed message:", err);
             }
           },
-          // onClose: stream disconnected — restart if still mounted
+          // onClose: stream disconnected — reconnect with backoff
           () => {
             if (!cancelled) {
-              console.warn("[useMessages] message stream closed, restarting...");
               streamStarted.current = false;
-              startStream();
+              scheduleReconnect();
             }
           }
         );
       } catch (err) {
         console.error("[useMessages] streamMessages() failed:", err);
-        // Retry after delay
-        if (!cancelled) {
-          setTimeout(() => {
-            streamStarted.current = false;
-            startStream();
-          }, 3000);
-        }
+        streamStarted.current = false;
+        scheduleReconnect();
       }
     };
 
