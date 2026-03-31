@@ -18,7 +18,8 @@ import type { ConversationId } from "@xmtp/react-native-sdk";
 import { useConversationStore } from "../../../src/store/conversations";
 import { useMessageStore } from "../../../src/store/messages";
 import type { MessageItem } from "../../../src/store/messages";
-import { sendMessage, sendReply } from "../../../src/xmtp/messages";
+import { sendMessage, sendReply, sendReadReceipt } from "../../../src/xmtp/messages";
+import { useSettingsStore } from "../../../src/store/settings";
 import { useMessages } from "../../../src/hooks/useMessages";
 import { MessageBubble } from "../../../src/components/MessageBubble";
 import { MessageInput } from "../../../src/components/MessageInput";
@@ -35,8 +36,13 @@ export default function ConversationScreen() {
 
   const conversationId = id ? (id as unknown as ConversationId) : null;
 
+  const readReceiptsEnabled = useSettingsStore((s) => s.readReceipts);
+
   // Load messages + start real-time stream for this conversation
-  const { isLoading: messagesLoading, fetchMore } = useMessages(conversationId);
+  const { isLoading: messagesLoading, fetchMore } = useMessages(conversationId, {
+    sendReadReceipts: readReceiptsEnabled,
+    isDm: !isGroup,
+  });
 
   // Resolve conversation title and kind from store
   const conversationTitle = useConversationStore((s) => {
@@ -55,6 +61,15 @@ export default function ConversationScreen() {
     const store = useConversationStore.getState();
     store.setActiveConversation(id);
     store.markRead(id);
+    // Send read receipt on enter if enabled and DM with unread messages
+    const convoItem = store.items.get(id);
+    if (
+      useSettingsStore.getState().readReceipts &&
+      convoItem?.kind === "dm" &&
+      (convoItem?.unreadCount ?? 0) > 0
+    ) {
+      sendReadReceipt(id);
+    }
     return () => useConversationStore.getState().setActiveConversation(null);
   }, [id]);
 

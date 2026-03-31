@@ -22,7 +22,7 @@
 - [x] ~~Stream reconnect storm (useMessages onClose recursive with no delay) causing OOM crash~~ (fixed 2026-03-30: exponential backoff)
 - [x] ~~conversationCache not cleared on logout — stale SDK objects across sessions~~ (fixed 2026-03-30)
 - [x] ~~Stream reconnect counter never resets on success — permanent death after 10 disconnects~~ (fixed 2026-03-30)
-- [ ] Reaction badges overflow: when a message has too many distinct reaction types, badges may exceed one line — needs wrap or collapse (e.g. "+3 more")
+- [x] ~~Reaction badges overflow~~ (verified: flexWrap already handles multi-line display)
 - [x] ~~No unread message count / badge on conversation list items~~ (fixed 2026-03-30)
 - [ ] `expo-file-system` write doesn't work in release builds (logger workaround: dev bundle + adb logcat)
 - [ ] package-lock.json not committed (node_modules reproducibility)
@@ -80,14 +80,16 @@ Tasks:
 - [ ] `client.conversations.newGroup(members, { name })` API integration
 - [ ] Navigate to new group conversation after creation
 
-### P2.2 Read Receipt
+### P2.2 Read Receipt (DM only) ✅ DONE
 **Why**: Sender knows if message was seen. Optional feature with toggle.
 
-Tasks:
-- [ ] Send `ContentTypeReadReceipt` when viewing conversation (throttled)
-- [ ] Global toggle in settings (default off, matching TUI behavior)
-- [ ] Display read status indicator on own messages (single/double check)
-- [ ] Persist toggle preference in SecureStore
+Implemented: global toggle (default off, controls sending only), throttled send (3s per conversation), read status indicators (○ published / ● read) on own messages in DM.
+- [x] Global toggle in settings (default off, SecureStore persisted) (2026-03-31)
+- [x] Throttled sendReadReceipt (3s per conversation) (2026-03-31)
+- [x] Send read receipt on DM open (if unread) + on new peer messages (2026-03-31)
+- [x] Display read status indicator on own messages (○/● dots) (2026-03-31)
+- [x] Handle incoming read receipts in message stream (2026-03-31)
+- Not implemented: group read receipts (by design)
 
 ### ~~P2.3 Markdown Rendering~~ ✅ DONE
 Implemented: react-native-enriched-markdown with GitHub flavor, dual theme, table horizontal scroll patch.

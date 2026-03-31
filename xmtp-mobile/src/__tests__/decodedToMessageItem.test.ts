@@ -1,5 +1,6 @@
 import {
   decodedToMessageItem,
+  decodedToReadReceipt,
   type DecodedMessageLike,
 } from "../utils/messageDecoder";
 
@@ -187,5 +188,27 @@ describe("decodedToMessageItem", () => {
 
     expect(item).not.toBeNull();
     expect(item!.text).toBe("Unsupported content type: xmtp.org/mystery:1.0");
+  });
+});
+
+describe("decodedToReadReceipt", () => {
+  it("extracts a read receipt", () => {
+    const msg = fakeMsg({ readReceipt: {} });
+    const rr = decodedToReadReceipt(msg, CONV_ID);
+    expect(rr).not.toBeNull();
+    expect(rr!.conversationId).toBe(CONV_ID);
+    expect(rr!.senderInboxId).toBe(OTHER_INBOX);
+  });
+
+  it("returns null for non-read-receipt messages", () => {
+    const msg = fakeMsg({ text: "hello" });
+    expect(decodedToReadReceipt(msg, CONV_ID)).toBeNull();
+  });
+
+  it("returns null for reactions", () => {
+    const msg = fakeMsg({
+      reaction: { reference: "msg-1", action: "added", schema: "unicode", content: "👍" },
+    });
+    expect(decodedToReadReceipt(msg, CONV_ID)).toBeNull();
   });
 });

@@ -191,3 +191,36 @@ export async function sendReply(
     return null;
   }
 }
+
+/**
+ * Send a read receipt for a conversation.
+ * Uses NativeMessageContent { readReceipt: {} } — the native bridge handles it.
+ */
+async function sendReadReceiptRaw(conversationId: string): Promise<boolean> {
+  try {
+    const convo = await findConversation(conversationId);
+    if (!convo) return false;
+    await convo.send({ readReceipt: {} } as any);
+    return true;
+  } catch (err) {
+    console.error("[sendReadReceipt] Failed:", err);
+    return false;
+  }
+}
+
+/**
+ * Throttled read receipt sender — max 1 per 3s per conversation.
+ * Prevents message storms when stream replays multiple messages on connect/reconnect.
+ */
+const READ_RECEIPT_THROTTLE_MS = 3000;
+const lastReadReceiptSent = new Map<string, number>();
+
+export function sendReadReceipt(conversationId: string): Promise<boolean> {
+  const now = Date.now();
+  const last = lastReadReceiptSent.get(conversationId) ?? 0;
+  if (now - last < READ_RECEIPT_THROTTLE_MS) {
+    return Promise.resolve(false);
+  }
+  lastReadReceiptSent.set(conversationId, now);
+  return sendReadReceiptRaw(conversationId);
+}

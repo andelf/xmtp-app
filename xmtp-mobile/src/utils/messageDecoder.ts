@@ -171,3 +171,25 @@ export function decodedToReaction(
     senderInboxId: msg.senderInboxId,
   };
 }
+
+export interface ReadReceiptInfo {
+  conversationId: string;
+  senderInboxId: string;
+}
+
+/**
+ * Extract a read receipt from a DecodedMessage, if it is one.
+ * Returns null for non-read-receipt messages.
+ */
+export function decodedToReadReceipt(
+  msg: DecodedMessageLike,
+  conversationId: string
+): ReadReceiptInfo | null {
+  const nc = getNativeContent(msg as any);
+  if (!nc) return null;
+  if (nc.readReceipt === undefined) return null;
+  return {
+    conversationId,
+    senderInboxId: msg.senderInboxId,
+  };
+}

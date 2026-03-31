@@ -275,6 +275,12 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry 
               <Text style={styles.retryText}>Retry</Text>
             </Pressable>
           )}
+          {isOwn && !isSending && !isFailed && item.status === "published" && (
+            <Icon source="circle-outline" size={10} color="#938F99" />
+          )}
+          {isOwn && !isSending && !isFailed && item.status === "read" && (
+            <Icon source="circle-slice-8" size={10} color="#4CAF50" />
+          )}
         </View>
       )}
 

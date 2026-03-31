@@ -13,17 +13,21 @@ import { useAuthStore } from "./auth";
 export {
   decodedToMessageItem,
   decodedToReaction,
+  decodedToReadReceipt,
   type MessageItem,
   type ReplyRef,
   type Reactions,
   type ReactionInfo,
+  type ReadReceiptInfo,
 } from "../utils/messageDecoder";
 
 import {
   decodedToMessageItem,
   decodedToReaction,
+  decodedToReadReceipt,
   type MessageItem,
   type ReactionInfo,
+  type ReadReceiptInfo,
 } from "../utils/messageDecoder";
 
 // ---------------------------------------------------------------------------
@@ -60,6 +64,8 @@ export interface MessageActions {
   ) => void;
   /** Apply a reaction (add/remove) to a message. */
   applyReaction: (reaction: ReactionInfo) => void;
+  /** Mark all own messages in a conversation as read (peer sent a read receipt). */
+  markReadByPeer: (conversationId: string) => void;
   /** Get sorted messages for a conversation (sentAt ascending). */
   getMessages: (conversationId: string) => MessageItem[];
   /** Clear messages for a conversation or all. */
@@ -325,6 +331,24 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
         byConversation: {
           ...state.byConversation,
           [key]: existing.map((m) => (m.id === messageId ? { ...m, ...patch } : m)),
+        },
+      };
+    });
+  },
+
+  markReadByPeer: (conversationId) => {
+    set((state) => {
+      const key = conversationId as string;
+      const existing = state.byConversation[key];
+      if (!existing) return state;
+      const hasPublished = existing.some((m) => m.isOwn && m.status === "published");
+      if (!hasPublished) return state;
+      return {
+        byConversation: {
+          ...state.byConversation,
+          [key]: existing.map((m) =>
+            m.isOwn && m.status === "published" ? { ...m, status: "read" } : m
+          ),
         },
       };
     });

@@ -13,14 +13,21 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { ConversationId } from "@xmtp/react-native-sdk";
 import { useAuthStore } from "../store/auth";
-import { useMessageStore, decodedToMessageItem, decodedToReaction } from "../store/messages";
-import { findConversation } from "../xmtp/messages";
+import { useMessageStore, decodedToMessageItem, decodedToReaction, decodedToReadReceipt } from "../store/messages";
+import { findConversation, sendReadReceipt } from "../xmtp/messages";
 import { getNativeContent } from "../utils/nativeContent";
 import { MAX_RECONNECT, backoffDelay } from "../utils/reconnect";
 
 const PAGE_SIZE = 30;
 
-export function useMessages(conversationId: ConversationId | null) {
+interface UseMessagesOptions {
+  /** If true, send read receipts for new peer messages. */
+  sendReadReceipts?: boolean;
+  /** Whether this is a DM conversation (read receipts only apply to DMs). */
+  isDm?: boolean;
+}
+
+export function useMessages(conversationId: ConversationId | null, options?: UseMessagesOptions) {
   const streamStarted = useRef(false);
   const conversationRef = useRef<any>(null);
 
@@ -76,10 +83,22 @@ export function useMessages(conversationId: ConversationId | null) {
                 useMessageStore.getState().applyReaction(reaction);
                 return;
               }
+              // Check for read receipt — MUST be before append to prevent loop
+              const readReceipt = decodedToReadReceipt(decodedMsg, conversationId);
+              if (readReceipt) {
+                if (readReceipt.senderInboxId !== myInboxId) {
+                  useMessageStore.getState().markReadByPeer(conversationId);
+                }
+                return;
+              }
               const item = decodedToMessageItem(decodedMsg, conversationId, myInboxId);
               console.log("[useMessages] decoded item=", item ? `text="${item.text.slice(0, 60)}"` : "null");
               if (item) {
                 useMessageStore.getState().append(item);
+                // Send read receipt for new peer messages in DM (if enabled)
+                if (!item.isOwn && options?.sendReadReceipts && options?.isDm) {
+                  sendReadReceipt(conversationId as string).catch(() => {});
+                }
               }
             } catch (err) {
               console.error("[useMessages] Failed to process streamed message:", err);
