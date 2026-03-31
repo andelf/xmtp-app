@@ -120,8 +120,8 @@ enum Command {
         #[arg(
             long = "reply-mode",
             value_enum,
-            default_value_t = acp::ReplyMode::FinalBlocks,
-            help = "Reply delivery mode: final-blocks sends markdown blocks after completion, stream-paragraphs streams paragraph blocks and marks completion"
+            default_value_t = acp::ReplyMode::Single,
+            help = "Reply delivery mode: single sends one final markdown message, stream sends paragraph blocks progressively and marks completion"
         )]
         reply_mode: acp::ReplyMode,
         #[arg(
@@ -2462,7 +2462,7 @@ mod tests {
             "conv-10",
             "--resume",
             "--reply-mode",
-            "stream-paragraphs",
+            "stream",
             "--",
             "claude-agent-acp",
         ]);
@@ -2476,7 +2476,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(conversation_id, "conv-10");
-                assert_eq!(reply_mode, ReplyMode::StreamParagraphs);
+                assert_eq!(reply_mode, ReplyMode::Stream);
                 assert_eq!(resume.as_deref(), Some("latest"));
                 assert_eq!(command, vec!["claude-agent-acp"]);
             }

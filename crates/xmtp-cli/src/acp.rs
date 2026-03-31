@@ -5,7 +5,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use agent_client_protocol::{self as acp, Agent as _};
 use anyhow::{Context, anyhow};
@@ -16,6 +16,7 @@ use tokio::process::Command;
 use tokio::task::LocalSet;
 use tokio::time::{Duration, sleep};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use tracing::{error, info, warn};
 use xmtp_core::ConnectionState;
 use xmtp_daemon::resolve_conversation_id;
 use xmtp_ipc::{
@@ -29,8 +30,27 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum ReplyMode {
-    FinalBlocks,
-    StreamParagraphs,
+    Single,
+    Stream,
+}
+
+static TRACING_INIT: OnceLock<()> = OnceLock::new();
+
+fn init_acp_tracing() {
+    TRACING_INIT.get_or_init(|| {
+        let subscriber = tracing_subscriber::fmt()
+            .with_target(false)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_ansi(true)
+            .with_writer(std::io::stderr)
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    });
 }
 
 pub async fn run_acp(
@@ -42,6 +62,7 @@ pub async fn run_acp(
     resume: Option<String>,
     command: Vec<String>,
 ) -> anyhow::Result<()> {
+    init_acp_tracing();
     let local = LocalSet::new();
     local
         .run_until(run_acp_inner(
@@ -113,7 +134,7 @@ async fn run_acp_inner(
 
     let io_handle = tokio::task::spawn_local(async move {
         if let Err(err) = io_task.await {
-            eprintln!("ACP protocol task failed: {err:#}");
+            error!("ACP protocol task failed: {err:#}");
         }
     });
 
@@ -138,7 +159,7 @@ async fn run_acp_inner(
         &state,
     )
     .await?;
-    eprintln!("ACP session ready: {}", session_id_str(&session_id));
+    info!(session_id = %session_id_str(&session_id), "ACP session ready");
 
     let bridge_result = bridge_history_to_acp(
         &data_dir,
@@ -155,7 +176,7 @@ async fn run_acp_inner(
     .await;
 
     if let Err(err) = &bridge_result {
-        eprintln!("ACP bridge error: {err:#}");
+        error!("ACP bridge error: {err:#}");
     }
 
     let _ = child.start_kill();
@@ -195,6 +216,7 @@ struct BridgeState {
 struct SessionRuntime {
     chunks: Vec<String>,
     stream_buffer: String,
+    full_text: String,
     tool_calls: HashMap<String, ToolCallSnapshot>,
     active_turn: Option<ActiveTurn>,
 }
@@ -278,7 +300,7 @@ fn log_acp_event(data_dir: &Path, conversation_id: &str, mut entry: serde_json::
         );
     }
     if let Err(err) = append_acp_log(data_dir, conversation_id, &entry) {
-        eprintln!("ACP log write failed: {err:#}");
+        warn!("ACP log write failed: {err:#}");
     }
 }
 
@@ -398,7 +420,7 @@ async fn ensure_acp_session(
             .await
         {
             Ok(_) => {
-                eprintln!("ACP session restored: {}", session_id_str(&session_id));
+                info!(session_id = %session_id_str(&session_id), "ACP session restored");
                 log_acp_event(
                     data_dir,
                     conversation_id,
@@ -413,9 +435,9 @@ async fn ensure_acp_session(
                 return Ok(session_id);
             }
             Err(err) => {
-                eprintln!(
-                    "ACP session restore failed for conversation {}: {err:#}",
-                    conversation_id
+                warn!(
+                    conversation_id = conversation_id,
+                    "ACP session restore failed: {err:#}"
                 );
                 log_acp_event(
                     data_dir,
@@ -433,10 +455,7 @@ async fn ensure_acp_session(
         .new_session(acp::NewSessionRequest::new(cwd.to_path_buf()))
         .await
         .context("ACP new_session")?;
-    eprintln!(
-        "ACP session created: {}",
-        session_id_str(&session.session_id)
-    );
+    info!(session_id = %session_id_str(&session.session_id), "ACP session created");
     log_acp_event(
         data_dir,
         conversation_id,
@@ -509,7 +528,7 @@ async fn bridge_history_to_acp(
         let base_url = match daemon_base_url(data_dir) {
             Ok(base_url) => base_url,
             Err(err) => {
-                eprintln!("ACP history base URL error: {err:#}");
+                error!("ACP history base URL error: {err:#}");
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                 log_acp_event(
                     data_dir,
@@ -544,7 +563,7 @@ async fn bridge_history_to_acp(
             Ok(response) => match response.error_for_status() {
                 Ok(response) => response,
                 Err(err) => {
-                    eprintln!("ACP history SSE status error: {err:#}");
+                    error!("ACP history SSE status error: {err:#}");
                     reconnect_attempt = reconnect_attempt.saturating_add(1);
                     log_acp_event(
                         data_dir,
@@ -575,7 +594,7 @@ async fn bridge_history_to_acp(
                 }
             },
             Err(err) => {
-                eprintln!("ACP history SSE connect error: {err:#}");
+                error!("ACP history SSE connect error: {err:#}");
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                 log_acp_event(
                     data_dir,
@@ -622,7 +641,7 @@ async fn bridge_history_to_acp(
                     let status: StatusResponse = match http_get(data_dir, "/v1/status").await {
                         Ok(status) => status,
                         Err(err) => {
-                            eprintln!("ACP daemon status poll failed: {err:#}");
+                            warn!("ACP daemon status poll failed: {err:#}");
                             log_acp_event(
                                 data_dir,
                                 conversation_id,
@@ -636,10 +655,10 @@ async fn bridge_history_to_acp(
                     };
 
                     if status.connection_state != last_connection_state {
-                        eprintln!(
-                            "!! daemon status changed: daemon={} connection={}",
-                            status.daemon_state,
-                            status.connection_state
+                        info!(
+                            daemon_state = %status.daemon_state,
+                            connection_state = %status.connection_state,
+                            "daemon status changed"
                         );
                         log_acp_event(
                             data_dir,
@@ -688,7 +707,7 @@ async fn bridge_history_to_acp(
                     let event = match event.context("read ACP history SSE event") {
                         Ok(event) => event,
                         Err(err) => {
-                            eprintln!("ACP history SSE read error: {err:#}");
+                            warn!("ACP history SSE read error: {err:#}");
                             reconnect_attempt = reconnect_attempt.saturating_add(1);
                             log_acp_event(
                                 data_dir,
@@ -717,7 +736,7 @@ async fn bridge_history_to_acp(
                         match serde_json::from_str(&event.data).context("decode ACP SSE envelope") {
                             Ok(envelope) => envelope,
                             Err(err) => {
-                                eprintln!("ACP history SSE decode error: {err:#}");
+                                warn!("ACP history SSE decode error: {err:#}");
                                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                                 log_acp_event(
                                     data_dir,
@@ -744,10 +763,10 @@ async fn bridge_history_to_acp(
                         && remember_processed_message(state, &item.message_id)
                     {
                         let source_message_id = item.message_id.clone();
-                        eprintln!(
-                            ">> received [{}] {}",
-                            sender_short_id(&item.sender_inbox_id),
-                            truncate_display(&item.content, 80),
+                        info!(
+                            sender = %sender_short_id(&item.sender_inbox_id),
+                            message = %truncate_display(&item.content, 80),
+                            "received conversation message"
                         );
                         if enable_reaction {
                             send_reaction(
@@ -781,7 +800,7 @@ async fn bridge_history_to_acp(
                         .await {
                             Ok(reply) => reply,
                             Err(err) => {
-                                eprintln!("ACP prompt failed: {err:#}");
+                                error!("ACP prompt failed: {err:#}");
                                 if enable_reaction {
                                     send_reaction(
                                         &base_url,
@@ -810,17 +829,22 @@ async fn bridge_history_to_acp(
                         };
                         if !reply.full_text.trim().is_empty() {
                             let reply_parts = match reply_mode {
-                                ReplyMode::FinalBlocks => {
-                                    vec![join_markdown_reply_blocks(&reply.full_text)]
+                                ReplyMode::Single => {
+                                    if reply.remaining_text.trim().is_empty() {
+                                        vec![]
+                                    } else {
+                                        vec![split_markdown_reply(&reply.remaining_text)
+                                            .join("\n\n")]
+                                    }
                                 }
-                                ReplyMode::StreamParagraphs => {
+                                ReplyMode::Stream => {
                                     split_markdown_reply(&reply.remaining_text)
                                 }
                             };
-                            eprintln!(
-                                "<< sending {} reply part(s) ({}B)",
-                                reply_parts.len(),
-                                reply.full_text.len(),
+                            info!(
+                                parts = reply_parts.len(),
+                                bytes = reply.full_text.len(),
+                                "sending reply"
                             );
                             let mut send_failed = false;
                             for (index, reply_part) in reply_parts.iter().enumerate() {
@@ -833,7 +857,7 @@ async fn bridge_history_to_acp(
                                 .await {
                                     Ok(message_id) => message_id,
                                     Err(err) => {
-                                        eprintln!("ACP reply send failed: {err:#}");
+                                        error!("ACP reply send failed: {err:#}");
                                         log_acp_event(
                                             data_dir,
                                             conversation_id,
@@ -846,11 +870,11 @@ async fn bridge_history_to_acp(
                                         break;
                                     }
                                 };
-                                eprintln!(
-                                    "<< reply part {}/{} sent (message_id={})",
-                                    index + 1,
-                                    reply_parts.len(),
-                                    sender_short_id(&message_id)
+                                info!(
+                                    message_index = index + 1,
+                                    message_count = reply_parts.len(),
+                                    message_id = %sender_short_id(&message_id),
+                                    "reply part sent"
                                 );
                                 log_acp_event(
                                     data_dir,
@@ -867,7 +891,7 @@ async fn bridge_history_to_acp(
                             if send_failed {
                                 continue;
                             }
-                            if enable_reaction && reply_mode == ReplyMode::StreamParagraphs {
+                            if enable_reaction && reply_mode == ReplyMode::Stream {
                                 send_reaction(
                                     &base_url,
                                     data_dir,
@@ -943,7 +967,7 @@ async fn prompt_agent(
             "content": content,
         }),
     );
-    eprintln!("<< prompting agent...");
+    info!("prompting agent");
     let prompt_result = conn
         .prompt(acp::PromptRequest::new(
             session_id.clone(),
@@ -954,13 +978,18 @@ async fn prompt_agent(
         end_session_turn(state, session_id_str(session_id));
         return Err(err).context("ACP prompt");
     }
-    eprintln!("<< agent responded");
+    info!("agent responded");
 
     // Allow any final session notifications to land before we read the buffered chunks.
     sleep(Duration::from_millis(100)).await;
 
-    let reply = take_session_chunks(state, session_id_str(session_id)).join("");
-    let remaining_text = take_session_stream_buffer(state, session_id_str(session_id));
+    let remaining_chunks = take_session_chunks(state, session_id_str(session_id)).join("");
+    let full_text = take_session_full_text(state, session_id_str(session_id));
+    let remaining_stream = take_session_stream_buffer(state, session_id_str(session_id));
+    let remaining_text = match reply_mode {
+        ReplyMode::Single => remaining_chunks,
+        ReplyMode::Stream => remaining_stream,
+    };
     end_session_turn(state, session_id_str(session_id));
     log_acp_event(
         data_dir,
@@ -968,15 +997,15 @@ async fn prompt_agent(
         serde_json::json!({
             "event": "agent_reply",
             "session_id": session_id_str(session_id),
-            "content": reply,
+            "content": full_text,
             "mode": match reply_mode {
-                ReplyMode::FinalBlocks => "final_blocks",
-                ReplyMode::StreamParagraphs => "stream_paragraphs",
+                ReplyMode::Single => "single",
+                ReplyMode::Stream => "stream",
             },
         }),
     );
     Ok(PromptReply {
-        full_text: reply,
+        full_text,
         remaining_text,
     })
 }
@@ -1110,6 +1139,8 @@ fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, source_
     if let Ok(mut state) = state.lock() {
         let runtime = state.sessions.entry(session_id.to_owned()).or_default();
         runtime.chunks.clear();
+        runtime.stream_buffer.clear();
+        runtime.full_text.clear();
         runtime.tool_calls.clear();
         runtime.active_turn = Some(ActiveTurn {
             source_message_id: source_message_id.to_owned(),
@@ -1141,6 +1172,15 @@ fn take_session_stream_buffer(state: &Arc<Mutex<BridgeState>>, session_id: &str)
         && let Some(runtime) = state.sessions.get_mut(session_id)
     {
         return std::mem::take(&mut runtime.stream_buffer);
+    }
+    String::new()
+}
+
+fn take_session_full_text(state: &Arc<Mutex<BridgeState>>, session_id: &str) -> String {
+    if let Ok(mut state) = state.lock()
+        && let Some(runtime) = state.sessions.get_mut(session_id)
+    {
+        return std::mem::take(&mut runtime.full_text);
     }
     String::new()
 }
@@ -1246,36 +1286,6 @@ fn split_long_markdown_block(block: &str, max_chars: usize) -> Vec<String> {
     parts
 }
 
-fn join_markdown_reply_blocks(reply: &str) -> String {
-    normalize_markdown_headings(&split_markdown_blocks(reply).join("\n\n"))
-}
-
-fn normalize_markdown_headings(reply: &str) -> String {
-    let mut normalized = Vec::new();
-    let mut in_code_fence = false;
-    let mut previous_was_heading = false;
-
-    for line in reply.lines() {
-        let trimmed = line.trim_start();
-        let is_fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
-        let is_heading = !in_code_fence && trimmed.starts_with('#');
-
-        if previous_was_heading && !trimmed.is_empty() {
-            normalized.push(String::new());
-        }
-
-        normalized.push(line.to_owned());
-
-        if is_fence {
-            in_code_fence = !in_code_fence;
-            previous_was_heading = false;
-        } else {
-            previous_was_heading = is_heading;
-        }
-    }
-
-    normalized.join("\n")
-}
 
 fn extract_streamable_markdown_parts(buffer: &str) -> (Vec<String>, String) {
     let blocks = split_markdown_blocks(buffer);
@@ -1366,9 +1376,9 @@ async fn send_reply_part(
 async fn send_bridge_error_message(data_dir: &Path, conversation_id: &str, message: String) {
     match daemon_send_conversation(data_dir, conversation_id, &message, Some("text")).await {
         Ok(sent) => {
-            eprintln!(
-                "<< sent ACP error message (message_id={})",
-                sender_short_id(&sent.message_id)
+            warn!(
+                message_id = %sender_short_id(&sent.message_id),
+                "sent ACP error message"
             );
             log_acp_event(
                 data_dir,
@@ -1382,7 +1392,7 @@ async fn send_bridge_error_message(data_dir: &Path, conversation_id: &str, messa
             );
         }
         Err(err) => {
-            eprintln!("ACP error message send failed: {err:#}");
+            error!("ACP error message send failed: {err:#}");
             log_acp_event(
                 data_dir,
                 conversation_id,
@@ -1421,7 +1431,7 @@ fn send_reaction(
         match result {
             Ok(response) => {
                 if let Err(err) = response.error_for_status_ref() {
-                    eprintln!("ACP reaction send failed for message {message_id}: {err:#}");
+                    warn!("ACP reaction send failed for message {message_id}: {err:#}");
                     log_acp_event(
                         &data_dir,
                         &conversation_id,
@@ -1443,7 +1453,7 @@ fn send_reaction(
                 }
             }
             Err(err) => {
-                eprintln!("ACP reaction send failed for message {message_id}: {err:#}");
+                warn!("ACP reaction send failed for message {message_id}: {err:#}");
                 log_acp_event(
                     &data_dir,
                     &conversation_id,
@@ -1707,9 +1717,13 @@ impl acp::Client for BridgeClient {
                 let mut stream_parts = Vec::new();
                 if let Ok(mut state) = self.state.lock() {
                     let runtime = state.sessions.entry(session_id).or_default();
+                    if runtime.active_turn.is_none() {
+                        return Ok(());
+                    }
                     runtime.chunks.push(text.clone());
+                    runtime.full_text.push_str(&text);
 
-                    if self.reply_mode == ReplyMode::StreamParagraphs {
+                    if self.reply_mode == ReplyMode::Stream {
                         runtime.stream_buffer.push_str(&text);
                         let (parts, remainder) =
                             extract_streamable_markdown_parts(&runtime.stream_buffer);
@@ -1718,7 +1732,7 @@ impl acp::Client for BridgeClient {
                     }
                 }
 
-                if self.reply_mode == ReplyMode::StreamParagraphs {
+                if self.reply_mode == ReplyMode::Stream {
                     for part in stream_parts {
                         if let Err(err) = send_reply_part(
                             &self.data_dir,
@@ -1728,7 +1742,7 @@ impl acp::Client for BridgeClient {
                         )
                         .await
                         {
-                            eprintln!("ACP streamed reply send failed: {err:#}");
+                            error!("ACP streamed reply send failed: {err:#}");
                             log_acp_event(
                                 &self.data_dir,
                                 &self.conversation_id,
@@ -1743,7 +1757,35 @@ impl acp::Client for BridgeClient {
                 }
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
+                let flushed_text = if self.reply_mode == ReplyMode::Single {
+                    if let Ok(mut state) = self.state.lock() {
+                        let runtime = state.sessions.entry(session_id.clone()).or_default();
+                        if runtime.active_turn.is_some() {
+                            Some(std::mem::take(&mut runtime.chunks).join(""))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 self.handle_tool_call(&session_id, tool_call);
+                if let Some(text) = flushed_text {
+                    if !text.trim().is_empty() {
+                        if let Err(err) = send_reply_part(
+                            &self.data_dir,
+                            &self.conversation_id,
+                            &text,
+                            "xmtp_sent",
+                        )
+                        .await
+                        {
+                            error!("ACP single flush send failed: {err:#}");
+                        }
+                    }
+                }
             }
             acp::SessionUpdate::ToolCallUpdate(update) => {
                 self.handle_tool_call_update(&session_id, update);
@@ -1818,8 +1860,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        BridgeState, PersistedSessionEntry, ReactionEmoji, ToolCallSnapshot,
-        format_agent_error_message, infer_subagent_tool, join_markdown_reply_blocks,
+        BridgeState, PersistedSessionEntry, ReactionEmoji, SessionRuntime, ToolCallSnapshot,
+        begin_session_turn, format_agent_error_message, infer_subagent_tool,
         reaction_for_tool_start, remember_processed_message, resolve_resume_session_selector,
         split_markdown_reply, truncate_display,
     };
@@ -1928,18 +1970,6 @@ mod tests {
     }
 
     #[test]
-    fn join_markdown_reply_blocks_inserts_blank_lines_between_parts() {
-        let reply = "# Title\nParagraph\n\n- one\n- two\n\n```rust\nfn main() {}\n```";
-
-        let joined = join_markdown_reply_blocks(reply);
-
-        assert_eq!(
-            joined,
-            "# Title\n\nParagraph\n\n- one\n- two\n\n```rust\nfn main() {}\n```"
-        );
-    }
-
-    #[test]
     fn remember_processed_message_skips_duplicates_case_insensitively() {
         let state = Arc::new(Mutex::new(BridgeState::default()));
 
@@ -1984,5 +2014,34 @@ mod tests {
         let err = resolve_resume_session_selector(&sessions, "0").unwrap_err();
 
         assert!(err.to_string().contains("must start at 1"));
+    }
+
+    #[test]
+    fn begin_session_turn_clears_stream_buffer() {
+        let state = Arc::new(Mutex::new(BridgeState::default()));
+        if let Ok(mut bridge_state) = state.lock() {
+            bridge_state.sessions.insert(
+                "session-1".to_owned(),
+                SessionRuntime {
+                    stream_buffer: "stale".to_owned(),
+                    ..SessionRuntime::default()
+                },
+            );
+        }
+
+        begin_session_turn(&state, "session-1", "message-1");
+
+        let stream_buffer = state
+            .lock()
+            .ok()
+            .and_then(|bridge_state| {
+                bridge_state
+                    .sessions
+                    .get("session-1")
+                    .map(|runtime| runtime.stream_buffer.clone())
+            })
+            .unwrap_or_default();
+
+        assert!(stream_buffer.is_empty());
     }
 }

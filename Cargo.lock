@@ -4995,6 +4995,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "tracing",
+ "tracing-subscriber",
  "xmtp-config",
  "xmtp-core",
  "xmtp-daemon",
