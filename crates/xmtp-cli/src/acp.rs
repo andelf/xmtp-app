@@ -763,6 +763,7 @@ async fn bridge_history_to_acp(
                         && remember_processed_message(state, &item.message_id)
                     {
                         let source_message_id = item.message_id.clone();
+                        let t_received = std::time::Instant::now();
                         info!(
                             sender = %sender_short_id(&item.sender_inbox_id),
                             message = %truncate_display(&item.content, 80),
@@ -844,10 +845,12 @@ async fn bridge_history_to_acp(
                             info!(
                                 parts = reply_parts.len(),
                                 bytes = reply.full_text.len(),
+                                elapsed_ms = t_received.elapsed().as_millis(),
                                 "sending reply"
                             );
                             let mut send_failed = false;
                             for (index, reply_part) in reply_parts.iter().enumerate() {
+                                let t_send = std::time::Instant::now();
                                 let message_id = match send_reply_part(
                                     data_dir,
                                     conversation_id,
@@ -874,6 +877,7 @@ async fn bridge_history_to_acp(
                                     message_index = index + 1,
                                     message_count = reply_parts.len(),
                                     message_id = %sender_short_id(&message_id),
+                                    send_ms = t_send.elapsed().as_millis(),
                                     "reply part sent"
                                 );
                                 log_acp_event(
@@ -968,6 +972,7 @@ async fn prompt_agent(
         }),
     );
     info!("prompting agent");
+    let t_prompt = std::time::Instant::now();
     let prompt_result = conn
         .prompt(acp::PromptRequest::new(
             session_id.clone(),
@@ -978,7 +983,7 @@ async fn prompt_agent(
         end_session_turn(state, session_id_str(session_id));
         return Err(err).context("ACP prompt");
     }
-    info!("agent responded");
+    info!(elapsed_ms = t_prompt.elapsed().as_millis(), "agent responded");
 
     // Allow any final session notifications to land before we read the buffered chunks.
     sleep(Duration::from_millis(100)).await;
