@@ -19,7 +19,7 @@ export interface ReplyRef {
   referenceText?: string;
 }
 
-/** Aggregated reactions on a message: emoji -> set of sender inboxIds */
+/** Aggregated reactions on a message: emoji -> list of sender inboxIds (duplicates allowed for multi-react) */
 export type Reactions = Record<string, string[]>;
 
 export interface MessageItem {

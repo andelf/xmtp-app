@@ -15,6 +15,7 @@ import {
   Modal,
   TouchableWithoutFeedback,
   Linking,
+  Alert,
 } from "react-native";
 import { Text, Icon } from "react-native-paper";
 import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-markdown";
@@ -22,6 +23,7 @@ import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-
 import type { MessageItem } from "../store/messages";
 import { sendReaction } from "../xmtp/messages";
 import { useSettingsStore } from "../store/settings";
+import { useAuthStore } from "../store/auth";
 import { formatMessageTime } from "../utils/time";
 import { getCachedAddress, resolveAddress } from "../utils/addressLookup";
 
@@ -251,6 +253,36 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry 
     onReply?.(item);
   }, [onReply, item]);
 
+  const myInboxId = useAuthStore((s) => s.inboxId) ?? "";
+
+  const handleBadgeTap = useCallback(
+    (emoji: string) => {
+      const senders = item.reactions?.[emoji] ?? [];
+      const myCount = senders.filter((s) => s === myInboxId).length;
+      if (myCount === 0) {
+        // Never reacted with this emoji — add directly
+        sendReaction(item.conversationId, item.id as string, emoji);
+      } else {
+        // Already reacted — ask add or remove
+        Alert.alert(emoji, `You reacted ${myCount}×`, [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove one",
+            style: "destructive",
+            onPress: () =>
+              sendReaction(item.conversationId, item.id as string, emoji, "removed"),
+          },
+          {
+            text: "Add another",
+            onPress: () =>
+              sendReaction(item.conversationId, item.id as string, emoji),
+          },
+        ]);
+      }
+    },
+    [item.conversationId, item.id, item.reactions, myInboxId]
+  );
+
   return (
     <View style={[styles.row, isOwn ? styles.rowOwn : styles.rowOther]}>
       {/* Header: sender + time */}
@@ -323,12 +355,19 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry 
       {/* Reaction badges */}
       {item.reactions && Object.keys(item.reactions).length > 0 && (
         <View style={[styles.reactionsRow, isOwn ? styles.reactionsOwn : styles.reactionsOther]}>
-          {Object.entries(item.reactions).map(([emoji, senders]) => (
-            <View key={emoji} style={styles.reactionBadge}>
-              <Text style={styles.reactionEmoji}>{emoji}</Text>
-              {senders.length > 1 && <Text style={styles.reactionCount}>{senders.length}</Text>}
-            </View>
-          ))}
+          {Object.entries(item.reactions).map(([emoji, senders]) => {
+            const iReacted = senders.includes(myInboxId);
+            return (
+              <Pressable
+                key={emoji}
+                onPress={() => handleBadgeTap(emoji)}
+                style={[styles.reactionBadge, iReacted && styles.reactionBadgeOwn]}
+              >
+                <Text style={styles.reactionEmoji}>{emoji}</Text>
+                {senders.length > 1 && <Text style={styles.reactionCount}>{senders.length}</Text>}
+              </Pressable>
+            );
+          })}
         </View>
       )}
 
@@ -499,6 +538,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     gap: 2,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  reactionBadgeOwn: {
+    borderColor: "#BB86FC",
+    backgroundColor: "rgba(187,134,252,0.15)",
   },
   reactionEmoji: {
     fontSize: 14,

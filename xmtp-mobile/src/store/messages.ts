@@ -85,6 +85,15 @@ function generateTempId(): string {
   return `__pending_${Date.now()}_${pendingCounter}`;
 }
 
+/** Remove the first occurrence of `value` from `arr`, returning a new array. Returns null if not found. */
+function removeFirst(arr: string[], value: string): string[] | null {
+  const idx = arr.indexOf(value);
+  if (idx === -1) return null;
+  const next = [...arr];
+  next.splice(idx, 1);
+  return next;
+}
+
 /** Insert into sorted array (sentAt ascending), returning new array. */
 function insertSorted(arr: MessageItem[], item: MessageItem): MessageItem[] {
   // Fast path: append if newer than last
@@ -167,16 +176,17 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
         }
       }
 
-      // Apply reactions to their referenced messages
+      // Apply reactions to their referenced messages (duplicates allowed)
       for (const r of reactions) {
         const target = items.find((m) => (m.id as string) === r.referenceMessageId);
         if (!target) continue;
         const prev = target.reactions ?? {};
         const senders = prev[r.emoji] ?? [];
-        if (r.action === "added" && !senders.includes(r.senderInboxId)) {
+        if (r.action === "added") {
           target.reactions = { ...prev, [r.emoji]: [...senders, r.senderInboxId] };
         } else if (r.action === "removed") {
-          const next = senders.filter((s) => s !== r.senderInboxId);
+          const next = removeFirst(senders, r.senderInboxId);
+          if (!next) continue;
           target.reactions = { ...prev };
           if (next.length > 0) target.reactions[r.emoji] = next;
           else delete target.reactions[r.emoji];
@@ -366,10 +376,13 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
       const senders = prev[reaction.emoji] ?? [];
       let next: string[];
       if (reaction.action === "added") {
-        if (senders.includes(reaction.senderInboxId)) return state;
+        // Allow duplicates: same sender can react multiple times with the same emoji
         next = [...senders, reaction.senderInboxId];
       } else {
-        next = senders.filter((s) => s !== reaction.senderInboxId);
+        // Remove only ONE instance of this sender (not all)
+        const removed = removeFirst(senders, reaction.senderInboxId);
+        if (!removed) return state;
+        next = removed;
       }
       const reactions = { ...prev };
       if (next.length > 0) {
