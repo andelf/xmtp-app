@@ -1,133 +1,364 @@
 /**
- * Group Detail Screen -- displays group name, members, conversation metadata.
+ * Group Detail Screen -- group info, member management, and admin controls.
  *
  * Accessible from the Chat Screen header info button for group conversations.
  */
-import React, { useCallback, useEffect, useState } from "react";
-import { View, StyleSheet, ScrollView, Clipboard } from "react-native";
-import { Text, Divider, ActivityIndicator } from "react-native-paper";
-import { Stack, useLocalSearchParams } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { View, StyleSheet, ScrollView, Alert, Clipboard } from "react-native";
+import {
+  Text,
+  Divider,
+  ActivityIndicator,
+  Avatar,
+  Button,
+  List,
+} from "react-native-paper";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 
 import { useConversationStore } from "../../../src/store/conversations";
-import { findConversation } from "../../../src/xmtp/messages";
+import {
+  getGroupInfo,
+  getGroupMembers,
+  getMyRole,
+  updateGroupName,
+  updateGroupDescription,
+  leaveGroup,
+  promoteToAdmin,
+  demoteAdmin,
+  removeMembers,
+  type GroupInfo,
+  type GroupMember,
+  type PermissionLevel,
+} from "../../../src/xmtp/groups";
+import { EditableField } from "../../../src/components/EditableField";
+import { MemberRow } from "../../../src/components/MemberRow";
+import { MemberActionSheet } from "../../../src/components/MemberActionSheet";
 import { InfoRow } from "../../../src/components/InfoRow";
 import { formatDateTime } from "../../../src/utils/time";
 
-interface MemberInfo {
-  inboxId: string;
-  address: string;
-}
+const HEADER_OPTIONS = {
+  headerShown: true,
+  title: "Group Details",
+  headerStyle: { backgroundColor: "#1a1a2e" },
+  headerTintColor: "#E6E1E5",
+  headerTitleStyle: { fontWeight: "600", fontSize: 18 },
+} as const;
 
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
 
   const conversation = useConversationStore((s) => (id ? s.items.get(id) : undefined));
 
-  const [members, setMembers] = useState<MemberInfo[]>([]);
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<GroupInfo | null>(null);
+  const [members, setMembers] = useState<GroupMember[]>([]);
+  const [myRole, setMyRole] = useState<PermissionLevel>("member");
+
+  // Action sheet
+  const [sheetMember, setSheetMember] = useState<GroupMember | null>(null);
+  const [sheetVisible, setSheetVisible] = useState(false);
+
+  // ---------------------------------------------------------------------------
+  // Load data
+  // ---------------------------------------------------------------------------
+  const loadData = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    setError(null);
+
+    const [infoRes, membersRes, roleRes] = await Promise.all([
+      getGroupInfo(id),
+      getGroupMembers(id),
+      getMyRole(id),
+    ]);
+
+    if (!infoRes.ok) {
+      setError(infoRes.error);
+      setLoading(false);
+      return;
+    }
+
+    setInfo(infoRes.data);
+    if (membersRes.ok) setMembers(membersRes.data);
+    if (roleRes.ok) setMyRole(roleRes.data);
+    setLoading(false);
+  }, [id]);
 
   useEffect(() => {
-    if (!id) return;
+    loadData();
+  }, [loadData]);
 
-    let cancelled = false;
+  // ---------------------------------------------------------------------------
+  // Permission helpers
+  // ---------------------------------------------------------------------------
+  const policies = info?.policies;
+  const canEditName =
+    myRole === "super_admin" ||
+    myRole === "admin" ||
+    policies?.updateGroupNamePolicy === "allow";
+  const canEditDescription =
+    myRole === "super_admin" ||
+    myRole === "admin" ||
+    policies?.updateGroupDescriptionPolicy === "allow";
+  const canAddMember =
+    myRole === "super_admin" ||
+    myRole === "admin" ||
+    policies?.addMemberPolicy === "allow";
 
-    (async () => {
-      try {
-        const convo = await findConversation(id);
-        if (!convo || cancelled) return;
-
-        const rawMembers = await convo.members();
-        const parsed: MemberInfo[] = rawMembers.map(
-          (m: { inboxId: string; identities?: { identifier?: string }[] }) => ({
-            inboxId: m.inboxId,
-            address: m.identities?.[0]?.identifier ?? m.inboxId,
-          })
-        );
-
-        if (!cancelled) setMembers(parsed);
-      } catch (err: any) {
-        if (!cancelled) setError(err?.message ?? "Failed to load members");
-      } finally {
-        if (!cancelled) setLoading(false);
+  // ---------------------------------------------------------------------------
+  // Handlers
+  // ---------------------------------------------------------------------------
+  const handleSaveName = useCallback(
+    async (newName: string) => {
+      if (!id) return;
+      const res = await updateGroupName(id, newName);
+      if (!res.ok) Alert.alert("Error", res.error);
+      else {
+        setInfo((prev) => (prev ? { ...prev, name: newName } : prev));
+        // Update conversation store title
+        const store = useConversationStore.getState();
+        const item = store.items.get(id);
+        if (item) store.upsert({ ...item, title: newName || "Unnamed Group" });
       }
-    })();
+    },
+    [id]
+  );
 
-    return () => {
-      cancelled = true;
-    };
-  }, [id]);
+  const handleSaveDescription = useCallback(
+    async (newDesc: string) => {
+      if (!id) return;
+      const res = await updateGroupDescription(id, newDesc);
+      if (!res.ok) Alert.alert("Error", res.error);
+      else setInfo((prev) => (prev ? { ...prev, description: newDesc } : prev));
+    },
+    [id]
+  );
+
+  const handleLeaveGroup = useCallback(() => {
+    if (!id) return;
+    Alert.alert(
+      "Leave Group",
+      "Are you sure? You won't receive messages from this group anymore.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Leave",
+          style: "destructive",
+          onPress: async () => {
+            const res = await leaveGroup(id);
+            if (!res.ok) {
+              Alert.alert("Error", res.error);
+              return;
+            }
+            // Navigate back — fetchAll on conversations page will clean up
+            router.replace("/(main)/conversations");
+          },
+        },
+      ]
+    );
+  }, [id, router]);
 
   const handleCopyAddress = useCallback((addr: string) => {
     Clipboard.setString(addr);
   }, []);
 
+  const handleMemberLongPress = useCallback((member: GroupMember) => {
+    setSheetMember(member);
+    setSheetVisible(true);
+  }, []);
+
+  const handlePromoteAdmin = useCallback(
+    async (inboxId: string) => {
+      if (!id) return;
+      const res = await promoteToAdmin(id, inboxId);
+      if (!res.ok) Alert.alert("Error", res.error);
+      else loadData(); // Refresh to show updated roles
+    },
+    [id, loadData]
+  );
+
+  const handleDemoteAdmin = useCallback(
+    async (inboxId: string) => {
+      if (!id) return;
+      const res = await demoteAdmin(id, inboxId);
+      if (!res.ok) Alert.alert("Error", res.error);
+      else loadData();
+    },
+    [id, loadData]
+  );
+
+  const handleRemoveMember = useCallback(
+    (inboxId: string) => {
+      if (!id) return;
+      Alert.alert("Remove Member", "Remove this member from the group?", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            const res = await removeMembers(id, [inboxId]);
+            if (!res.ok) Alert.alert("Error", res.error);
+            else loadData();
+          },
+        },
+      ]);
+    },
+    [id, loadData]
+  );
+
+  const handleAddMember = useCallback(() => {
+    if (!id) return;
+    router.push({ pathname: "/(main)/conversation/add-member", params: { id } });
+  }, [id, router]);
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+  const creatorInboxId = info?.creatorInboxId ?? "";
+  const creatorMember = members.find((m) => m.inboxId === creatorInboxId);
+
+  const sortedMembers = useMemo(() => {
+    const order: Record<PermissionLevel, number> = { super_admin: 0, admin: 1, member: 2 };
+    return [...members].sort(
+      (a, b) => (order[a.permissionLevel] ?? 2) - (order[b.permissionLevel] ?? 2)
+    );
+  }, [members]);
+
+  if (loading) {
+    return (
+      <>
+        <Stack.Screen options={HEADER_OPTIONS} />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#6750A4" />
+        </View>
+      </>
+    );
+  }
+
+  if (error) {
+    return (
+      <>
+        <Stack.Screen options={HEADER_OPTIONS} />
+        <View style={styles.loadingContainer}>
+          <Text variant="bodyMedium" style={styles.errorText}>
+            {error}
+          </Text>
+        </View>
+      </>
+    );
+  }
+
   return (
     <>
-      <Stack.Screen
-        options={{
-          headerShown: true,
-          title: "Group Details",
-          headerStyle: { backgroundColor: "#1a1a2e" },
-          headerTintColor: "#E6E1E5",
-          headerTitleStyle: { fontWeight: "600", fontSize: 18 },
-        }}
-      />
+      <Stack.Screen options={HEADER_OPTIONS} />
 
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        {/* Group info */}
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Group
+        {/* Header: Avatar + Name + Description */}
+        <View style={styles.header}>
+          <Avatar.Text
+            size={64}
+            label={(info?.name || "G").slice(0, 2).toUpperCase()}
+            style={styles.avatar}
+            labelStyle={styles.avatarLabel}
+          />
+        </View>
+
+        <EditableField
+          label="Group Name"
+          value={info?.name || "Unnamed Group"}
+          placeholder="Enter group name"
+          editable={canEditName}
+          onSave={handleSaveName}
+        />
+
+        <EditableField
+          label="Description"
+          value={info?.description || ""}
+          placeholder="Add a description"
+          editable={canEditDescription}
+          multiline
+          onSave={handleSaveDescription}
+        />
+
+        <Text variant="bodySmall" style={styles.memberCount}>
+          {members.length} member{members.length !== 1 ? "s" : ""}
         </Text>
-        <InfoRow label="Group Name" value={conversation?.title ?? null} />
 
         <Divider style={styles.divider} />
 
         {/* Members */}
         <Text variant="titleMedium" style={styles.sectionTitle}>
-          Members{!loading && ` (${members.length})`}
+          Members
         </Text>
 
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color="#6750A4" />
-            <Text variant="bodySmall" style={styles.loadingText}>
-              Loading members...
-            </Text>
-          </View>
-        ) : error ? (
-          <Text variant="bodySmall" style={styles.errorText}>
-            {error}
-          </Text>
-        ) : (
-          members.map((member) => (
-            <View key={member.inboxId} style={styles.memberRow}>
-              <Text
-                variant="bodyMedium"
-                style={styles.memberAddress}
-                selectable
-                onPress={() => handleCopyAddress(member.address)}
-                numberOfLines={2}
-              >
-                {member.address}
-              </Text>
-            </View>
-          ))
+        {canAddMember && (
+          <List.Item
+            title="Add Member"
+            titleStyle={styles.addMemberTitle}
+            left={(props) => <List.Icon {...props} icon="account-plus" color="#6750A4" />}
+            onPress={handleAddMember}
+            style={styles.addMemberRow}
+          />
         )}
+
+        {sortedMembers.map((member) => (
+          <MemberRow
+            key={member.inboxId}
+            member={member}
+            isCreator={member.inboxId === creatorInboxId}
+            onPress={() => handleCopyAddress(member.address)}
+            onLongPress={() => handleMemberLongPress(member)}
+          />
+        ))}
 
         <Divider style={styles.divider} />
 
-        {/* Conversation metadata */}
+        {/* Group Info */}
         <Text variant="titleMedium" style={styles.sectionTitle}>
-          Conversation
+          Group Info
         </Text>
-        <InfoRow label="Conversation ID" value={id ?? null} numberOfLines={3} />
-        <InfoRow label="Topic" value={(conversation?.topic as string) ?? null} numberOfLines={3} />
+
+        {creatorMember && (
+          <InfoRow label="Created by" value={creatorMember.address} />
+        )}
         <InfoRow
           label="Created At"
           value={conversation ? formatDateTime(conversation.createdAt) : null}
         />
+        <InfoRow label="Conversation ID" value={id ?? null} numberOfLines={3} />
+
+        <Divider style={styles.divider} />
+
+        {/* Leave Group */}
+        <Button
+          mode="outlined"
+          textColor="#F2B8B5"
+          style={styles.leaveButton}
+          icon="logout"
+          onPress={handleLeaveGroup}
+        >
+          Leave Group
+        </Button>
+
+        <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      {/* Member action sheet */}
+      <MemberActionSheet
+        visible={sheetVisible}
+        member={sheetMember}
+        myRole={myRole}
+        onDismiss={() => setSheetVisible(false)}
+        onCopyAddress={handleCopyAddress}
+        onPromoteAdmin={handlePromoteAdmin}
+        onDemoteAdmin={handleDemoteAdmin}
+        onRemoveMember={handleRemoveMember}
+      />
     </>
   );
 }
@@ -140,6 +371,31 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
   },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: "#1a1a2e",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  errorText: {
+    color: "#F2B8B5",
+  },
+  header: {
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  avatar: {
+    backgroundColor: "#6750A4",
+  },
+  avatarLabel: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: "#E6E1E5",
+  },
+  memberCount: {
+    color: "#938F99",
+    marginTop: 4,
+  },
   sectionTitle: {
     color: "#E6E1E5",
     fontWeight: "600",
@@ -149,27 +405,20 @@ const styles = StyleSheet.create({
     backgroundColor: "#49454F",
     marginVertical: 20,
   },
-  loadingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-    gap: 8,
-  },
-  loadingText: {
-    color: "#938F99",
-  },
-  errorText: {
-    color: "#F2B8B5",
-    marginBottom: 16,
-  },
-  memberRow: {
-    marginBottom: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: "#16213e",
+  addMemberRow: {
+    marginBottom: 4,
     borderRadius: 8,
+    backgroundColor: "rgba(103, 80, 164, 0.1)",
   },
-  memberAddress: {
-    color: "#E6E1E5",
+  addMemberTitle: {
+    color: "#6750A4",
+    fontWeight: "600",
+  },
+  leaveButton: {
+    borderColor: "#F2B8B5",
+    borderRadius: 12,
+  },
+  bottomSpacer: {
+    height: 40,
   },
 });
