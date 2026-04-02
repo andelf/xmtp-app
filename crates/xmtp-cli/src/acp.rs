@@ -228,7 +228,7 @@ struct SessionRuntime {
 
 #[derive(Debug, Default)]
 struct ActiveTurn {
-    source_message_id: String,
+    last_reply_message_id: Option<String>,
     started_tool_calls: HashSet<String>,
 }
 
@@ -751,7 +751,7 @@ async fn bridge_history_to_acp(
                                         "sending catch-up reply"
                                     );
                                     for reply_part in &reply_parts {
-                                        if let Err(err) = send_reply_part(
+                                        match send_reply_part(
                                             data_dir,
                                             conversation_id,
                                             reply_part,
@@ -759,8 +759,19 @@ async fn bridge_history_to_acp(
                                         )
                                         .await
                                         {
-                                            error!("ACP catch-up reply send failed: {err:#}");
-                                            break;
+                                            Ok(message_id) => {
+                                                if reply_mode == ReplyMode::Stream {
+                                                    set_last_reply_message_id(
+                                                        state,
+                                                        session_id_str(session_id),
+                                                        &message_id,
+                                                    );
+                                                }
+                                            }
+                                            Err(err) => {
+                                                error!("ACP catch-up reply send failed: {err:#}");
+                                                break;
+                                            }
                                         }
                                     }
                                 }
@@ -898,15 +909,6 @@ async fn bridge_history_to_acp(
                             Ok(reply) => reply,
                             Err(err) => {
                                 error!("ACP prompt failed: {err:#}");
-                                if enable_reaction {
-                                    send_reaction(
-                                        &base_url,
-                                        data_dir,
-                                        conversation_id,
-                                        &source_message_id,
-                                        ReactionEmoji::Warning,
-                                    );
-                                }
                                 log_acp_event(
                                     data_dir,
                                     conversation_id,
@@ -979,6 +981,9 @@ async fn bridge_history_to_acp(
                                         "message_count": reply_parts.len(),
                                     }),
                                 );
+                                if reply_mode == ReplyMode::Stream {
+                                    set_last_reply_message_id(state, session_id_str(session_id), &message_id);
+                                }
                             }
                             if send_failed {
                                 continue;
@@ -1002,15 +1007,6 @@ async fn bridge_history_to_acp(
                                     "message": message,
                                 }),
                             );
-                            if enable_reaction {
-                                send_reaction(
-                                    &base_url,
-                                    data_dir,
-                                    conversation_id,
-                                    &source_message_id,
-                                    ReactionEmoji::Warning,
-                                );
-                            }
                             send_bridge_error_message(
                                 data_dir,
                                 conversation_id,
@@ -1264,7 +1260,7 @@ fn reset_session_runtime(state: &Arc<Mutex<BridgeState>>, session_id: &str) {
     }
 }
 
-fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, source_message_id: &str) {
+fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, _source_message_id: &str) {
     if let Ok(mut state) = state.lock() {
         let runtime = state.sessions.entry(session_id.to_owned()).or_default();
         runtime.chunks.clear();
@@ -1272,7 +1268,7 @@ fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, source_
         runtime.tool_calls.clear();
         runtime.stream_sent_count = 0;
         runtime.active_turn = Some(ActiveTurn {
-            source_message_id: source_message_id.to_owned(),
+            last_reply_message_id: None,
             started_tool_calls: HashSet::new(),
         });
     }
@@ -1303,6 +1299,19 @@ fn take_streamed_part_count(state: &Arc<Mutex<BridgeState>>, session_id: &str) -
         return runtime.stream_sent_count;
     }
     0
+}
+
+fn set_last_reply_message_id(
+    state: &Arc<Mutex<BridgeState>>,
+    session_id: &str,
+    message_id: impl Into<String>,
+) {
+    if let Ok(mut state) = state.lock()
+        && let Some(runtime) = state.sessions.get_mut(session_id)
+        && let Some(active_turn) = runtime.active_turn.as_mut()
+    {
+        active_turn.last_reply_message_id = Some(message_id.into());
+    }
 }
 
 fn take_session_full_text(state: &Arc<Mutex<BridgeState>>, session_id: &str) -> String {
@@ -1596,7 +1605,7 @@ impl BridgeClient {
         let tool_call_id = tool_call.tool_call_id.0.to_string();
         let snapshot = ToolCallSnapshot::from_tool_call(&tool_call);
         let reaction = reaction_for_tool_start(&snapshot);
-        let mut source_message_id = None;
+        let mut reply_message_id = None;
 
         if let Ok(mut state) = self.state.lock() {
             let runtime = state.sessions.entry(session_id.to_owned()).or_default();
@@ -1605,7 +1614,7 @@ impl BridgeClient {
                 .insert(tool_call_id.clone(), snapshot.clone());
             if let Some(active_turn) = runtime.active_turn.as_mut() {
                 active_turn.started_tool_calls.insert(tool_call_id);
-                source_message_id = Some(active_turn.source_message_id.clone());
+                reply_message_id = active_turn.last_reply_message_id.clone();
             }
         }
 
@@ -1621,7 +1630,7 @@ impl BridgeClient {
         );
 
         if let (true, Some(message_id), Some(emoji)) =
-            (self.enable_reaction, source_message_id, reaction)
+            (self.enable_reaction, reply_message_id, reaction)
         {
             send_reaction(
                 &self.base_url,
@@ -1635,7 +1644,7 @@ impl BridgeClient {
 
     fn handle_tool_call_update(&self, session_id: &str, update: acp::ToolCallUpdate) {
         let tool_call_id = update.tool_call_id.0.to_string();
-        let (snapshot, source_message_id, should_emit_start) =
+        let (snapshot, reply_message_id, should_emit_start) =
             if let Ok(mut state) = self.state.lock() {
                 let runtime = state.sessions.entry(session_id.to_owned()).or_default();
                 let snapshot = runtime
@@ -1644,10 +1653,10 @@ impl BridgeClient {
                     .or_insert_with(ToolCallSnapshot::default);
                 snapshot.apply_update(&update);
 
-                let mut source_message_id = None;
+                let mut reply_message_id = None;
                 let mut should_emit_start = false;
                 if let Some(active_turn) = runtime.active_turn.as_mut() {
-                    source_message_id = Some(active_turn.source_message_id.clone());
+                    reply_message_id = active_turn.last_reply_message_id.clone();
                     if matches!(
                         update.fields.status,
                         Some(acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress)
@@ -1657,7 +1666,7 @@ impl BridgeClient {
                     }
                 }
 
-                (snapshot.clone(), source_message_id, should_emit_start)
+                (snapshot.clone(), reply_message_id, should_emit_start)
             } else {
                 (ToolCallSnapshot::default(), None, false)
             };
@@ -1684,7 +1693,7 @@ impl BridgeClient {
             return;
         }
 
-        if let Some(message_id) = source_message_id {
+        if let Some(message_id) = reply_message_id {
             if let Some(emoji) = start_reaction {
                 send_reaction(
                     &self.base_url,
@@ -1853,7 +1862,6 @@ impl acp::Client for BridgeClient {
                 } else {
                     None
                 };
-                self.handle_tool_call(&session_id, tool_call);
                 if let Some(text) = flushed_text {
                     if !text.trim().is_empty() {
                         let stream_parts = split_markdown_reply(&text);
@@ -1878,6 +1886,11 @@ impl acp::Client for BridgeClient {
                                         bytes = part.len(),
                                         send_ms = t_send.elapsed().as_millis(),
                                         "stream part sent"
+                                    );
+                                    set_last_reply_message_id(
+                                        &self.state,
+                                        &session_id,
+                                        &message_id,
                                     );
                                     log_acp_event(
                                         &self.data_dir,
@@ -1914,6 +1927,7 @@ impl acp::Client for BridgeClient {
                         }
                     }
                 }
+                self.handle_tool_call(&session_id, tool_call);
             }
             acp::SessionUpdate::ToolCallUpdate(update) => {
                 self.handle_tool_call_update(&session_id, update);
@@ -1991,7 +2005,7 @@ mod tests {
         BridgeState, PersistedSessionEntry, ReactionEmoji, SessionRuntime, ToolCallSnapshot,
         begin_session_turn, format_agent_error_message, infer_subagent_tool,
         reaction_for_tool_start, remember_processed_message, resolve_resume_session_selector,
-        split_markdown_reply, truncate_display,
+        set_last_reply_message_id, split_markdown_reply, truncate_display,
     };
 
     #[test]
@@ -2153,6 +2167,10 @@ mod tests {
                 SessionRuntime {
                     chunks: vec!["stale".to_owned()],
                     full_text: "stale".to_owned(),
+                    active_turn: Some(super::ActiveTurn {
+                        last_reply_message_id: Some("old-reply-message".to_owned()),
+                        started_tool_calls: std::collections::HashSet::new(),
+                    }),
                     ..SessionRuntime::default()
                 },
             );
@@ -2160,18 +2178,43 @@ mod tests {
 
         begin_session_turn(&state, "session-1", "message-1");
 
-        let (chunks, full_text) = state
+        let (chunks, full_text, last_reply_message_id) = state
             .lock()
             .ok()
             .and_then(|bridge_state| {
-                bridge_state
-                    .sessions
-                    .get("session-1")
-                    .map(|runtime| (runtime.chunks.clone(), runtime.full_text.clone()))
+                bridge_state.sessions.get("session-1").map(|runtime| {
+                    (
+                        runtime.chunks.clone(),
+                        runtime.full_text.clone(),
+                        runtime
+                            .active_turn
+                            .as_ref()
+                            .and_then(|turn| turn.last_reply_message_id.clone()),
+                    )
+                })
             })
             .unwrap_or_default();
 
         assert!(chunks.is_empty());
         assert!(full_text.is_empty());
+        assert!(last_reply_message_id.is_none());
+    }
+
+    #[test]
+    fn set_last_reply_message_id_updates_active_turn() {
+        let state = Arc::new(Mutex::new(BridgeState::default()));
+
+        begin_session_turn(&state, "session-1", "message-1");
+        set_last_reply_message_id(&state, "session-1", "reply-1");
+
+        let last_reply_message_id = state.lock().ok().and_then(|bridge_state| {
+            bridge_state
+                .sessions
+                .get("session-1")
+                .and_then(|runtime| runtime.active_turn.as_ref())
+                .and_then(|turn| turn.last_reply_message_id.clone())
+        });
+
+        assert_eq!(last_reply_message_id.as_deref(), Some("reply-1"));
     }
 }
