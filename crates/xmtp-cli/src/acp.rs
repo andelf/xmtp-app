@@ -228,6 +228,7 @@ struct SessionRuntime {
 
 #[derive(Debug, Default)]
 struct ActiveTurn {
+    source_message_id: String,
     last_reply_message_id: Option<String>,
     started_tool_calls: HashSet<String>,
 }
@@ -1260,7 +1261,7 @@ fn reset_session_runtime(state: &Arc<Mutex<BridgeState>>, session_id: &str) {
     }
 }
 
-fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, _source_message_id: &str) {
+fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, source_message_id: &str) {
     if let Ok(mut state) = state.lock() {
         let runtime = state.sessions.entry(session_id.to_owned()).or_default();
         runtime.chunks.clear();
@@ -1268,6 +1269,7 @@ fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, _source
         runtime.tool_calls.clear();
         runtime.stream_sent_count = 0;
         runtime.active_turn = Some(ActiveTurn {
+            source_message_id: source_message_id.to_owned(),
             last_reply_message_id: None,
             started_tool_calls: HashSet::new(),
         });
@@ -1314,6 +1316,13 @@ fn set_last_reply_message_id(
     }
 }
 
+fn reaction_target_message_id(active_turn: &ActiveTurn) -> &str {
+    active_turn
+        .last_reply_message_id
+        .as_deref()
+        .unwrap_or(&active_turn.source_message_id)
+}
+
 fn take_session_full_text(state: &Arc<Mutex<BridgeState>>, session_id: &str) -> String {
     if let Ok(mut state) = state.lock()
         && let Some(runtime) = state.sessions.get_mut(session_id)
@@ -1358,7 +1367,13 @@ fn split_reply_for_mode(reply: &PromptReply, mode: ReplyMode) -> Vec<String> {
                 vec![split_markdown_reply(&reply.remaining_text).join("\n\n")]
             }
         }
-        ReplyMode::Stream => split_markdown_reply(&reply.remaining_text),
+        ReplyMode::Stream => {
+            if reply.remaining_text.trim().is_empty() {
+                vec![]
+            } else {
+                vec![reply.remaining_text.clone()]
+            }
+        }
     }
 }
 
@@ -1542,6 +1557,12 @@ fn send_reaction(
     let conversation_id = conversation_id.to_owned();
     let message_id = message_id.to_owned();
     tokio::spawn(async move {
+        info!(
+            conversation_id = conversation_id,
+            message_id = %sender_short_id(&message_id),
+            emoji = emoji.as_str(),
+            "sending reaction"
+        );
         let result = http_client()
             .post(format!("{base_url}/v1/messages/{message_id}/react"))
             .json(&EmojiRequest {
@@ -1565,6 +1586,12 @@ fn send_reaction(
                         }),
                     );
                 } else {
+                    info!(
+                        conversation_id = conversation_id,
+                        message_id = %sender_short_id(&message_id),
+                        emoji = emoji.as_str(),
+                        "reaction sent"
+                    );
                     log_acp_event(
                         &data_dir,
                         &conversation_id,
@@ -1614,7 +1641,7 @@ impl BridgeClient {
                 .insert(tool_call_id.clone(), snapshot.clone());
             if let Some(active_turn) = runtime.active_turn.as_mut() {
                 active_turn.started_tool_calls.insert(tool_call_id);
-                reply_message_id = active_turn.last_reply_message_id.clone();
+                reply_message_id = Some(reaction_target_message_id(active_turn).to_owned());
             }
         }
 
@@ -1656,7 +1683,7 @@ impl BridgeClient {
                 let mut reply_message_id = None;
                 let mut should_emit_start = false;
                 if let Some(active_turn) = runtime.active_turn.as_mut() {
-                    reply_message_id = active_turn.last_reply_message_id.clone();
+                    reply_message_id = Some(reaction_target_message_id(active_turn).to_owned());
                     if matches!(
                         update.fields.status,
                         Some(acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress)
@@ -1864,65 +1891,52 @@ impl acp::Client for BridgeClient {
                 };
                 if let Some(text) = flushed_text {
                     if !text.trim().is_empty() {
-                        let stream_parts = split_markdown_reply(&text);
-                        let part_count = stream_parts.len();
-                        let mut sent_count = 0usize;
-                        for (index, part) in stream_parts.into_iter().enumerate() {
-                            let t_send = std::time::Instant::now();
-                            match send_reply_part(
-                                &self.data_dir,
-                                &self.conversation_id,
-                                &part,
-                                "xmtp_stream_sent",
-                            )
-                            .await
-                            {
-                                Ok(message_id) => {
-                                    sent_count += 1;
-                                    info!(
-                                        stream_index = index + 1,
-                                        stream_count = part_count,
-                                        message_id = %sender_short_id(&message_id),
-                                        bytes = part.len(),
-                                        send_ms = t_send.elapsed().as_millis(),
-                                        "stream part sent"
-                                    );
-                                    set_last_reply_message_id(
-                                        &self.state,
-                                        &session_id,
-                                        &message_id,
-                                    );
-                                    log_acp_event(
-                                        &self.data_dir,
-                                        &self.conversation_id,
-                                        serde_json::json!({
-                                            "event": "xmtp_stream_sent_meta",
-                                            "conversation_id": self.conversation_id,
-                                            "message_id": message_id,
-                                            "stream_index": index + 1,
-                                            "stream_count": part_count,
-                                        }),
-                                    );
-                                }
-                                Err(err) => {
-                                    error!("ACP streamed reply send failed: {err:#}");
-                                    log_acp_event(
-                                        &self.data_dir,
-                                        &self.conversation_id,
-                                        serde_json::json!({
-                                            "event": "error",
-                                            "message": format!("ACP streamed reply send failed: {err:#}"),
-                                        }),
-                                    );
-                                    break;
+                        let t_send = std::time::Instant::now();
+                        match send_reply_part(
+                            &self.data_dir,
+                            &self.conversation_id,
+                            &text,
+                            "xmtp_stream_sent",
+                        )
+                        .await
+                        {
+                            Ok(message_id) => {
+                                info!(
+                                    stream_index = 1,
+                                    stream_count = 1,
+                                    message_id = %sender_short_id(&message_id),
+                                    bytes = text.len(),
+                                    send_ms = t_send.elapsed().as_millis(),
+                                    "stream part sent"
+                                );
+                                set_last_reply_message_id(&self.state, &session_id, &message_id);
+                                log_acp_event(
+                                    &self.data_dir,
+                                    &self.conversation_id,
+                                    serde_json::json!({
+                                        "event": "xmtp_stream_sent_meta",
+                                        "conversation_id": self.conversation_id,
+                                        "message_id": message_id,
+                                        "stream_index": 1,
+                                        "stream_count": 1,
+                                    }),
+                                );
+                                if let Ok(mut state) = self.state.lock() {
+                                    if let Some(runtime) = state.sessions.get_mut(&session_id) {
+                                        runtime.stream_sent_count += 1;
+                                    }
                                 }
                             }
-                        }
-                        if sent_count > 0 {
-                            if let Ok(mut state) = self.state.lock() {
-                                if let Some(runtime) = state.sessions.get_mut(&session_id) {
-                                    runtime.stream_sent_count += sent_count;
-                                }
+                            Err(err) => {
+                                error!("ACP streamed reply send failed: {err:#}");
+                                log_acp_event(
+                                    &self.data_dir,
+                                    &self.conversation_id,
+                                    serde_json::json!({
+                                        "event": "error",
+                                        "message": format!("ACP streamed reply send failed: {err:#}"),
+                                    }),
+                                );
                             }
                         }
                     }
@@ -2002,10 +2016,11 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        BridgeState, PersistedSessionEntry, ReactionEmoji, SessionRuntime, ToolCallSnapshot,
-        begin_session_turn, format_agent_error_message, infer_subagent_tool,
-        reaction_for_tool_start, remember_processed_message, resolve_resume_session_selector,
-        set_last_reply_message_id, split_markdown_reply, truncate_display,
+        BridgeState, PersistedSessionEntry, PromptReply, ReactionEmoji, ReplyMode, SessionRuntime,
+        ToolCallSnapshot, begin_session_turn, format_agent_error_message, infer_subagent_tool,
+        reaction_for_tool_start, reaction_target_message_id, remember_processed_message,
+        resolve_resume_session_selector, set_last_reply_message_id, split_markdown_reply,
+        split_reply_for_mode, truncate_display,
     };
 
     #[test]
@@ -2112,6 +2127,19 @@ mod tests {
     }
 
     #[test]
+    fn split_reply_for_stream_keeps_markdown_in_single_message() {
+        let reply = PromptReply {
+            full_text: "# Title\n\nBody".to_owned(),
+            remaining_text: "# Title\n\nBody".to_owned(),
+            streamed_parts: 0,
+        };
+
+        let parts = split_reply_for_mode(&reply, ReplyMode::Stream);
+
+        assert_eq!(parts, vec!["# Title\n\nBody".to_owned()]);
+    }
+
+    #[test]
     fn remember_processed_message_skips_duplicates_case_insensitively() {
         let state = Arc::new(Mutex::new(BridgeState::default()));
 
@@ -2168,6 +2196,7 @@ mod tests {
                     chunks: vec!["stale".to_owned()],
                     full_text: "stale".to_owned(),
                     active_turn: Some(super::ActiveTurn {
+                        source_message_id: "old-user-message".to_owned(),
                         last_reply_message_id: Some("old-reply-message".to_owned()),
                         started_tool_calls: std::collections::HashSet::new(),
                     }),
@@ -2216,5 +2245,27 @@ mod tests {
         });
 
         assert_eq!(last_reply_message_id.as_deref(), Some("reply-1"));
+    }
+
+    #[test]
+    fn reaction_target_falls_back_to_user_message_before_first_reply() {
+        let turn = super::ActiveTurn {
+            source_message_id: "user-1".to_owned(),
+            last_reply_message_id: None,
+            started_tool_calls: std::collections::HashSet::new(),
+        };
+
+        assert_eq!(reaction_target_message_id(&turn), "user-1");
+    }
+
+    #[test]
+    fn reaction_target_prefers_latest_reply_message() {
+        let turn = super::ActiveTurn {
+            source_message_id: "user-1".to_owned(),
+            last_reply_message_id: Some("reply-1".to_owned()),
+            started_tool_calls: std::collections::HashSet::new(),
+        };
+
+        assert_eq!(reaction_target_message_id(&turn), "reply-1");
     }
 }
