@@ -1557,12 +1557,6 @@ fn send_reaction(
     let conversation_id = conversation_id.to_owned();
     let message_id = message_id.to_owned();
     tokio::spawn(async move {
-        info!(
-            conversation_id = conversation_id,
-            message_id = %sender_short_id(&message_id),
-            emoji = emoji.as_str(),
-            "sending reaction"
-        );
         let result = http_client()
             .post(format!("{base_url}/v1/messages/{message_id}/react"))
             .json(&EmojiRequest {
@@ -1576,7 +1570,12 @@ fn send_reaction(
         match result {
             Ok(response) => {
                 if let Err(err) = response.error_for_status_ref() {
-                    warn!("ACP reaction send failed for message {message_id}: {err:#}");
+                    warn!(
+                        conversation_id = conversation_id,
+                        message_id = %sender_short_id(&message_id),
+                        emoji = emoji.as_str(),
+                        "reaction send failed: {err:#}"
+                    );
                     log_acp_event(
                         &data_dir,
                         &conversation_id,
@@ -1604,7 +1603,12 @@ fn send_reaction(
                 }
             }
             Err(err) => {
-                warn!("ACP reaction send failed for message {message_id}: {err:#}");
+                warn!(
+                    conversation_id = conversation_id,
+                    message_id = %sender_short_id(&message_id),
+                    emoji = emoji.as_str(),
+                    "reaction send failed: {err:#}"
+                );
                 log_acp_event(
                     &data_dir,
                     &conversation_id,
