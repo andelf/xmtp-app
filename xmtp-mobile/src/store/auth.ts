@@ -6,6 +6,7 @@ import * as SecureStore from "expo-secure-store";
 import type { Client } from "@xmtp/react-native-sdk";
 import { initClient, disconnectClient, generateDbEncryptionKey } from "../xmtp/client";
 import { clearConversationCache, clearMessageModuleState } from "../xmtp/messages";
+import { clearAppliedReactionIds } from "./messages";
 
 // ---------------------------------------------------------------------------
 // Secure storage keys
@@ -137,6 +138,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     disconnectClient();
     clearConversationCache();
     clearMessageModuleState();
+    clearAppliedReactionIds();
     await SecureStore.deleteItemAsync(PRIVATE_KEY_STORE);
     // Keep DB key so the user can re-login and access history
     // Keep env/customLocalHost settings so the user doesn't have to re-select

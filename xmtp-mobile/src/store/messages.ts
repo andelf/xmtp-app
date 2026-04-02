@@ -106,6 +106,14 @@ function insertSorted(arr: MessageItem[], item: MessageItem): MessageItem[] {
   return next;
 }
 
+/** Tracks reaction message IDs already applied (prevents history + stream double-apply). */
+const appliedReactionIds = new Set<string>();
+
+/** Clear applied reaction tracking (call on logout). */
+export function clearAppliedReactionIds(): void {
+  appliedReactionIds.clear();
+}
+
 // ---------------------------------------------------------------------------
 // Store implementation
 // ---------------------------------------------------------------------------
@@ -176,9 +184,11 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
         }
       }
 
-      // Apply reactions to their referenced messages (duplicates allowed)
+      // Apply reactions to their referenced messages
       const itemById = new Map(items.map((m) => [m.id as string, m]));
       for (const r of reactions) {
+        // Mark as seen so stream won't double-apply
+        if (r.id) appliedReactionIds.add(r.id);
         const target = itemById.get(r.referenceMessageId);
         if (!target) continue;
         const prev = target.reactions ?? {};
@@ -366,6 +376,11 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
   },
 
   applyReaction: (reaction) => {
+    // Deduplicate by reaction message ID (prevents history + stream double-apply)
+    if (reaction.id) {
+      if (appliedReactionIds.has(reaction.id)) return;
+      appliedReactionIds.add(reaction.id);
+    }
     set((state) => {
       const key = reaction.conversationId as string;
       const existing = state.byConversation[key];
@@ -377,10 +392,8 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
       const senders = prev[reaction.emoji] ?? [];
       let next: string[];
       if (reaction.action === "added") {
-        // Allow duplicates: same sender can react multiple times with the same emoji
         next = [...senders, reaction.senderInboxId];
       } else {
-        // Remove only ONE instance of this sender (not all)
         const removed = removeFirst(senders, reaction.senderInboxId);
         if (!removed) return state;
         next = removed;

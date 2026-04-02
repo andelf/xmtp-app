@@ -45,6 +45,8 @@ export interface MessageItem {
 }
 
 export interface ReactionInfo {
+  /** ID of the reaction message itself (for dedup across history + stream) */
+  id?: string;
   conversationId: string;
   referenceMessageId: string;
   emoji: string;
@@ -108,7 +110,7 @@ export function decodedToReaction(
 ): ReactionInfo | null {
   const result = decodeMessage(msg, conversationId);
   if (result.kind !== "reaction") return null;
-  return result.info;
+  return { ...result.info, id: msg.id };
 }
 
 export interface ReadReceiptInfo {
