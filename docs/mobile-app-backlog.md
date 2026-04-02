@@ -1,6 +1,6 @@
 # XMTP Mobile App — Backlog & Roadmap
 
-> Last updated: 2026-03-30
+> Last updated: 2026-04-02
 
 ## Current State (MVP Complete)
 
@@ -70,15 +70,8 @@ Tasks:
 
 ## P2 — Medium Priority
 
-### P2.1 New Group Creation
-**Why**: Users need to create group chats, not just DMs.
-
-Tasks:
-- [ ] "New Group" option on new-conversation page (or separate page)
-- [ ] Group name input + multi-member address input (chip/tag UI)
-- [ ] Address validation for each member
-- [ ] `client.conversations.newGroup(members, { name })` API integration
-- [ ] Navigate to new group conversation after creation
+### ~~P2.1 New Group Creation~~ ✅ DONE
+Implemented: DM/Group mode toggle on new-conversation page, group name input, multi-member address input with chip UI, address validation, group creation via SDK, auto-navigate to new group. Content type registry added for proper codec handling. (2026-03-31~04-01)
 
 ### P2.2 Read Receipt (DM only) ✅ DONE
 **Why**: Sender knows if message was seen. Optional feature with toggle.
@@ -124,9 +117,10 @@ Tasks:
 
 ## P3 — Low Priority (Future)
 
-### P3.1 Group Management
-- [ ] View group info (name, description, member count)
-- [ ] View member list
+### P3.1 Group Management (partial ✅)
+Implemented (2026-03-31): Group management UI with view group info, member list, basic management actions.
+- [x] View group info (name, description, member count)
+- [x] View member list
 - [ ] Add/remove members (permission-aware)
 - [ ] Rename group
 - [ ] Leave group with confirmation
