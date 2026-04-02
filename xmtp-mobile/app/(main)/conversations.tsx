@@ -176,8 +176,10 @@ export default function ConversationsScreen() {
             leadingIcon="account-group"
             title="New Group"
             titleStyle={styles.menuItemTitle}
-            disabled
-            onPress={() => {}}
+            onPress={() => {
+              closeMenu();
+              router.push("/new-conversation?mode=group" as any);
+            }}
           />
           <Menu.Item
             leadingIcon="cog"

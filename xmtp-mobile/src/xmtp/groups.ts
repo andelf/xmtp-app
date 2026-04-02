@@ -166,3 +166,36 @@ export function promoteToAdmin(conversationId: string, inboxId: string): Promise
 export function demoteAdmin(conversationId: string, inboxId: string): Promise<Result> {
   return withGroup(conversationId, (g) => g.removeAdmin(inboxId), "Failed to demote");
 }
+
+export async function createGroup(
+  addresses: string[],
+  opts?: { name?: string; description?: string; permissionLevel?: "all_members" | "admin_only" }
+): Promise<Result<string>> {
+  try {
+    const client = getClient();
+    if (!client) return { ok: false, error: "Client not initialised" };
+
+    const { PublicIdentity } = await import("@xmtp/react-native-sdk");
+    const identities = addresses.map(
+      (addr) => new PublicIdentity(addr, "ETHEREUM")
+    );
+
+    // Validate all addresses are on XMTP before creating
+    const canMsg = await client.canMessage(identities);
+    const unreachable = addresses.filter((_, i) => !Object.values(canMsg)[i]);
+    if (unreachable.length > 0) {
+      const short = unreachable.map((a) => `${a.slice(0, 6)}...${a.slice(-4)}`);
+      return { ok: false, error: `Not on XMTP network: ${short.join(", ")}` };
+    }
+
+    const group = await client.conversations.newGroupWithIdentities(identities, {
+      name: opts?.name || undefined,
+      description: opts?.description || undefined,
+      permissionLevel: opts?.permissionLevel,
+    });
+
+    return { ok: true, data: group.id as string };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? "Failed to create group" };
+  }
+}
