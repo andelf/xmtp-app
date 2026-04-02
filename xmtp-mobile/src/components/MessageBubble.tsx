@@ -308,7 +308,7 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry 
             <EnrichedMarkdownText
               markdown={item.text}
               markdownStyle={isOwn ? MD_STYLE_OWN : MD_STYLE_OTHER}
-              onLinkPress={(url) => Linking.openURL(url)}
+              onLinkPress={(e) => Linking.openURL(e.url)}
               allowTrailingMargin={false}
               flavor="github"
             />

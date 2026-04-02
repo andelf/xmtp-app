@@ -2,9 +2,17 @@
  * New conversation page -- supports both DM and Group creation modes.
  *
  * Accepts ?mode=group URL param to pre-select Group tab.
+ * Group mode uses a Card Stack layout (Material Design 3 style).
  */
 import React, { useCallback, useState } from "react";
-import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import {
+  View,
+  StyleSheet,
+  Platform,
+  ScrollView,
+  Pressable,
+} from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import {
   Appbar,
   TextInput,
@@ -12,8 +20,8 @@ import {
   Text,
   HelperText,
   SegmentedButtons,
-  Chip,
-  RadioButton,
+  Avatar,
+  IconButton,
 } from "react-native-paper";
 import { useRouter, useLocalSearchParams } from "expo-router";
 
@@ -33,6 +41,96 @@ function validateAddress(addr: string): string | null {
   if (addr.length !== 42) return "Address must be 42 characters";
   if (!isValidEthAddress(addr)) return "Invalid Ethereum address";
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Permission Option Card
+// ---------------------------------------------------------------------------
+
+function PermissionCard({
+  icon,
+  title,
+  subtitle,
+  selected,
+  onPress,
+  disabled,
+}: {
+  icon: string;
+  title: string;
+  subtitle: string;
+  selected: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      style={[
+        styles.permCard,
+        selected && styles.permCardSelected,
+        disabled && styles.permCardDisabled,
+      ]}
+    >
+      <View style={styles.permCardHeader}>
+        <IconButton
+          icon={icon}
+          size={20}
+          iconColor={selected ? "#D0BCFF" : "#938F99"}
+          style={styles.permCardIcon}
+        />
+        {selected && (
+          <IconButton icon="check-circle" size={16} iconColor="#D0BCFF" style={styles.permCheck} />
+        )}
+      </View>
+      <Text variant="titleSmall" style={[styles.permTitle, selected && styles.permTitleSelected]}>
+        {title}
+      </Text>
+      <Text variant="bodySmall" style={styles.permSubtitle}>
+        {subtitle}
+      </Text>
+    </Pressable>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Member Row
+// ---------------------------------------------------------------------------
+
+function MemberItem({
+  address,
+  onRemove,
+  disabled,
+}: {
+  address: string;
+  onRemove: () => void;
+  disabled?: boolean;
+}) {
+  const initials = address.slice(2, 4).toUpperCase();
+  return (
+    <View style={styles.memberItem}>
+      <Avatar.Text
+        size={36}
+        label={initials}
+        style={styles.memberAvatar}
+        labelStyle={styles.memberAvatarLabel}
+      />
+      <View style={styles.memberInfo}>
+        <Text variant="bodyMedium" style={styles.memberAddr} numberOfLines={1}>
+          {shortenAddress(address)}
+        </Text>
+        <Text variant="bodySmall" style={styles.memberFull} numberOfLines={1}>
+          {address}
+        </Text>
+      </View>
+      <IconButton
+        icon="close-circle-outline"
+        size={20}
+        iconColor="#938F99"
+        onPress={disabled ? undefined : onRemove}
+        style={styles.memberRemove}
+      />
+    </View>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -61,9 +159,11 @@ export default function NewConversationScreen() {
   const [groupLoading, setGroupLoading] = useState(false);
   const [groupError, setGroupError] = useState<string | null>(null);
   const [memberError, setMemberError] = useState<string | null>(null);
-  const [permissionLevel, setPermissionLevel] = useState<"all_members" | "admin_only">("all_members");
+  const [permissionLevel, setPermissionLevel] = useState<"all_members" | "admin_only">(
+    "all_members"
+  );
 
-  // --- DM handlers (preserved exactly) ---
+  // --- DM handlers ---
 
   const handleCreateDm = useCallback(async () => {
     const trimmed = address.trim();
@@ -175,20 +275,18 @@ export default function NewConversationScreen() {
   }, [router]);
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <View style={styles.container}>
       {/* AppBar */}
       <Appbar.Header style={styles.appbar} elevated>
         <Appbar.BackAction onPress={handleBack} iconColor="#E6E1E5" />
         <Appbar.Content title="New Conversation" titleStyle={styles.appbarTitle} />
       </Appbar.Header>
 
-      <ScrollView
+      <KeyboardAwareScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        bottomOffset={20}
       >
         {/* Mode toggle */}
         <SegmentedButtons
@@ -226,7 +324,6 @@ export default function NewConversationScreen() {
               Enter an Ethereum address to start a direct message conversation.
             </Text>
 
-            {/* Address input */}
             <TextInput
               label="ETH Address"
               placeholder="0x..."
@@ -249,21 +346,18 @@ export default function NewConversationScreen() {
               error={!!(validationError || error)}
             />
 
-            {/* Validation helper text */}
             {validationError && (
               <HelperText type="error" visible style={styles.helperText}>
                 {validationError}
               </HelperText>
             )}
 
-            {/* API error */}
             {error && !validationError && (
               <HelperText type="error" visible style={styles.helperText}>
                 {error}
               </HelperText>
             )}
 
-            {/* Submit button */}
             <Button
               mode="contained"
               onPress={handleCreateDm}
@@ -280,37 +374,75 @@ export default function NewConversationScreen() {
         )}
 
         {/* ============================================================= */}
-        {/* Group Mode                                                     */}
+        {/* Group Mode — Card Stack Layout                                 */}
         {/* ============================================================= */}
         {mode === "group" && (
           <View>
-            {/* Group name */}
-            <TextInput
-              label="Group Name"
-              placeholder="Group name (optional)"
-              value={groupName}
-              onChangeText={setGroupName}
-              mode="outlined"
-              autoCapitalize="sentences"
-              autoCorrect={false}
-              style={styles.input}
-              outlineColor="#49454F"
-              activeOutlineColor="#D0BCFF"
-              textColor="#E6E1E5"
-              placeholderTextColor="#938F99"
-              disabled={groupLoading}
-            />
+            {/* Card 1: Group Info */}
+            <View style={styles.card}>
+              <Text variant="titleSmall" style={styles.cardTitle}>
+                Group Info
+              </Text>
 
-            {/* Members section */}
-            <Text variant="titleSmall" style={styles.sectionTitle}>
-              Members
-            </Text>
-
-            {/* Address input row */}
-            <View style={styles.memberInputRow}>
               <TextInput
-                label="ETH Address"
-                placeholder="0x..."
+                label="Group Name"
+                placeholder="e.g. XMTP Builders"
+                value={groupName}
+                onChangeText={setGroupName}
+                mode="outlined"
+                autoCapitalize="sentences"
+                autoCorrect={false}
+                style={styles.cardInput}
+                outlineColor="#49454F"
+                activeOutlineColor="#D0BCFF"
+                textColor="#E6E1E5"
+                placeholderTextColor="#938F99"
+                disabled={groupLoading}
+                left={<TextInput.Icon icon="pencil-outline" color="#938F99" />}
+              />
+
+              {/* Permission cards */}
+              <Text variant="bodySmall" style={styles.permLabel}>
+                Permissions
+              </Text>
+              <View style={styles.permRow}>
+                <PermissionCard
+                  icon="earth"
+                  title="Open"
+                  subtitle="All members can manage"
+                  selected={permissionLevel === "all_members"}
+                  onPress={() => setPermissionLevel("all_members")}
+                  disabled={groupLoading}
+                />
+                <PermissionCard
+                  icon="shield-lock-outline"
+                  title="Admin"
+                  subtitle="Only admins can manage"
+                  selected={permissionLevel === "admin_only"}
+                  onPress={() => setPermissionLevel("admin_only")}
+                  disabled={groupLoading}
+                />
+              </View>
+            </View>
+
+            {/* Card 2: Members */}
+            <View style={styles.card}>
+              <View style={styles.cardTitleRow}>
+                <Text variant="titleSmall" style={styles.cardTitle}>
+                  Members
+                </Text>
+                {members.length > 0 && (
+                  <View style={styles.badge}>
+                    <Text variant="labelSmall" style={styles.badgeText}>
+                      {members.length}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Search-style input */}
+              <TextInput
+                placeholder="Add by ETH address"
                 value={memberInput}
                 onChangeText={(text) => {
                   setMemberInput(text);
@@ -320,7 +452,7 @@ export default function NewConversationScreen() {
                 mode="outlined"
                 autoCapitalize="none"
                 autoCorrect={false}
-                style={styles.memberInput}
+                style={styles.cardInput}
                 contentStyle={styles.inputContent}
                 outlineColor="#49454F"
                 activeOutlineColor="#D0BCFF"
@@ -328,86 +460,45 @@ export default function NewConversationScreen() {
                 placeholderTextColor="#938F99"
                 disabled={groupLoading}
                 error={!!memberError}
+                left={<TextInput.Icon icon="magnify" color="#938F99" />}
+                right={
+                  memberInput.trim() ? (
+                    <TextInput.Icon
+                      icon="plus-circle"
+                      color="#D0BCFF"
+                      onPress={handleAddMember}
+                    />
+                  ) : undefined
+                }
               />
-              <Button
-                mode="contained-tonal"
-                onPress={handleAddMember}
-                disabled={groupLoading || !memberInput.trim()}
-                style={styles.addButton}
-                labelStyle={styles.addButtonLabel}
-                compact
-              >
-                Add
-              </Button>
+
+              {memberError && (
+                <HelperText type="error" visible style={styles.helperText}>
+                  {memberError}
+                </HelperText>
+              )}
+
+              {/* Member list */}
+              {members.length > 0 ? (
+                <View style={styles.memberList}>
+                  {members.map((addr) => (
+                    <MemberItem
+                      key={addr}
+                      address={addr}
+                      onRemove={() => handleRemoveMember(addr)}
+                      disabled={groupLoading}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <View style={styles.emptyMembers}>
+                  <IconButton icon="account-plus-outline" size={32} iconColor="#49454F" />
+                  <Text variant="bodySmall" style={styles.emptyText}>
+                    Add at least one member to create a group
+                  </Text>
+                </View>
+              )}
             </View>
-
-            {memberError && (
-              <HelperText type="error" visible style={styles.helperText}>
-                {memberError}
-              </HelperText>
-            )}
-
-            {/* Member chips */}
-            {members.length > 0 && (
-              <View style={styles.chipContainer}>
-                {members.map((addr) => (
-                  <Chip
-                    key={addr}
-                    onClose={() => handleRemoveMember(addr)}
-                    style={styles.chip}
-                    textStyle={styles.chipText}
-                    disabled={groupLoading}
-                  >
-                    {shortenAddress(addr)}
-                  </Chip>
-                ))}
-              </View>
-            )}
-
-            {members.length === 0 && (
-              <Text variant="bodySmall" style={styles.hint}>
-                Add at least one member to create a group.
-              </Text>
-            )}
-
-            {/* Permission level */}
-            <Text variant="titleSmall" style={styles.sectionTitle}>
-              Permission Level
-            </Text>
-
-            <RadioButton.Group
-              value={permissionLevel}
-              onValueChange={(v) => setPermissionLevel(v as "all_members" | "admin_only")}
-            >
-              <View style={styles.radioRow}>
-                <RadioButton.Android
-                  value="all_members"
-                  color="#D0BCFF"
-                  uncheckedColor="#938F99"
-                  disabled={groupLoading}
-                />
-                <Text
-                  style={styles.radioLabel}
-                  onPress={() => !groupLoading && setPermissionLevel("all_members")}
-                >
-                  All Members — anyone can manage
-                </Text>
-              </View>
-              <View style={styles.radioRow}>
-                <RadioButton.Android
-                  value="admin_only"
-                  color="#D0BCFF"
-                  uncheckedColor="#938F99"
-                  disabled={groupLoading}
-                />
-                <Text
-                  style={styles.radioLabel}
-                  onPress={() => !groupLoading && setPermissionLevel("admin_only")}
-                >
-                  Admin Only — only admins can manage
-                </Text>
-              </View>
-            </RadioButton.Group>
 
             {/* Group error */}
             {groupError && (
@@ -416,14 +507,14 @@ export default function NewConversationScreen() {
               </HelperText>
             )}
 
-            {/* Create button */}
+            {/* Create button — full width, elevated feel */}
             <Button
               mode="contained"
               onPress={handleCreateGroup}
               loading={groupLoading}
               disabled={groupLoading || members.length === 0}
-              style={styles.button}
-              contentStyle={styles.buttonContent}
+              style={styles.createButton}
+              contentStyle={styles.createButtonContent}
               labelStyle={styles.buttonLabel}
               icon={groupLoading ? undefined : "account-group"}
             >
@@ -431,8 +522,8 @@ export default function NewConversationScreen() {
             </Button>
           </View>
         )}
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
+    </View>
   );
 }
 
@@ -456,12 +547,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingHorizontal: 20,
+    paddingTop: 20,
     paddingBottom: 48,
   },
   segmentedButtons: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   description: {
     color: "#938F99",
@@ -488,54 +579,146 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  sectionTitle: {
-    color: "#E6E1E5",
-    marginTop: 20,
-    marginBottom: 8,
+
+  // --- Card Stack ---
+  card: {
+    backgroundColor: "#16213e",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#1f2b47",
   },
-  memberInputRow: {
+  cardTitle: {
+    color: "#E6E1E5",
+    fontWeight: "600",
+    marginBottom: 12,
+  },
+  cardTitleRow: {
     flexDirection: "row",
     alignItems: "center",
+    marginBottom: 12,
     gap: 8,
   },
-  memberInput: {
-    flex: 1,
+  cardInput: {
     backgroundColor: "#1a1a2e",
   },
-  addButton: {
-    marginTop: 6,
-    borderRadius: 16,
+
+  // --- Permission Cards ---
+  permLabel: {
+    color: "#938F99",
+    marginTop: 16,
+    marginBottom: 8,
   },
-  addButtonLabel: {
-    fontSize: 14,
+  permRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  permCard: {
+    flex: 1,
+    backgroundColor: "#1a1a2e",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: "#2B2930",
+  },
+  permCardSelected: {
+    borderColor: "#6750A4",
+    backgroundColor: "rgba(103, 80, 164, 0.08)",
+  },
+  permCardDisabled: {
+    opacity: 0.5,
+  },
+  permCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  permCardIcon: {
+    margin: 0,
+  },
+  permCheck: {
+    margin: 0,
+  },
+  permTitle: {
+    color: "#E6E1E5",
     fontWeight: "600",
   },
-  chipContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 12,
+  permTitleSelected: {
+    color: "#D0BCFF",
   },
-  chip: {
-    backgroundColor: "#2B2930",
-  },
-  chipText: {
-    color: "#E6E1E5",
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    fontSize: 13,
-  },
-  hint: {
+  permSubtitle: {
     color: "#938F99",
-    marginTop: 8,
+    marginTop: 2,
   },
-  radioRow: {
+
+  // --- Member List ---
+  badge: {
+    backgroundColor: "#6750A4",
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 1,
+    minWidth: 20,
+    alignItems: "center",
+  },
+  badgeText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 11,
+  },
+  memberList: {
+    marginTop: 12,
+    gap: 4,
+  },
+  memberItem: {
     flexDirection: "row",
     alignItems: "center",
-    marginVertical: 2,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: "#1a1a2e",
   },
-  radioLabel: {
+  memberAvatar: {
+    backgroundColor: "#6750A4",
+  },
+  memberAvatarLabel: {
+    fontSize: 13,
+    fontWeight: "700",
     color: "#E6E1E5",
-    fontSize: 14,
+  },
+  memberInfo: {
     flex: 1,
+    marginLeft: 12,
+  },
+  memberAddr: {
+    color: "#E6E1E5",
+    fontWeight: "500",
+  },
+  memberFull: {
+    color: "#938F99",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 11,
+    marginTop: 1,
+  },
+  memberRemove: {
+    margin: 0,
+  },
+  emptyMembers: {
+    alignItems: "center",
+    paddingVertical: 20,
+  },
+  emptyText: {
+    color: "#938F99",
+    marginTop: 4,
+  },
+
+  // --- Create Button ---
+  createButton: {
+    marginTop: 8,
+    borderRadius: 16,
+  },
+  createButtonContent: {
+    paddingVertical: 8,
   },
 });

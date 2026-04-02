@@ -28,6 +28,7 @@ const MOCK_CONVERSATIONS: ConversationItem[] = [
     lastMessageText: "Hey, are you available for a quick call?",
     lastMessageAt: Date.now() - 30 * 1000, // 30 seconds ago
     createdAt: Date.now() - 7 * 24 * 60 * 60 * 1000,
+    unreadCount: 0,
   },
   {
     id: "conv-2" as any,
@@ -37,6 +38,7 @@ const MOCK_CONVERSATIONS: ConversationItem[] = [
     lastMessageText: "The new SDK version looks great!",
     lastMessageAt: Date.now() - 45 * 60 * 1000, // 45 minutes ago
     createdAt: Date.now() - 14 * 24 * 60 * 60 * 1000,
+    unreadCount: 0,
   },
   {
     id: "conv-3" as any,
@@ -46,6 +48,7 @@ const MOCK_CONVERSATIONS: ConversationItem[] = [
     lastMessageText: "Thanks for the update",
     lastMessageAt: Date.now() - 5 * 60 * 60 * 1000, // 5 hours ago
     createdAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
+    unreadCount: 0,
   },
   {
     id: "conv-4" as any,
@@ -55,6 +58,7 @@ const MOCK_CONVERSATIONS: ConversationItem[] = [
     lastMessageText: "Let me share the latest findings from the A2A spec review...",
     lastMessageAt: Date.now() - 26 * 60 * 60 * 1000, // yesterday
     createdAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
+    unreadCount: 0,
   },
   {
     id: "conv-5" as any,
@@ -64,6 +68,7 @@ const MOCK_CONVERSATIONS: ConversationItem[] = [
     lastMessageText: "Sent you the transaction hash",
     lastMessageAt: Date.now() - 5 * 24 * 60 * 60 * 1000, // 5 days ago
     createdAt: Date.now() - 60 * 24 * 60 * 60 * 1000,
+    unreadCount: 0,
   },
 ];
 

@@ -38,12 +38,6 @@ export default function ConversationScreen() {
 
   const readReceiptsEnabled = useSettingsStore((s) => s.readReceipts);
 
-  // Load messages + start real-time stream for this conversation
-  const { isLoading: messagesLoading, fetchMore } = useMessages(conversationId, {
-    sendReadReceipts: readReceiptsEnabled,
-    isDm: !isGroup,
-  });
-
   // Resolve conversation title and kind from store
   const conversationTitle = useConversationStore((s) => {
     if (!id) return "Chat";
@@ -53,6 +47,12 @@ export default function ConversationScreen() {
   const isGroup = useConversationStore((s) => {
     if (!id) return false;
     return s.items.get(id)?.kind === "group";
+  });
+
+  // Load messages + start real-time stream for this conversation
+  const { isLoading: messagesLoading, fetchMore } = useMessages(conversationId, {
+    sendReadReceipts: readReceiptsEnabled,
+    isDm: !isGroup,
   });
 
   // Mark conversation as read and set active
