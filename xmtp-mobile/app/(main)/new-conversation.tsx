@@ -27,13 +27,11 @@ import { isValidEthAddress, shortenAddress } from "../../src/utils/address";
 // Validation (DM mode)
 // ---------------------------------------------------------------------------
 
-const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-
 function validateAddress(addr: string): string | null {
   if (!addr) return "Address is required";
   if (!addr.startsWith("0x")) return "Address must start with 0x";
   if (addr.length !== 42) return "Address must be 42 characters";
-  if (!ETH_ADDRESS_RE.test(addr)) return "Invalid Ethereum address";
+  if (!isValidEthAddress(addr)) return "Invalid Ethereum address";
   return null;
 }
 
@@ -122,7 +120,7 @@ export default function NewConversationScreen() {
       return;
     }
 
-    if (members.map((a) => a.toLowerCase()).includes(trimmed.toLowerCase())) {
+    if (members.some((a) => a.toLowerCase() === trimmed.toLowerCase())) {
       setMemberError("Address already added");
       return;
     }
@@ -153,16 +151,14 @@ export default function NewConversationScreen() {
         return;
       }
 
-      // Sync and find the new group to add to store
+      // Find the new group and add to conversation store
       const client = getClient();
-      if (!client) return;
-
-      await client.conversations.sync();
-      const groups = await client.conversations.listGroups();
-      const newGroup = groups.find((g) => (g.id as string) === result.data);
-      if (newGroup) {
-        const item = await conversationToItem(newGroup, client.inboxId);
-        upsert(item);
+      if (client) {
+        const newGroup = await client.conversations.findGroup(result.data as any);
+        if (newGroup) {
+          const item = await conversationToItem(newGroup, client.inboxId);
+          upsert(item);
+        }
       }
 
       router.replace(`/conversation/${result.data}` as any);
@@ -197,7 +193,12 @@ export default function NewConversationScreen() {
         {/* Mode toggle */}
         <SegmentedButtons
           value={mode}
-          onValueChange={(v) => setMode(v as "dm" | "group")}
+          onValueChange={(v) => {
+            setMode(v as "dm" | "group");
+            setError(null);
+            setGroupError(null);
+            setMemberError(null);
+          }}
           buttons={[
             {
               value: "dm",

@@ -4,12 +4,14 @@
  * Wraps @xmtp/react-native-sdk Group methods with error handling.
  * All public functions return { ok, data?, error? } for consistent UI consumption.
  */
+import { PublicIdentity } from "@xmtp/react-native-sdk";
 import type { Group } from "@xmtp/react-native-sdk/build/lib/Group";
 import type { Member } from "@xmtp/react-native-sdk/build/lib/Member";
 import type { PermissionPolicySet } from "@xmtp/react-native-sdk/build/lib/types/PermissionPolicySet";
 
 import { findConversation } from "./messages";
 import { getClient } from "./client";
+import { shortenAddress } from "../utils/address";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,22 +177,25 @@ export async function createGroup(
     const client = getClient();
     if (!client) return { ok: false, error: "Client not initialised" };
 
-    const { PublicIdentity } = await import("@xmtp/react-native-sdk");
     const identities = addresses.map(
       (addr) => new PublicIdentity(addr, "ETHEREUM")
     );
 
-    // Validate all addresses are on XMTP before creating
+    // Pre-check for better error messages; newGroupWithIdentities would also
+    // fail but with a less descriptive error.
     const canMsg = await client.canMessage(identities);
-    const unreachable = addresses.filter((_, i) => !Object.values(canMsg)[i]);
+    const unreachable = addresses.filter(
+      (addr) => !canMsg[addr] && !canMsg[addr.toLowerCase()]
+    );
     if (unreachable.length > 0) {
-      const short = unreachable.map((a) => `${a.slice(0, 6)}...${a.slice(-4)}`);
-      return { ok: false, error: `Not on XMTP network: ${short.join(", ")}` };
+      return { ok: false, error: `Not on XMTP network: ${unreachable.map(shortenAddress).join(", ")}` };
     }
 
+    const name = opts?.name?.trim() || undefined;
+    const description = opts?.description?.trim() || undefined;
     const group = await client.conversations.newGroupWithIdentities(identities, {
-      name: opts?.name || undefined,
-      description: opts?.description || undefined,
+      name,
+      description,
       permissionLevel: opts?.permissionLevel,
     });
 
