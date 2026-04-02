@@ -259,6 +259,7 @@ struct PromptReply {
 #[derive(Debug, Clone, Default)]
 struct ToolCallSnapshot {
     title: Option<String>,
+    kind: Option<String>,
     raw_input: Option<serde_json::Value>,
     raw_output: Option<serde_json::Value>,
     meta: Option<serde_json::Map<String, serde_json::Value>>,
@@ -435,6 +436,36 @@ async fn ensure_acp_session(
             resolve_resume_session_id(data_dir, conversation_id, selector)?
     {
         let session_id = acp::SessionId::new(saved_session_id);
+
+        // Try session/resume first (no history replay), fall back to session/load
+        match conn
+            .resume_session(acp::ResumeSessionRequest::new(
+                session_id.clone(),
+                cwd.to_path_buf(),
+            ))
+            .await
+        {
+            Ok(_) => {
+                info!(session_id = %session_id_str(&session_id), "ACP session resumed (no replay)");
+                log_acp_event(
+                    data_dir,
+                    conversation_id,
+                    serde_json::json!({
+                        "event": "session_event",
+                        "action": "resumed",
+                        "session_id": session_id_str(&session_id),
+                        "resume_selector": selector,
+                    }),
+                );
+                store_session_id(data_dir, conversation_id, &session_id)?;
+                return Ok(session_id);
+            }
+            Err(err) => {
+                info!("session/resume not supported, trying session/load: {err:#}");
+            }
+        }
+
+        // Fallback: session/load (replays history)
         match conn
             .load_session(acp::LoadSessionRequest::new(
                 session_id.clone(),
@@ -443,13 +474,13 @@ async fn ensure_acp_session(
             .await
         {
             Ok(_) => {
-                info!(session_id = %session_id_str(&session_id), "ACP session restored");
+                info!(session_id = %session_id_str(&session_id), "ACP session loaded (with replay)");
                 log_acp_event(
                     data_dir,
                     conversation_id,
                     serde_json::json!({
                         "event": "session_event",
-                        "action": "restored",
+                        "action": "loaded",
                         "session_id": session_id_str(&session_id),
                         "resume_selector": selector,
                     }),
@@ -1653,6 +1684,7 @@ impl BridgeClient {
         let snapshot = ToolCallSnapshot::from_tool_call(&tool_call);
         let reaction = reaction_for_tool_start(&snapshot);
         let mut reply_message_id = None;
+        let mut is_live = false;
 
         if let Ok(mut state) = self.state.lock() {
             let runtime = state.sessions.entry(session_id.to_owned()).or_default();
@@ -1660,17 +1692,27 @@ impl BridgeClient {
                 .tool_calls
                 .insert(tool_call_id.clone(), snapshot.clone());
             if let Some(active_turn) = runtime.active_turn.as_mut() {
+                is_live = true;
                 active_turn.started_tool_calls.insert(tool_call_id);
                 reply_message_id = Some(reaction_target_message_id(active_turn).to_owned());
             }
         }
 
+        if is_live {
+            info!(
+                kind = snapshot.kind.as_deref().unwrap_or("Unknown"),
+                title = snapshot.title.as_deref().unwrap_or("(untitled)"),
+                reaction = reaction.map(ReactionEmoji::as_str),
+                "tool call started"
+            );
+        }
         log_acp_event(
             &self.data_dir,
             &self.conversation_id,
             serde_json::json!({
                 "event": "acp_tool_call",
                 "session_id": session_id,
+                "kind": snapshot.kind,
                 "title": snapshot.title,
                 "reaction": reaction.map(ReactionEmoji::as_str),
             }),
@@ -1767,6 +1809,7 @@ impl ToolCallSnapshot {
     fn from_tool_call(tool_call: &acp::ToolCall) -> Self {
         Self {
             title: Some(tool_call.title.clone()),
+            kind: Some(format!("{:?}", tool_call.kind)),
             raw_input: tool_call.raw_input.clone(),
             raw_output: tool_call.raw_output.clone(),
             meta: tool_call.meta.clone(),
@@ -1922,8 +1965,6 @@ impl acp::Client for BridgeClient {
                         {
                             Ok(message_id) => {
                                 info!(
-                                    stream_index = 1,
-                                    stream_count = 1,
                                     message_id = %sender_short_id(&message_id),
                                     bytes = text.len(),
                                     send_ms = t_send.elapsed().as_millis(),
@@ -1937,8 +1978,6 @@ impl acp::Client for BridgeClient {
                                         "event": "xmtp_stream_sent_meta",
                                         "conversation_id": self.conversation_id,
                                         "message_id": message_id,
-                                        "stream_index": 1,
-                                        "stream_count": 1,
                                     }),
                                 );
                                 if let Ok(mut state) = self.state.lock() {
