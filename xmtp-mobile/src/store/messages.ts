@@ -177,8 +177,9 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
       }
 
       // Apply reactions to their referenced messages (duplicates allowed)
+      const itemById = new Map(items.map((m) => [m.id as string, m]));
       for (const r of reactions) {
-        const target = items.find((m) => (m.id as string) === r.referenceMessageId);
+        const target = itemById.get(r.referenceMessageId);
         if (!target) continue;
         const prev = target.reactions ?? {};
         const senders = prev[r.emoji] ?? [];

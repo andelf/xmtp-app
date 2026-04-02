@@ -13,9 +13,11 @@ import { replyHandler } from "./handlers/reply";
 import { reactionHandler } from "./handlers/reaction";
 import { readReceiptHandler } from "./handlers/readReceipt";
 import { groupUpdatedHandler } from "./handlers/groupUpdated";
+import { markdownHandler } from "./handlers/markdown";
 
 registerContentType(textHandler);
 registerContentType(replyHandler);
 registerContentType(reactionHandler);
 registerContentType(readReceiptHandler);
 registerContentType(groupUpdatedHandler);
+registerContentType(markdownHandler);

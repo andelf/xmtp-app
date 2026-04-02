@@ -4,7 +4,7 @@
 import type { ReplyRef, ReactionInfo, ReadReceiptInfo, DecodedMessageLike } from "../utils/messageDecoder";
 
 export type DecodeResult =
-  | { kind: "message"; text: string; replyRef?: ReplyRef }
+  | { kind: "message"; text: string; replyRef?: ReplyRef; format?: "markdown" }
   | { kind: "reaction"; info: ReactionInfo }
   | { kind: "readReceipt"; info: ReadReceiptInfo }
   | { kind: "skip" };

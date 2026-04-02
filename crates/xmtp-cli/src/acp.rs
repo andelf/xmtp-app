@@ -14,7 +14,7 @@ use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use tokio::process::Command;
 use tokio::task::LocalSet;
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, sleep, timeout};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{error, info, warn};
 use xmtp_core::ConnectionState;
@@ -143,14 +143,22 @@ async fn run_acp_inner(
         }
     });
 
-    conn.initialize(
-        acp::InitializeRequest::new(acp::ProtocolVersion::V1).client_info(
-            acp::Implementation::new("xmtp-cli-acp", env!("CARGO_PKG_VERSION"))
-                .title("XMTP ACP Bridge"),
-        ),
-    )
-    .await
-    .context("ACP initialize")?;
+    let init = conn
+        .initialize(
+            acp::InitializeRequest::new(acp::ProtocolVersion::V1).client_info(
+                acp::Implementation::new("xmtp-cli-acp", env!("CARGO_PKG_VERSION"))
+                    .title("XMTP ACP Bridge"),
+            ),
+        )
+        .await
+        .context("ACP initialize")?;
+    let init_json = serde_json::json!({
+        "protocol_version": init.protocol_version,
+        "agent_info": init.agent_info,
+        "agent_capabilities": init.agent_capabilities,
+        "auth_methods": init.auth_methods,
+    });
+    info!(initialize = %init_json, "ACP initialized");
 
     let cwd = std::env::current_dir().context("read current working directory")?;
     let session_id = ensure_acp_session(
@@ -184,9 +192,17 @@ async fn run_acp_inner(
         error!("ACP bridge error: {err:#}");
     }
 
-    let _ = child.start_kill();
-    let _ = child.wait().await;
     io_handle.abort();
+    let _ = child.start_kill();
+    match timeout(Duration::from_secs(2), child.wait()).await {
+        Ok(Ok(_status)) => {}
+        Ok(Err(err)) => {
+            warn!("ACP subprocess wait failed during shutdown: {err:#}");
+        }
+        Err(_) => {
+            warn!("ACP subprocess did not exit within 2s; continuing shutdown");
+        }
+    }
     bridge_result
 }
 

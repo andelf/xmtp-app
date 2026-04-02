@@ -30,6 +30,8 @@ export interface MessageItem {
   text: string;
   /** Original content type URI (e.g. "xmtp.org/text:1.0") */
   contentType: string;
+  /** Rendering format hint from content handler */
+  format?: "markdown";
   /** Sent timestamp (epoch ms) */
   sentAt: number;
   /** Delivery status */
@@ -88,6 +90,7 @@ export function decodedToMessageItem(
     senderInboxId: msg.senderInboxId,
     text: result.text,
     contentType: msg.contentTypeId ?? "xmtp.org/text:1.0",
+    format: result.format,
     sentAt: msg.sentNs ? msg.sentNs / 1_000_000 : Date.now(),
     status: msg.deliveryStatus ?? "published",
     isOwn: msg.senderInboxId === myInboxId,

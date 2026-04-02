@@ -209,7 +209,7 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry 
   const isSending = item.status === "sending";
   const isFailed = item.status === "failed";
 
-  const isMarkdown = item.contentType?.includes("markdown") === true;
+  const isMarkdown = item.format === "markdown";
 
   // Resolve sender inboxId to Ethereum address for display
   const senderAddress = useSenderAddress(item.senderInboxId);
@@ -261,7 +261,7 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry 
       // Toggle: add if not reacted, remove one if already reacted
       sendReaction(item.conversationId, item.id as string, emoji, iReacted ? "removed" : "added");
     },
-    [item.conversationId, item.id, item.reactions, myInboxId]
+    [item, myInboxId]
   );
 
   return (

@@ -92,33 +92,34 @@ export async function findConversation(conversationId: string) {
   return convo;
 }
 
-/**
- * Send a reaction to a message.
- * Passes NativeMessageContent directly to convo.send() to avoid codec registration.
- */
-/**
- * Pending optimistic reactions — keyed by "msgId:emoji:action", value is skip count.
- * When the stream delivers our own reaction back, we decrement instead of applying.
- */
+/** Pending optimistic reactions — keyed by "msgId:emoji:action", value is skip count. */
 const pendingReactions = new Map<string, number>();
 
 function pendingKey(msgId: string, emoji: string, action: string): string {
   return `${msgId}:${emoji}:${action}`;
 }
 
-/**
- * Check if a self-reaction from the stream should be skipped (already applied optimistically).
- * Called by the stream handler before applyReaction.
- */
+function decrementPending(key: string): void {
+  const c = pendingReactions.get(key) ?? 0;
+  if (c <= 1) pendingReactions.delete(key);
+  else pendingReactions.set(key, c - 1);
+}
+
+/** Check if a self-reaction from the stream should be skipped (already applied optimistically). */
 export function consumePendingReaction(referenceMessageId: string, emoji: string, action: string): boolean {
   const key = pendingKey(referenceMessageId, emoji, action);
   const count = pendingReactions.get(key) ?? 0;
   if (count > 0) {
-    if (count === 1) pendingReactions.delete(key);
-    else pendingReactions.set(key, count - 1);
-    return true; // skip — already applied
+    decrementPending(key);
+    return true;
   }
   return false;
+}
+
+/** Clear module-level state (call on logout). */
+export function clearMessageModuleState(): void {
+  pendingReactions.clear();
+  lastReadReceiptSent.clear();
 }
 
 export async function sendReaction(
@@ -139,10 +140,8 @@ export async function sendReaction(
   try {
     const convo = await findConversation(conversationId);
     if (!convo) {
-      // Rollback
       useMessageStore.getState().applyReaction({ ...reactionInfo, action: rollbackAction });
-      const c = pendingReactions.get(key) ?? 0;
-      if (c <= 1) pendingReactions.delete(key); else pendingReactions.set(key, c - 1);
+      decrementPending(key);
       return false;
     }
 
@@ -159,10 +158,8 @@ export async function sendReaction(
     return true;
   } catch (err) {
     console.error("[sendReaction] Failed:", err);
-    // Rollback optimistic update
     useMessageStore.getState().applyReaction({ ...reactionInfo, action: rollbackAction });
-    const c = pendingReactions.get(key) ?? 0;
-    if (c <= 1) pendingReactions.delete(key); else pendingReactions.set(key, c - 1);
+    decrementPending(key);
     return false;
   }
 }
