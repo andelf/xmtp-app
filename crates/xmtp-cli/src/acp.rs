@@ -38,10 +38,15 @@ static TRACING_INIT: OnceLock<()> = OnceLock::new();
 
 fn init_acp_tracing() {
     TRACING_INIT.get_or_init(|| {
+        let time_format = time::macros::format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3][offset_hour sign:mandatory]:[offset_minute]"
+        );
+        let timer = tracing_subscriber::fmt::time::LocalTime::new(time_format);
         let subscriber = tracing_subscriber::fmt()
+            .with_timer(timer)
             .with_target(false)
-            .with_thread_ids(true)
-            .with_thread_names(true)
+            .with_thread_ids(false)
+            .with_thread_names(false)
             .with_ansi(true)
             .with_writer(std::io::stderr)
             .with_env_filter(
@@ -215,10 +220,10 @@ struct BridgeState {
 #[derive(Debug, Default)]
 struct SessionRuntime {
     chunks: Vec<String>,
-    stream_buffer: String,
     full_text: String,
     tool_calls: HashMap<String, ToolCallSnapshot>,
     active_turn: Option<ActiveTurn>,
+    stream_sent_count: usize,
 }
 
 #[derive(Debug, Default)]
@@ -231,6 +236,7 @@ struct ActiveTurn {
 struct PromptReply {
     full_text: String,
     remaining_text: String,
+    streamed_parts: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -675,7 +681,96 @@ async fn bridge_history_to_acp(
                         last_connection_state = status.connection_state;
 
                         if should_force_reconnect {
+                            // Catch up on messages that may have arrived while the
+                            // daemon was disconnected.  We pull the full history and
+                            // forward any items not yet in seen_message_ids.
+                            let catch_up_items = catch_up_unseen_items(
+                                data_dir,
+                                conversation_id,
+                                self_inbox_id,
+                                state,
+                            )
+                            .await;
+                            let catch_up_count = catch_up_items.len();
+                            for item in catch_up_items {
+                                let source_message_id = item.message_id.clone();
+                                let t_received = std::time::Instant::now();
+                                info!(
+                                    sender = %sender_short_id(&item.sender_inbox_id),
+                                    message = %truncate_display(&item.content, 80),
+                                    "catch-up message after reconnect"
+                                );
+                                if enable_reaction {
+                                    send_reaction(
+                                        &base_url,
+                                        data_dir,
+                                        conversation_id,
+                                        &source_message_id,
+                                        ReactionEmoji::Eyes,
+                                    );
+                                }
+                                log_acp_event(
+                                    data_dir,
+                                    conversation_id,
+                                    serde_json::json!({
+                                        "event": "user_message",
+                                        "conversation_id": conversation_id,
+                                        "sender_inbox_id": item.sender_inbox_id.clone(),
+                                        "content": item.content.clone(),
+                                        "catch_up": true,
+                                    }),
+                                );
+                                let reply = match prompt_agent(
+                                    data_dir,
+                                    conversation_id,
+                                    conn,
+                                    session_id,
+                                    state,
+                                    reply_mode,
+                                    item,
+                                    context_prefix,
+                                )
+                                .await
+                                {
+                                    Ok(reply) => reply,
+                                    Err(err) => {
+                                        error!("ACP agent error on catch-up: {err:#}");
+                                        continue;
+                                    }
+                                };
+                                if !reply.full_text.trim().is_empty() {
+                                    let reply_parts = split_reply_for_mode(&reply, reply_mode);
+                                    let final_parts = reply_parts.len();
+                                    let total_parts = reply.streamed_parts + final_parts;
+                                    info!(
+                                        total_parts,
+                                        streamed_parts = reply.streamed_parts,
+                                        final_parts,
+                                        bytes = reply.full_text.len(),
+                                        total_ms = t_received.elapsed().as_millis(),
+                                        "sending catch-up reply"
+                                    );
+                                    for reply_part in &reply_parts {
+                                        if let Err(err) = send_reply_part(
+                                            data_dir,
+                                            conversation_id,
+                                            reply_part,
+                                            "xmtp_sent",
+                                        )
+                                        .await
+                                        {
+                                            error!("ACP catch-up reply send failed: {err:#}");
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
                             reconnect_attempt = reconnect_attempt.saturating_add(1);
+                            info!(
+                                catch_up_count,
+                                "force reconnect SSE after connection restored"
+                            );
                             log_acp_event(
                                 data_dir,
                                 conversation_id,
@@ -683,6 +778,7 @@ async fn bridge_history_to_acp(
                                     "event": "sse_reconnect",
                                     "attempt": reconnect_attempt,
                                     "reason": "connection_restored",
+                                    "catch_up_count": catch_up_count,
                                     "delay_ms": 0,
                                 }),
                             );
@@ -829,23 +925,15 @@ async fn bridge_history_to_acp(
                             }
                         };
                         if !reply.full_text.trim().is_empty() {
-                            let reply_parts = match reply_mode {
-                                ReplyMode::Single => {
-                                    if reply.remaining_text.trim().is_empty() {
-                                        vec![]
-                                    } else {
-                                        vec![split_markdown_reply(&reply.remaining_text)
-                                            .join("\n\n")]
-                                    }
-                                }
-                                ReplyMode::Stream => {
-                                    split_markdown_reply(&reply.remaining_text)
-                                }
-                            };
+                            let reply_parts = split_reply_for_mode(&reply, reply_mode);
+                            let final_parts = reply_parts.len();
+                            let total_parts = reply.streamed_parts + final_parts;
                             info!(
-                                parts = reply_parts.len(),
+                                total_parts,
+                                streamed_parts = reply.streamed_parts,
+                                final_parts,
                                 bytes = reply.full_text.len(),
-                                elapsed_ms = t_received.elapsed().as_millis(),
+                                total_ms = t_received.elapsed().as_millis(),
                                 "sending reply"
                             );
                             let mut send_failed = false;
@@ -983,17 +1071,20 @@ async fn prompt_agent(
         end_session_turn(state, session_id_str(session_id));
         return Err(err).context("ACP prompt");
     }
-    info!(elapsed_ms = t_prompt.elapsed().as_millis(), "agent responded");
+    info!(
+        elapsed_ms = t_prompt.elapsed().as_millis(),
+        "agent responded"
+    );
 
     // Allow any final session notifications to land before we read the buffered chunks.
     sleep(Duration::from_millis(100)).await;
 
     let remaining_chunks = take_session_chunks(state, session_id_str(session_id)).join("");
     let full_text = take_session_full_text(state, session_id_str(session_id));
-    let remaining_stream = take_session_stream_buffer(state, session_id_str(session_id));
+    let streamed_parts = take_streamed_part_count(state, session_id_str(session_id));
     let remaining_text = match reply_mode {
         ReplyMode::Single => remaining_chunks,
-        ReplyMode::Stream => remaining_stream,
+        ReplyMode::Stream => remaining_chunks,
     };
     end_session_turn(state, session_id_str(session_id));
     log_acp_event(
@@ -1012,6 +1103,7 @@ async fn prompt_agent(
     Ok(PromptReply {
         full_text,
         remaining_text,
+        streamed_parts,
     })
 }
 
@@ -1081,24 +1173,7 @@ async fn seed_seen_history_items(
     self_inbox_id: Option<&str>,
     state: &Arc<Mutex<BridgeState>>,
 ) -> anyhow::Result<()> {
-    let mut before_ns = None;
-
-    for _ in 0..100 {
-        let path = match before_ns {
-            Some(before_ns) => {
-                format!(
-                    "/v1/conversations/{conversation_id}/history?limit=200&before_ns={before_ns}"
-                )
-            }
-            None => format!("/v1/conversations/{conversation_id}/history?limit=200"),
-        };
-        let response: xmtp_ipc::HistoryResponse = http_get(data_dir, &path)
-            .await
-            .with_context(|| format!("load conversation history page for {conversation_id}"))?;
-        if response.items.is_empty() {
-            break;
-        }
-
+    paginate_history(data_dir, conversation_id, 100, |response| {
         if let Ok(mut bridge_state) = state.lock() {
             for item in &response.items {
                 if should_forward_item(item, self_inbox_id) {
@@ -1108,18 +1183,67 @@ async fn seed_seen_history_items(
                 }
             }
         }
+    })
+    .await
+}
 
+/// Fetch recent history and return items not yet in `seen_message_ids`.
+/// Each returned item is also marked as seen so it won't be processed again.
+async fn catch_up_unseen_items(
+    data_dir: &Path,
+    conversation_id: &str,
+    self_inbox_id: Option<&str>,
+    state: &Arc<Mutex<BridgeState>>,
+) -> Vec<HistoryItem> {
+    let mut unseen = Vec::new();
+    let _ = paginate_history(data_dir, conversation_id, 10, |response| {
+        if let Ok(mut bridge_state) = state.lock() {
+            for item in &response.items {
+                if !should_forward_item(item, self_inbox_id) {
+                    continue;
+                }
+                let key = item.message_id.to_lowercase();
+                if bridge_state.seen_message_ids.insert(key) {
+                    unseen.push(item.clone());
+                }
+            }
+        }
+    })
+    .await;
+    unseen.sort_by(|a, b| a.sent_at_ns.cmp(&b.sent_at_ns));
+    unseen
+}
+
+async fn paginate_history(
+    data_dir: &Path,
+    conversation_id: &str,
+    max_pages: usize,
+    mut on_page: impl FnMut(&xmtp_ipc::HistoryResponse),
+) -> anyhow::Result<()> {
+    let mut before_ns = None;
+    for _ in 0..max_pages {
+        let path = match before_ns {
+            Some(ns) => {
+                format!("/v1/conversations/{conversation_id}/history?limit=200&before_ns={ns}")
+            }
+            None => format!("/v1/conversations/{conversation_id}/history?limit=200"),
+        };
+        let response: xmtp_ipc::HistoryResponse = http_get(data_dir, &path)
+            .await
+            .with_context(|| format!("load conversation history page for {conversation_id}"))?;
+        if response.items.is_empty() {
+            break;
+        }
+        on_page(&response);
         if response.items.len() < 200 {
             break;
         }
-
         let next_before_ns = response.items.first().map(|item| item.sent_at_ns);
         if next_before_ns.is_none() || next_before_ns == before_ns {
             break;
         }
         before_ns = next_before_ns;
     }
-
     Ok(())
 }
 
@@ -1144,9 +1268,9 @@ fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, source_
     if let Ok(mut state) = state.lock() {
         let runtime = state.sessions.entry(session_id.to_owned()).or_default();
         runtime.chunks.clear();
-        runtime.stream_buffer.clear();
         runtime.full_text.clear();
         runtime.tool_calls.clear();
+        runtime.stream_sent_count = 0;
         runtime.active_turn = Some(ActiveTurn {
             source_message_id: source_message_id.to_owned(),
             started_tool_calls: HashSet::new(),
@@ -1172,13 +1296,13 @@ fn take_session_chunks(state: &Arc<Mutex<BridgeState>>, session_id: &str) -> Vec
     Vec::new()
 }
 
-fn take_session_stream_buffer(state: &Arc<Mutex<BridgeState>>, session_id: &str) -> String {
+fn take_streamed_part_count(state: &Arc<Mutex<BridgeState>>, session_id: &str) -> usize {
     if let Ok(mut state) = state.lock()
         && let Some(runtime) = state.sessions.get_mut(session_id)
     {
-        return std::mem::take(&mut runtime.stream_buffer);
+        return runtime.stream_sent_count;
     }
-    String::new()
+    0
 }
 
 fn take_session_full_text(state: &Arc<Mutex<BridgeState>>, session_id: &str) -> String {
@@ -1213,6 +1337,19 @@ fn truncate_display(s: &str, max: usize) -> String {
         single_line
     } else {
         format!("{}...", single_line.chars().take(max).collect::<String>())
+    }
+}
+
+fn split_reply_for_mode(reply: &PromptReply, mode: ReplyMode) -> Vec<String> {
+    match mode {
+        ReplyMode::Single => {
+            if reply.remaining_text.trim().is_empty() {
+                vec![]
+            } else {
+                vec![split_markdown_reply(&reply.remaining_text).join("\n\n")]
+            }
+        }
+        ReplyMode::Stream => split_markdown_reply(&reply.remaining_text),
     }
 }
 
@@ -1290,33 +1427,6 @@ fn split_long_markdown_block(block: &str, max_chars: usize) -> Vec<String> {
 
     parts
 }
-
-
-fn extract_streamable_markdown_parts(buffer: &str) -> (Vec<String>, String) {
-    let blocks = split_markdown_blocks(buffer);
-    if blocks.is_empty() {
-        return (Vec::new(), buffer.to_owned());
-    }
-
-    let mut completed = blocks;
-    let trailing = completed.pop().unwrap_or_default();
-    let mut parts = Vec::new();
-    let mut index = 0;
-    while index < completed.len() {
-        let mut block = completed[index].clone();
-        if block.starts_with('#')
-            && let Some(next_block) = completed.get(index + 1)
-        {
-            block = format!("{block}\n\n{next_block}");
-            index += 1;
-        }
-        parts.push(block);
-        index += 1;
-    }
-
-    (parts, trailing)
-}
-
 fn split_markdown_blocks(reply: &str) -> Vec<String> {
     let mut blocks = Vec::new();
     let mut current = String::new();
@@ -1719,50 +1829,17 @@ impl acp::Client for BridgeClient {
                     acp::ContentBlock::Resource(_) => "<resource>".to_owned(),
                     _ => "<unsupported>".to_owned(),
                 };
-                let mut stream_parts = Vec::new();
                 if let Ok(mut state) = self.state.lock() {
-                    let runtime = state.sessions.entry(session_id).or_default();
+                    let runtime = state.sessions.entry(session_id.clone()).or_default();
                     if runtime.active_turn.is_none() {
                         return Ok(());
                     }
                     runtime.chunks.push(text.clone());
                     runtime.full_text.push_str(&text);
-
-                    if self.reply_mode == ReplyMode::Stream {
-                        runtime.stream_buffer.push_str(&text);
-                        let (parts, remainder) =
-                            extract_streamable_markdown_parts(&runtime.stream_buffer);
-                        runtime.stream_buffer = remainder;
-                        stream_parts = parts;
-                    }
-                }
-
-                if self.reply_mode == ReplyMode::Stream {
-                    for part in stream_parts {
-                        if let Err(err) = send_reply_part(
-                            &self.data_dir,
-                            &self.conversation_id,
-                            &part,
-                            "xmtp_stream_sent",
-                        )
-                        .await
-                        {
-                            error!("ACP streamed reply send failed: {err:#}");
-                            log_acp_event(
-                                &self.data_dir,
-                                &self.conversation_id,
-                                serde_json::json!({
-                                    "event": "error",
-                                    "message": format!("ACP streamed reply send failed: {err:#}"),
-                                }),
-                            );
-                            break;
-                        }
-                    }
                 }
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
-                let flushed_text = if self.reply_mode == ReplyMode::Single {
+                let flushed_text = if self.reply_mode == ReplyMode::Stream {
                     if let Ok(mut state) = self.state.lock() {
                         let runtime = state.sessions.entry(session_id.clone()).or_default();
                         if runtime.active_turn.is_some() {
@@ -1779,15 +1856,61 @@ impl acp::Client for BridgeClient {
                 self.handle_tool_call(&session_id, tool_call);
                 if let Some(text) = flushed_text {
                     if !text.trim().is_empty() {
-                        if let Err(err) = send_reply_part(
-                            &self.data_dir,
-                            &self.conversation_id,
-                            &text,
-                            "xmtp_sent",
-                        )
-                        .await
-                        {
-                            error!("ACP single flush send failed: {err:#}");
+                        let stream_parts = split_markdown_reply(&text);
+                        let part_count = stream_parts.len();
+                        let mut sent_count = 0usize;
+                        for (index, part) in stream_parts.into_iter().enumerate() {
+                            let t_send = std::time::Instant::now();
+                            match send_reply_part(
+                                &self.data_dir,
+                                &self.conversation_id,
+                                &part,
+                                "xmtp_stream_sent",
+                            )
+                            .await
+                            {
+                                Ok(message_id) => {
+                                    sent_count += 1;
+                                    info!(
+                                        stream_index = index + 1,
+                                        stream_count = part_count,
+                                        message_id = %sender_short_id(&message_id),
+                                        bytes = part.len(),
+                                        send_ms = t_send.elapsed().as_millis(),
+                                        "stream part sent"
+                                    );
+                                    log_acp_event(
+                                        &self.data_dir,
+                                        &self.conversation_id,
+                                        serde_json::json!({
+                                            "event": "xmtp_stream_sent_meta",
+                                            "conversation_id": self.conversation_id,
+                                            "message_id": message_id,
+                                            "stream_index": index + 1,
+                                            "stream_count": part_count,
+                                        }),
+                                    );
+                                }
+                                Err(err) => {
+                                    error!("ACP streamed reply send failed: {err:#}");
+                                    log_acp_event(
+                                        &self.data_dir,
+                                        &self.conversation_id,
+                                        serde_json::json!({
+                                            "event": "error",
+                                            "message": format!("ACP streamed reply send failed: {err:#}"),
+                                        }),
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                        if sent_count > 0 {
+                            if let Ok(mut state) = self.state.lock() {
+                                if let Some(runtime) = state.sessions.get_mut(&session_id) {
+                                    runtime.stream_sent_count += sent_count;
+                                }
+                            }
                         }
                     }
                 }
@@ -2022,13 +2145,14 @@ mod tests {
     }
 
     #[test]
-    fn begin_session_turn_clears_stream_buffer() {
+    fn begin_session_turn_clears_turn_buffers() {
         let state = Arc::new(Mutex::new(BridgeState::default()));
         if let Ok(mut bridge_state) = state.lock() {
             bridge_state.sessions.insert(
                 "session-1".to_owned(),
                 SessionRuntime {
-                    stream_buffer: "stale".to_owned(),
+                    chunks: vec!["stale".to_owned()],
+                    full_text: "stale".to_owned(),
                     ..SessionRuntime::default()
                 },
             );
@@ -2036,17 +2160,18 @@ mod tests {
 
         begin_session_turn(&state, "session-1", "message-1");
 
-        let stream_buffer = state
+        let (chunks, full_text) = state
             .lock()
             .ok()
             .and_then(|bridge_state| {
                 bridge_state
                     .sessions
                     .get("session-1")
-                    .map(|runtime| runtime.stream_buffer.clone())
+                    .map(|runtime| (runtime.chunks.clone(), runtime.full_text.clone()))
             })
             .unwrap_or_default();
 
-        assert!(stream_buffer.is_empty());
+        assert!(chunks.is_empty());
+        assert!(full_text.is_empty());
     }
 }

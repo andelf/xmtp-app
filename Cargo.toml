@@ -37,5 +37,5 @@ tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "sync", "ne
 tokio-stream = "0.1"
 textwrap = "0.16"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "local-time"] }
 xmtp = { version = "0.8.1", features = ["alloy"] }
