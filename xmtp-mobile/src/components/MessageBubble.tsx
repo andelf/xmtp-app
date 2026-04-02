@@ -15,7 +15,6 @@ import {
   Modal,
   TouchableWithoutFeedback,
   Linking,
-  Alert,
 } from "react-native";
 import { Text, Icon } from "react-native-paper";
 import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-markdown";
@@ -258,27 +257,9 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry 
   const handleBadgeTap = useCallback(
     (emoji: string) => {
       const senders = item.reactions?.[emoji] ?? [];
-      const myCount = senders.filter((s) => s === myInboxId).length;
-      if (myCount === 0) {
-        // Never reacted with this emoji — add directly
-        sendReaction(item.conversationId, item.id as string, emoji);
-      } else {
-        // Already reacted — ask add or remove
-        Alert.alert(emoji, `You reacted ${myCount}×`, [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Remove one",
-            style: "destructive",
-            onPress: () =>
-              sendReaction(item.conversationId, item.id as string, emoji, "removed"),
-          },
-          {
-            text: "Add another",
-            onPress: () =>
-              sendReaction(item.conversationId, item.id as string, emoji),
-          },
-        ]);
-      }
+      const iReacted = senders.includes(myInboxId);
+      // Toggle: add if not reacted, remove one if already reacted
+      sendReaction(item.conversationId, item.id as string, emoji, iReacted ? "removed" : "added");
     },
     [item.conversationId, item.id, item.reactions, myInboxId]
   );

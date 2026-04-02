@@ -96,15 +96,55 @@ export async function findConversation(conversationId: string) {
  * Send a reaction to a message.
  * Passes NativeMessageContent directly to convo.send() to avoid codec registration.
  */
+/**
+ * Pending optimistic reactions — keyed by "msgId:emoji:action", value is skip count.
+ * When the stream delivers our own reaction back, we decrement instead of applying.
+ */
+const pendingReactions = new Map<string, number>();
+
+function pendingKey(msgId: string, emoji: string, action: string): string {
+  return `${msgId}:${emoji}:${action}`;
+}
+
+/**
+ * Check if a self-reaction from the stream should be skipped (already applied optimistically).
+ * Called by the stream handler before applyReaction.
+ */
+export function consumePendingReaction(referenceMessageId: string, emoji: string, action: string): boolean {
+  const key = pendingKey(referenceMessageId, emoji, action);
+  const count = pendingReactions.get(key) ?? 0;
+  if (count > 0) {
+    if (count === 1) pendingReactions.delete(key);
+    else pendingReactions.set(key, count - 1);
+    return true; // skip — already applied
+  }
+  return false;
+}
+
 export async function sendReaction(
   conversationId: string,
   referenceMessageId: string,
   emoji: string,
   action: "added" | "removed" = "added"
 ): Promise<boolean> {
+  const myInboxId = useAuthStore.getState().inboxId ?? "";
+  const reactionInfo = { conversationId, referenceMessageId, emoji, action, senderInboxId: myInboxId };
+  const rollbackAction = action === "added" ? "removed" : "added";
+  const key = pendingKey(referenceMessageId, emoji, action);
+
+  // Optimistically apply before network call and mark as pending
+  useMessageStore.getState().applyReaction(reactionInfo);
+  pendingReactions.set(key, (pendingReactions.get(key) ?? 0) + 1);
+
   try {
     const convo = await findConversation(conversationId);
-    if (!convo) return false;
+    if (!convo) {
+      // Rollback
+      useMessageStore.getState().applyReaction({ ...reactionInfo, action: rollbackAction });
+      const c = pendingReactions.get(key) ?? 0;
+      if (c <= 1) pendingReactions.delete(key); else pendingReactions.set(key, c - 1);
+      return false;
+    }
 
     // Send as NativeMessageContent — the native bridge handles it directly
     await convo.send({
@@ -116,19 +156,13 @@ export async function sendReaction(
       },
     } as any);
 
-    // Optimistically apply locally
-    const myInboxId = useAuthStore.getState().inboxId ?? "";
-    useMessageStore.getState().applyReaction({
-      conversationId,
-      referenceMessageId,
-      emoji,
-      action,
-      senderInboxId: myInboxId,
-    });
-
     return true;
   } catch (err) {
     console.error("[sendReaction] Failed:", err);
+    // Rollback optimistic update
+    useMessageStore.getState().applyReaction({ ...reactionInfo, action: rollbackAction });
+    const c = pendingReactions.get(key) ?? 0;
+    if (c <= 1) pendingReactions.delete(key); else pendingReactions.set(key, c - 1);
     return false;
   }
 }

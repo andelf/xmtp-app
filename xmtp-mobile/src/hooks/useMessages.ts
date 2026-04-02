@@ -14,7 +14,7 @@ import { useEffect, useRef, useCallback } from "react";
 import type { ConversationId } from "@xmtp/react-native-sdk";
 import { useAuthStore } from "../store/auth";
 import { useMessageStore, decodedToMessageItem, decodedToReaction, decodedToReadReceipt } from "../store/messages";
-import { findConversation, sendReadReceipt } from "../xmtp/messages";
+import { findConversation, sendReadReceipt, consumePendingReaction } from "../xmtp/messages";
 import { getNativeContent } from "../utils/nativeContent";
 import { MAX_RECONNECT, backoffDelay } from "../utils/reconnect";
 
@@ -80,6 +80,12 @@ export function useMessages(conversationId: ConversationId | null, options?: Use
 
               const reaction = decodedToReaction(decodedMsg, conversationId);
               if (reaction) {
+                // Skip if this is our own reaction that was already optimistically applied
+                const myInboxId = useAuthStore.getState().inboxId ?? "";
+                if (reaction.senderInboxId === myInboxId &&
+                    consumePendingReaction(reaction.referenceMessageId, reaction.emoji, reaction.action)) {
+                  return;
+                }
                 useMessageStore.getState().applyReaction(reaction);
                 return;
               }
