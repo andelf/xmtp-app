@@ -34,6 +34,26 @@ pub enum ReplyMode {
     Stream,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ReactionLevel {
+    /// No reactions
+    Off,
+    /// Eyes on receive, warning on error, done on completion
+    Basic,
+    /// Detailed per-tool-call emoji (read, edit, execute, search, etc.)
+    Verbose,
+}
+
+impl ReactionLevel {
+    fn allows_basic(self) -> bool {
+        matches!(self, Self::Basic | Self::Verbose)
+    }
+
+    fn allows_verbose(self) -> bool {
+        matches!(self, Self::Verbose)
+    }
+}
+
 static TRACING_INIT: OnceLock<()> = OnceLock::new();
 
 fn init_acp_tracing() {
@@ -62,7 +82,7 @@ pub async fn run_acp(
     data_dir: PathBuf,
     conversation_id: String,
     context_prefix: bool,
-    enable_reaction: bool,
+    reactions: ReactionLevel,
     reply_mode: ReplyMode,
     resume: Option<String>,
     command: Vec<String>,
@@ -74,7 +94,7 @@ pub async fn run_acp(
             data_dir,
             conversation_id,
             context_prefix,
-            enable_reaction,
+            reactions,
             reply_mode,
             resume,
             command,
@@ -86,7 +106,7 @@ async fn run_acp_inner(
     data_dir: PathBuf,
     conversation_id: String,
     context_prefix: bool,
-    enable_reaction: bool,
+    reactions: ReactionLevel,
     reply_mode: ReplyMode,
     resume: Option<String>,
     command: Vec<String>,
@@ -124,7 +144,7 @@ async fn run_acp_inner(
         base_url: base_url.clone(),
         data_dir: data_dir.clone(),
         conversation_id: conversation_id.clone(),
-        enable_reaction,
+        reactions,
         reply_mode,
         state: Arc::clone(&state),
     };
@@ -179,7 +199,7 @@ async fn run_acp_inner(
         &conversation_id,
         self_inbox_id.as_deref(),
         context_prefix,
-        enable_reaction,
+        reactions,
         reply_mode,
         status,
         &conn,
@@ -581,7 +601,7 @@ async fn bridge_history_to_acp(
     conversation_id: &str,
     self_inbox_id: Option<&str>,
     context_prefix: bool,
-    enable_reaction: bool,
+    reactions: ReactionLevel,
     reply_mode: ReplyMode,
     initial_status: StatusResponse,
     conn: &acp::ClientSideConnection,
@@ -766,7 +786,7 @@ async fn bridge_history_to_acp(
                                     message = %truncate_display(&item.content, 80),
                                     "catch-up message after reconnect"
                                 );
-                                if enable_reaction {
+                                if reactions.allows_basic() {
                                     send_reaction(
                                         &base_url,
                                         data_dir,
@@ -942,7 +962,7 @@ async fn bridge_history_to_acp(
                             message = %truncate_display(&item.content, 80),
                             "received conversation message"
                         );
-                        if enable_reaction {
+                        if reactions.allows_basic() {
                             send_reaction(
                                 &base_url,
                                 data_dir,
@@ -1054,7 +1074,7 @@ async fn bridge_history_to_acp(
                             if send_failed {
                                 continue;
                             }
-                            if enable_reaction && reply_mode == ReplyMode::Stream {
+                            if reactions.allows_basic() && reply_mode == ReplyMode::Stream {
                                 send_reaction(
                                     &base_url,
                                     data_dir,
@@ -1691,7 +1711,7 @@ struct BridgeClient {
     base_url: String,
     data_dir: PathBuf,
     conversation_id: String,
-    enable_reaction: bool,
+    reactions: ReactionLevel,
     reply_mode: ReplyMode,
     state: Arc<Mutex<BridgeState>>,
 }
@@ -1737,7 +1757,7 @@ impl BridgeClient {
         );
 
         if let (true, Some(message_id), Some(emoji)) =
-            (self.enable_reaction, reply_message_id, reaction)
+            (self.reactions.allows_verbose(), reply_message_id, reaction)
         {
             send_reaction(
                 &self.base_url,
@@ -1796,21 +1816,21 @@ impl BridgeClient {
             }),
         );
 
-        if !self.enable_reaction {
-            return;
-        }
-
         if let Some(message_id) = reply_message_id {
-            if let Some(emoji) = start_reaction {
-                send_reaction(
-                    &self.base_url,
-                    &self.data_dir,
-                    &self.conversation_id,
-                    &message_id,
-                    emoji,
-                );
+            // Verbose: per-tool-call emoji
+            if self.reactions.allows_verbose() {
+                if let Some(emoji) = start_reaction {
+                    send_reaction(
+                        &self.base_url,
+                        &self.data_dir,
+                        &self.conversation_id,
+                        &message_id,
+                        emoji,
+                    );
+                }
             }
-            if failure {
+            // Basic: warning on failure
+            if self.reactions.allows_basic() && failure {
                 send_reaction(
                     &self.base_url,
                     &self.data_dir,

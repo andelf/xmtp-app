@@ -112,11 +112,12 @@ enum Command {
         )]
         context_prefix: bool,
         #[arg(
-            long = "enable-reaction",
-            default_value_t = false,
-            help = "React with eyes emoji on incoming messages to indicate processing"
+            long = "reactions",
+            value_enum,
+            default_value_t = acp::ReactionLevel::Off,
+            help = "Reaction level: off (none), basic (eyes + warning + done), verbose (per-tool-call emoji)"
         )]
-        enable_reaction: bool,
+        reactions: acp::ReactionLevel,
         #[arg(
             long = "reply-mode",
             value_enum,
@@ -407,7 +408,7 @@ async fn run() -> anyhow::Result<()> {
         Command::Acp {
             conversation_id,
             context_prefix,
-            enable_reaction,
+            reactions,
             reply_mode,
             resume,
             command,
@@ -416,7 +417,7 @@ async fn run() -> anyhow::Result<()> {
                 data_dir,
                 conversation_id,
                 context_prefix,
-                enable_reaction,
+                reactions,
                 reply_mode,
                 resume,
                 command,
