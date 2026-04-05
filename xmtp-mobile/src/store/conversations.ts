@@ -161,6 +161,8 @@ export interface ConversationState {
   /** Reverse lookup: topic string -> conversation id string */
   topicToId: Map<string, string>;
   isLoading: boolean;
+  /** Background network sync in progress (local cache already displayed). */
+  isSyncing: boolean;
   error: string | null;
   /** The conversation id currently being viewed (skip unread increment). */
   activeConversationId: string | null;
@@ -194,6 +196,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
   items: new Map(),
   topicToId: new Map(),
   isLoading: false,
+  isSyncing: false,
   error: null,
   activeConversationId: null,
 
@@ -204,30 +207,42 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       return;
     }
 
-    set({ isLoading: true, error: null });
-    try {
-      await client.conversations.sync();
+    const myInboxId = client.inboxId;
 
+    const loadLocal = async () => {
       const groups = await client.conversations.listGroups();
       const dms = await client.conversations.listDms();
       const all: Conversation[] = [...groups, ...dms];
-
-      const myInboxId = client.inboxId;
       const nextItems = new Map<string, ConversationItem>();
       const nextTopicToId = new Map<string, string>();
-
       const converted = await Promise.all(all.map((c) => conversationToItem(c, myInboxId)));
-
       for (const item of converted) {
         const idStr = item.id as string;
         nextItems.set(idStr, item);
         nextTopicToId.set(item.topic as string, idStr);
       }
+      return { nextItems, nextTopicToId };
+    };
 
-      set({ items: nextItems, topicToId: nextTopicToId, isLoading: false });
+    // 1. Show local cache immediately
+    set({ isLoading: true, error: null });
+    try {
+      const { nextItems, nextTopicToId } = await loadLocal();
+      set({ items: nextItems, topicToId: nextTopicToId, isLoading: false, isSyncing: true });
     } catch (err: any) {
-      console.error("[ConversationStore] fetchAll failed:", err);
+      console.error("[ConversationStore] local load failed:", err);
       set({ error: err?.message ?? String(err), isLoading: false });
+      return;
+    }
+
+    // 2. Background sync with network, then refresh
+    try {
+      await client.conversations.sync();
+      const { nextItems, nextTopicToId } = await loadLocal();
+      set({ items: nextItems, topicToId: nextTopicToId, isSyncing: false });
+    } catch (err: any) {
+      console.error("[ConversationStore] sync failed:", err);
+      set({ isSyncing: false });
     }
   },
 

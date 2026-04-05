@@ -2,7 +2,7 @@
  * Conversations list page -- displays all DM and Group conversations.
  */
 import React, { useCallback, useMemo, useState } from "react";
-import { View, StyleSheet, RefreshControl } from "react-native";
+import { View, StyleSheet, RefreshControl, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Appbar, Menu, Text, Button, Divider } from "react-native-paper";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
@@ -89,6 +89,7 @@ export default function ConversationsScreen() {
     return arr;
   }, [items]);
   const storeLoading = useConversationStore((s) => s.isLoading);
+  const isSyncing = useConversationStore((s) => s.isSyncing);
   const fetchAll = useConversationStore((s) => s.fetchAll);
   const address = useAuthStore((s) => s.address);
   const inboxId = useAuthStore((s) => s.inboxId);
@@ -207,6 +208,14 @@ export default function ConversationsScreen() {
         </Menu>
       </Appbar.Header>
 
+      {/* Syncing indicator */}
+      {isSyncing && (
+        <View style={styles.syncBar}>
+          <ActivityIndicator size="small" color="#CAC4D0" />
+          <Text variant="bodySmall" style={styles.syncText}>Syncing...</Text>
+        </View>
+      )}
+
       {/* Conversation list */}
       {storeLoading && conversations.length === 0 ? (
         <ConversationListSkeleton />
@@ -220,7 +229,7 @@ export default function ConversationsScreen() {
           contentContainerStyle={{ paddingBottom: insets.bottom }}
           refreshControl={
             <RefreshControl
-              refreshing={refreshing || storeLoading}
+              refreshing={refreshing}
               onRefresh={handleRefresh}
               tintColor="#CAC4D0"
               colors={["#6750A4"]}
@@ -277,5 +286,16 @@ const styles = StyleSheet.create({
   },
   menuItemTitle: {
     color: "#E6E1E5",
+  },
+  syncBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 6,
+    backgroundColor: "#2B2930",
+  },
+  syncText: {
+    color: "#CAC4D0",
+    marginLeft: 8,
   },
 });

@@ -44,6 +44,8 @@ export interface AuthState {
   env: string | null;
   isReady: boolean;
   isLoading: boolean;
+  /** Human-readable progress step shown during init/restore. */
+  statusText: string | null;
   error: string | null;
 }
 
@@ -70,12 +72,13 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   env: null,
   isReady: false,
   isLoading: false,
+  statusText: null,
   error: null,
 
   // Actions
   init: async (privateKey: string, env?: string, customLocalHost?: string) => {
     const resolvedEnv = (env ?? "dev") as "dev" | "production" | "local";
-    set({ isLoading: true, error: null });
+    set({ isLoading: true, error: null, statusText: "Preparing encryption keys..." });
     try {
       // Retrieve or generate DB encryption key
       let dbKeyHex = await SecureStore.getItemAsync(DB_KEY_STORE);
@@ -88,8 +91,10 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         await SecureStore.setItemAsync(DB_KEY_STORE, dbKeyHex);
       }
 
+      set({ statusText: "Connecting to XMTP network..." });
       const result = await initClient(privateKey, dbKey, resolvedEnv, customLocalHost);
 
+      set({ statusText: "Saving credentials..." });
       // Persist private key and env settings securely
       await SecureStore.setItemAsync(PRIVATE_KEY_STORE, privateKey);
       await SecureStore.setItemAsync(ENV_STORE, resolvedEnv);
@@ -106,22 +111,24 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         env: resolvedEnv,
         isReady: true,
         isLoading: false,
+        statusText: null,
       });
     } catch (err: any) {
       console.error("[XMTP] Init failed:", err);
       set({
         error: err?.message ?? String(err),
         isLoading: false,
+        statusText: null,
       });
     }
   },
 
   restore: async () => {
-    set({ isLoading: true, error: null });
+    set({ isLoading: true, error: null, statusText: "Restoring session..." });
     try {
       const privateKey = await SecureStore.getItemAsync(PRIVATE_KEY_STORE);
       if (!privateKey) {
-        set({ isLoading: false });
+        set({ isLoading: false, statusText: null });
         return;
       }
       const env = (await SecureStore.getItemAsync(ENV_STORE)) ?? "dev";
@@ -130,7 +137,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       await get().init(privateKey, env, customLocalHost);
     } catch (err: any) {
       console.error("[XMTP] Restore failed:", err);
-      set({ error: err?.message ?? String(err), isLoading: false });
+      set({ error: err?.message ?? String(err), isLoading: false, statusText: null });
     }
   },
 
