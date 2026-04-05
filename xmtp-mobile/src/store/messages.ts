@@ -151,7 +151,10 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
       // Sync conversation to get latest messages
       await convo.sync();
 
-      const limit = opts?.limit ?? 30;
+      // Fetch more than needed: reactions/read-receipts dilute visible messages.
+      // With heavy reaction usage, 90%+ of messages can be non-visible.
+      const desiredVisible = opts?.limit ?? 30;
+      const limit = desiredVisible * 10;
       const queryOpts: Record<string, any> = { limit };
       if (opts?.before) {
         // Convert ms to ns for the SDK
