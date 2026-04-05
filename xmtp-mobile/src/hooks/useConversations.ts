@@ -11,7 +11,7 @@
 import { useEffect, useRef } from "react";
 import { getClient } from "../xmtp/client";
 import { extractMarkdownPreview } from "../utils/markdown";
-import { extractNativeText } from "../utils/nativeContent";
+import { extractNativeText, getNativeContent } from "../utils/nativeContent";
 import { useConversationStore, conversationToItem } from "../store/conversations";
 import { log } from "../utils/logger";
 import { MAX_RECONNECT, backoffDelay } from "../utils/reconnect";
@@ -103,8 +103,20 @@ export function useConversations() {
                 if (!conversationId) return;
               }
 
+              // Detect self-removal from group via groupUpdated message
+              const contentTypeId = (message as any).contentTypeId as string | undefined;
+              if (contentTypeId?.includes("group_updated")) {
+                const nc = getNativeContent(message as any);
+                const removed = nc?.groupUpdated?.membersRemoved as { inboxId: string }[] | undefined;
+                if (removed?.some((m) => m.inboxId === client.inboxId)) {
+                  log("MsgStream", `self removed from group ${conversationId}, removing from store`);
+                  store().remove(conversationId);
+                  return;
+                }
+              }
+
               const raw = extractNativeText(message);
-              if (!raw) return; // skip reactions, read receipts, group updates
+              if (!raw) return; // skip reactions, read receipts
               const isMarkdown = (message as any).contentTypeId?.includes("markdown");
               let text: string | undefined;
               if (isMarkdown) {

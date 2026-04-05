@@ -157,7 +157,7 @@ export default function GroupDetailScreen() {
               Alert.alert("Error", res.error);
               return;
             }
-            // Navigate back — fetchAll on conversations page will clean up
+            useConversationStore.getState().remove(id);
             router.replace("/(main)/conversations");
           },
         },

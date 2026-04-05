@@ -146,6 +146,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     gap: 4,
     marginTop: 2,
+    minWidth: 62,
   },
   time: {
     color: "#938F99",

@@ -62,7 +62,9 @@ function truncateAddress(addr: string): string {
  */
 export async function conversationToItem(
   conversation: Conversation,
-  myInboxId?: string
+  myInboxId?: string,
+  /** Skip per-conversation sync for fast local-only load. */
+  skipSync?: boolean,
 ): Promise<ConversationItem> {
   const isGroup = conversation.version === ConversationVersion.GROUP;
   const kind: "group" | "dm" = isGroup ? "group" : "dm";
@@ -90,10 +92,12 @@ export async function conversationToItem(
     }
   }
 
-  // Sync conversation messages before fetching preview
-  try {
-    await conversation.sync();
-  } catch {}
+  // Sync conversation messages before fetching preview (skip for local-first load)
+  if (!skipSync) {
+    try {
+      await conversation.sync();
+    } catch {}
+  }
 
   // Fetch recent messages for preview — skip reactions, read receipts, group updates
   let lastMessageText: string | undefined;
@@ -173,6 +177,8 @@ export interface ConversationActions {
   fetchAll: () => Promise<void>;
   /** Insert or update a single conversation item. */
   upsert: (item: ConversationItem) => void;
+  /** Remove a conversation from the store (e.g. after leaving a group). */
+  remove: (conversationId: string) => void;
   /** Update the last message preview for a conversation. */
   updateLastMessage: (conversationId: string, text: string, timestamp: number) => void;
   /** Mark a conversation as read (reset unread count). */
@@ -209,13 +215,13 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
 
     const myInboxId = client.inboxId;
 
-    const loadLocal = async () => {
+    const loadLocal = async (skipSync?: boolean) => {
       const groups = await client.conversations.listGroups();
       const dms = await client.conversations.listDms();
       const all: Conversation[] = [...groups, ...dms];
       const nextItems = new Map<string, ConversationItem>();
       const nextTopicToId = new Map<string, string>();
-      const converted = await Promise.all(all.map((c) => conversationToItem(c, myInboxId)));
+      const converted = await Promise.all(all.map((c) => conversationToItem(c, myInboxId, skipSync)));
       for (const item of converted) {
         const idStr = item.id as string;
         nextItems.set(idStr, item);
@@ -224,10 +230,10 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       return { nextItems, nextTopicToId };
     };
 
-    // 1. Show local cache immediately
+    // 1. Show local cache immediately (skip per-conversation sync)
     set({ isLoading: true, error: null });
     try {
-      const { nextItems, nextTopicToId } = await loadLocal();
+      const { nextItems, nextTopicToId } = await loadLocal(true);
       set({ items: nextItems, topicToId: nextTopicToId, isLoading: false, isSyncing: true });
     } catch (err: any) {
       console.error("[ConversationStore] local load failed:", err);
@@ -253,6 +259,18 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       const idStr = item.id as string;
       next.set(idStr, item);
       nextTopic.set(item.topic as string, idStr);
+      return { items: next, topicToId: nextTopic };
+    });
+  },
+
+  remove: (conversationId) => {
+    set((state) => {
+      const existing = state.items.get(conversationId);
+      if (!existing) return state;
+      const next = new Map(state.items);
+      const nextTopic = new Map(state.topicToId);
+      next.delete(conversationId);
+      nextTopic.delete(existing.topic as string);
       return { items: next, topicToId: nextTopic };
     });
   },

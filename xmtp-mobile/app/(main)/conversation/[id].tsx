@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { View, StyleSheet, Keyboard } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { ActivityIndicator, IconButton } from "react-native-paper";
+import { ActivityIndicator, IconButton, Text } from "react-native-paper";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { useHeaderHeight } from "@react-navigation/elements";
@@ -38,16 +38,19 @@ export default function ConversationScreen() {
 
   const readReceiptsEnabled = useSettingsStore((s) => s.readReceipts);
 
-  // Resolve conversation title and kind from store
-  const conversationTitle = useConversationStore((s) => {
-    if (!id) return "Chat";
-    const item = s.items.get(id);
-    return item?.title ?? shortenAddress(id);
-  });
-  const isGroup = useConversationStore((s) => {
-    if (!id) return false;
-    return s.items.get(id)?.kind === "group";
-  });
+  // Resolve conversation from store (single lookup)
+  const conversationsLoading = useConversationStore((s) => s.isLoading);
+  const conversation = useConversationStore((s) => (id ? s.items.get(id) ?? null : null));
+  const conversationTitle = conversation?.title ?? (id ? shortenAddress(id) : "Chat");
+  const isGroup = conversation?.kind === "group";
+
+  // Guard: redirect to list if conversation was removed (e.g. left group)
+  // Skip while store is still loading to avoid false redirect on cold start.
+  useEffect(() => {
+    if (id && !conversationsLoading && !conversation) {
+      router.replace("/(main)/conversations");
+    }
+  }, [id, conversationsLoading, conversation, router]);
 
   // Load messages + start real-time stream for this conversation
   const { isLoading: messagesLoading, fetchMore } = useMessages(conversationId, {
@@ -111,7 +114,7 @@ export default function ConversationScreen() {
 
   // Messages from store
   const storeMessages = useMessageStore((s) => s.byConversation[id ?? ""] ?? EMPTY_MESSAGES);
-  const storeLoading = useMessageStore((s) => s.isLoading);
+  const historyLoading = useMessageStore((s) => s.isLoading);
 
   const messages = useMemo(() => {
     if (!storeMessages || storeMessages.length === 0) return [];
@@ -138,10 +141,10 @@ export default function ConversationScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
 
   const handleLoadMore = useCallback(() => {
-    if (loadingMore || storeLoading || messagesLoading) return;
+    if (loadingMore || historyLoading || messagesLoading) return;
     setLoadingMore(true);
     fetchMore().finally(() => setLoadingMore(false));
-  }, [loadingMore, storeLoading, messagesLoading, fetchMore]);
+  }, [loadingMore, historyLoading, messagesLoading, fetchMore]);
 
   const handleSend = useCallback(
     (text: string) => {
