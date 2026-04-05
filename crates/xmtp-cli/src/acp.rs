@@ -268,6 +268,15 @@ struct ToolCallSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReactionEmoji {
     Eyes,
+    Read,
+    Edit,
+    Delete,
+    Move,
+    Search,
+    Execute,
+    Think,
+    Fetch,
+    SwitchMode,
     Tool,
     Subagent,
     Warning,
@@ -278,6 +287,15 @@ impl ReactionEmoji {
     fn as_str(self) -> &'static str {
         match self {
             Self::Eyes => "👀",
+            Self::Read => "📖",
+            Self::Edit => "✏️",
+            Self::Delete => "🗑️",
+            Self::Move => "📦",
+            Self::Search => "🔍",
+            Self::Execute => "💻",
+            Self::Think => "🧠",
+            Self::Fetch => "🌐",
+            Self::SwitchMode => "🎛️",
             Self::Tool => "🛠️",
             Self::Subagent => "🤖",
             Self::Warning => "⚠️",
@@ -1817,6 +1835,9 @@ impl ToolCallSnapshot {
     }
 
     fn apply_update(&mut self, update: &acp::ToolCallUpdate) {
+        if let Some(kind) = update.fields.kind {
+            self.kind = Some(format!("{kind:?}"));
+        }
         if let Some(title) = &update.fields.title {
             self.title = Some(title.clone());
         }
@@ -1834,11 +1855,25 @@ impl ToolCallSnapshot {
 
 fn reaction_for_tool_start(snapshot: &ToolCallSnapshot) -> Option<ReactionEmoji> {
     if infer_subagent_tool(snapshot) {
-        Some(ReactionEmoji::Subagent)
-    } else if snapshot.title.is_some() || snapshot.raw_input.is_some() || snapshot.meta.is_some() {
-        Some(ReactionEmoji::Tool)
-    } else {
-        None
+        return Some(ReactionEmoji::Subagent);
+    }
+    match snapshot.kind.as_deref() {
+        Some("Read") => Some(ReactionEmoji::Read),
+        Some("Edit") => Some(ReactionEmoji::Edit),
+        Some("Delete") => Some(ReactionEmoji::Delete),
+        Some("Move") => Some(ReactionEmoji::Move),
+        Some("Search") => Some(ReactionEmoji::Search),
+        Some("Execute") => Some(ReactionEmoji::Execute),
+        Some("Think") => Some(ReactionEmoji::Think),
+        Some("Fetch") => Some(ReactionEmoji::Fetch),
+        Some("SwitchMode") => Some(ReactionEmoji::SwitchMode),
+        _ if snapshot.title.is_some()
+            || snapshot.raw_input.is_some()
+            || snapshot.meta.is_some() =>
+        {
+            Some(ReactionEmoji::Tool)
+        }
+        _ => None,
     }
 }
 
@@ -2070,6 +2105,7 @@ impl acp::Client for BridgeClient {
 
 #[cfg(test)]
 mod tests {
+    use agent_client_protocol::{ToolCallId, ToolCallUpdate, ToolCallUpdateFields, ToolKind};
     use anyhow::anyhow;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
@@ -2112,12 +2148,85 @@ mod tests {
     }
 
     #[test]
-    fn reaction_mapping_marks_regular_tool_as_wrench() {
-        let snapshot = ToolCallSnapshot {
+    fn reaction_mapping_uses_kind_specific_emoji() {
+        let read = ToolCallSnapshot {
+            kind: Some("Read".to_owned()),
             title: Some("Read src/main.rs".to_owned()),
             ..ToolCallSnapshot::default()
         };
+        assert_eq!(reaction_for_tool_start(&read), Some(ReactionEmoji::Read));
 
+        let edit = ToolCallSnapshot {
+            kind: Some("Edit".to_owned()),
+            title: Some("Apply patch".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+        assert_eq!(reaction_for_tool_start(&edit), Some(ReactionEmoji::Edit));
+
+        let search = ToolCallSnapshot {
+            kind: Some("Search".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+        assert_eq!(
+            reaction_for_tool_start(&search),
+            Some(ReactionEmoji::Search)
+        );
+
+        let execute = ToolCallSnapshot {
+            kind: Some("Execute".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+        assert_eq!(
+            reaction_for_tool_start(&execute),
+            Some(ReactionEmoji::Execute)
+        );
+
+        let think = ToolCallSnapshot {
+            kind: Some("Think".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+        assert_eq!(reaction_for_tool_start(&think), Some(ReactionEmoji::Think));
+
+        let fetch = ToolCallSnapshot {
+            kind: Some("Fetch".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+        assert_eq!(reaction_for_tool_start(&fetch), Some(ReactionEmoji::Fetch));
+
+        let delete = ToolCallSnapshot {
+            kind: Some("Delete".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+        assert_eq!(
+            reaction_for_tool_start(&delete),
+            Some(ReactionEmoji::Delete)
+        );
+
+        let move_tool = ToolCallSnapshot {
+            kind: Some("Move".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+        assert_eq!(
+            reaction_for_tool_start(&move_tool),
+            Some(ReactionEmoji::Move)
+        );
+
+        let switch_mode = ToolCallSnapshot {
+            kind: Some("SwitchMode".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+        assert_eq!(
+            reaction_for_tool_start(&switch_mode),
+            Some(ReactionEmoji::SwitchMode)
+        );
+    }
+
+    #[test]
+    fn reaction_mapping_falls_back_to_tool_for_unknown_kind() {
+        let snapshot = ToolCallSnapshot {
+            title: Some("Unknown tool".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
         assert_eq!(
             reaction_for_tool_start(&snapshot),
             Some(ReactionEmoji::Tool)
@@ -2144,6 +2253,23 @@ mod tests {
         assert_eq!(
             reaction_for_tool_start(&snapshot),
             Some(ReactionEmoji::Subagent)
+        );
+    }
+
+    #[test]
+    fn tool_call_update_can_fill_in_kind_for_late_start_events() {
+        let tool_call_id = ToolCallId::new("tool-1");
+        let mut snapshot = ToolCallSnapshot::default();
+
+        snapshot.apply_update(&ToolCallUpdate::new(
+            tool_call_id,
+            ToolCallUpdateFields::new().kind(ToolKind::Delete),
+        ));
+
+        assert_eq!(snapshot.kind.as_deref(), Some("Delete"));
+        assert_eq!(
+            reaction_for_tool_start(&snapshot),
+            Some(ReactionEmoji::Delete)
         );
     }
 
