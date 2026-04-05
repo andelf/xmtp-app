@@ -30,6 +30,7 @@ import {
   type GroupMember,
   type PermissionLevel,
 } from "../../../src/xmtp/groups";
+import { useAuthStore } from "../../../src/store/auth";
 import { EditableField } from "../../../src/components/EditableField";
 import { MemberRow } from "../../../src/components/MemberRow";
 import { MemberActionSheet } from "../../../src/components/MemberActionSheet";
@@ -49,6 +50,7 @@ export default function GroupDetailScreen() {
   const router = useRouter();
 
   const conversation = useConversationStore((s) => (id ? s.items.get(id) : undefined));
+  const myInboxId = useAuthStore((s) => s.inboxId);
 
   // ---------------------------------------------------------------------------
   // State
@@ -311,6 +313,7 @@ export default function GroupDetailScreen() {
             key={member.inboxId}
             member={member}
             isCreator={member.inboxId === creatorInboxId}
+            isMe={member.inboxId === myInboxId}
             onPress={() => handleCopyAddress(member.address)}
             onLongPress={() => handleMemberLongPress(member)}
           />

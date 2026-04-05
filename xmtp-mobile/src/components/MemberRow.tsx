@@ -6,7 +6,7 @@
  */
 import React from "react";
 import { View, StyleSheet, Pressable } from "react-native";
-import { Avatar, Chip, Text } from "react-native-paper";
+import { Avatar, Text } from "react-native-paper";
 
 import type { PermissionLevel, GroupMember } from "../xmtp/groups";
 import { shortenAddress } from "../utils/address";
@@ -14,6 +14,7 @@ import { shortenAddress } from "../utils/address";
 export interface MemberRowProps {
   member: GroupMember;
   isCreator: boolean;
+  isMe?: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
 }
@@ -35,7 +36,7 @@ function avatarLabel(addr: string): string {
   return addr.slice(0, 2).toUpperCase();
 }
 
-export function MemberRow({ member, isCreator, onPress, onLongPress }: MemberRowProps) {
+export function MemberRow({ member, isCreator, isMe, onPress, onLongPress }: MemberRowProps) {
   const label = roleLabel(member.permissionLevel);
   const color = roleColor(member.permissionLevel);
 
@@ -63,14 +64,15 @@ export function MemberRow({ member, isCreator, onPress, onLongPress }: MemberRow
         )}
       </View>
 
+      {isMe && (
+        <View style={[styles.badge, styles.meBadge]}>
+          <Text style={styles.badgeText}>Me</Text>
+        </View>
+      )}
       {label && (
-        <Chip
-          compact
-          textStyle={styles.chipText}
-          style={[styles.chip, { backgroundColor: color }]}
-        >
-          {label}
-        </Chip>
+        <View style={[styles.badge, { backgroundColor: color }, isMe && styles.badgeGap]}>
+          <Text style={styles.badgeText}>{label}</Text>
+        </View>
       )}
     </Pressable>
   );
@@ -106,12 +108,23 @@ const styles = StyleSheet.create({
     color: "#938F99",
     marginTop: 1,
   },
-  chip: {
-    height: 26,
+  badge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  chipText: {
+  meBadge: {
+    backgroundColor: "#3B7A57",
+  },
+  badgeGap: {
+    marginLeft: 6,
+  },
+  badgeText: {
     color: "#E6E1E5",
     fontSize: 11,
     fontWeight: "600",
+    lineHeight: 14,
   },
 });
