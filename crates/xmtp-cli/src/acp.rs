@@ -2005,6 +2005,14 @@ impl acp::Client for BridgeClient {
                         None
                     }
                 } else {
+                    // Single mode: insert paragraph break so text before/after
+                    // a tool call doesn't merge into one markdown paragraph.
+                    if let Ok(mut state) = self.state.lock() {
+                        let runtime = state.sessions.entry(session_id.clone()).or_default();
+                        if runtime.active_turn.is_some() && !runtime.chunks.is_empty() {
+                            runtime.chunks.push("\n\n".to_owned());
+                        }
+                    }
                     None
                 };
                 if let Some(text) = flushed_text {

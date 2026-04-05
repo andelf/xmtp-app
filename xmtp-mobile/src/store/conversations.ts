@@ -17,6 +17,7 @@ import type { Dm } from "@xmtp/react-native-sdk/build/lib/Dm";
 import { getClient } from "../xmtp/client";
 import { extractMarkdownPreview } from "../utils/markdown";
 import { getNativeContent, extractNativeText, extractReactionEmoji } from "../utils/nativeContent";
+import { shortenAddress } from "../utils/address";
 
 // ---------------------------------------------------------------------------
 // Shared types (exported for Coder-2)
@@ -48,13 +49,6 @@ export interface ConversationItem {
 // Conversion helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Truncate an address or inbox id for display: "0x1234...abcd"
- */
-function truncateAddress(addr: string): string {
-  if (addr.length <= 12) return addr;
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
 
 /**
  * Convert an XMTP SDK Conversation to our ConversationItem.
@@ -86,7 +80,7 @@ export async function conversationToItem(
       const members = await dm.members();
       const peer = members.find((m) => m.inboxId !== myInboxId);
       const peerAddr = peer?.identities?.[0]?.identifier ?? peerInboxId ?? "Unknown";
-      title = truncateAddress(peerAddr);
+      title = shortenAddress(peerAddr);
     } catch {
       title = "DM";
     }
