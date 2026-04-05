@@ -218,7 +218,9 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
     const loadLocal = async (skipSync?: boolean) => {
       const groups = await client.conversations.listGroups();
       const dms = await client.conversations.listDms();
-      const all: Conversation[] = [...groups, ...dms];
+      // Filter out inactive groups (left/removed) to avoid dead entries
+      const activeGroups = groups.filter((g) => g.isGroupActive !== false);
+      const all: Conversation[] = [...activeGroups, ...dms];
       const nextItems = new Map<string, ConversationItem>();
       const nextTopicToId = new Map<string, string>();
       const converted = await Promise.all(all.map((c) => conversationToItem(c, myInboxId, skipSync)));

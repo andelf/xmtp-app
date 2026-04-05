@@ -58,6 +58,8 @@ export function decodeMessage(msg: DecodedMessageLike, conversationId: string): 
         const h = handlers.get("xmtp.org/group_updated:1.0");
         if (h) return h.decode(msg, conversationId);
       }
+      // Protocol-level signals — never display
+      if (nc.leaveRequest !== undefined) return { kind: "skip" };
     }
 
     // 3. Unknown fallback
@@ -97,6 +99,7 @@ export function previewMessage(msg: DecodedMessageLike): string | null {
       if (nc.reaction || nc.reactionV2) return null;
       if (nc.readReceipt !== undefined) return null;
       if (nc.groupUpdated) return null;
+      if (nc.leaveRequest !== undefined) return null;
     }
 
     // 3. Unknown fallback

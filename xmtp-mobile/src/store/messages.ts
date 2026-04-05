@@ -148,8 +148,12 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
         return;
       }
 
-      // Sync conversation to get latest messages
-      await convo.sync();
+      // Sync conversation to get latest messages (may fail for inactive groups)
+      try {
+        await convo.sync();
+      } catch (syncErr) {
+        console.warn("[MessageStore] sync() failed, using cached messages:", syncErr);
+      }
 
       // Fetch more than needed: reactions/read-receipts dilute visible messages.
       // With heavy reaction usage, 90%+ of messages can be non-visible.

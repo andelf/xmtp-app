@@ -103,11 +103,12 @@ export function useConversations() {
                 if (!conversationId) return;
               }
 
-              // Detect self-removal from group via groupUpdated message
-              const contentTypeId = (message as any).contentTypeId as string | undefined;
-              if (contentTypeId?.includes("group_updated")) {
-                const nc = getNativeContent(message as any);
-                const removed = nc?.groupUpdated?.membersRemoved as { inboxId: string }[] | undefined;
+              // Protocol-level signals — skip before preview extraction
+              const nc = getNativeContent(message as any);
+              if (nc?.leaveRequest !== undefined) return;
+              if (nc?.groupUpdated) {
+                // Detect self-removal from group
+                const removed = nc.groupUpdated.membersRemoved as { inboxId: string }[] | undefined;
                 if (removed?.some((m) => m.inboxId === client.inboxId)) {
                   log("MsgStream", `self removed from group ${conversationId}, removing from store`);
                   store().remove(conversationId);
