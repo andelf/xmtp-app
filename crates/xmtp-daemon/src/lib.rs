@@ -1746,11 +1746,27 @@ fn decode_coinbase_intent(raw: &[u8]) -> Option<CoinbaseIntent> {
     serde_json::from_slice(&encoded.content).ok()
 }
 
-fn encode_coinbase_content<T: serde::de::DeserializeOwned>(
+trait CoinbaseFallback: serde::de::DeserializeOwned {
+    fn fallback_text(&self) -> String;
+}
+
+impl CoinbaseFallback for CoinbaseActions {
+    fn fallback_text(&self) -> String {
+        format_actions_summary(self)
+    }
+}
+
+impl CoinbaseFallback for CoinbaseIntent {
+    fn fallback_text(&self) -> String {
+        format_intent_summary(self)
+    }
+}
+
+fn encode_coinbase_content<T: CoinbaseFallback>(
     json_str: &str,
     type_id: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    let _: T = serde_json::from_str(json_str)
+    let parsed: T = serde_json::from_str(json_str)
         .with_context(|| format!("invalid {type_id} JSON"))?;
     let encoded = xmtp::content::EncodedContent {
         r#type: Some(xmtp::content::ContentTypeId {
@@ -1760,7 +1776,7 @@ fn encode_coinbase_content<T: serde::de::DeserializeOwned>(
             version_minor: 0,
         }),
         parameters: std::collections::HashMap::new(),
-        fallback: None,
+        fallback: Some(parsed.fallback_text()),
         content: json_str.as_bytes().to_vec(),
         compression: None,
     };

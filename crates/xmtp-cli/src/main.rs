@@ -211,6 +211,22 @@ enum Command {
         #[arg(help = "Conversation ID or supported conversation reference")]
         conversation_id: String,
     },
+    #[command(
+        name = "send-actions",
+        about = "Send a test Actions message to a conversation"
+    )]
+    SendActions {
+        #[arg(help = "Conversation ID")]
+        conversation_id: String,
+        #[arg(help = "Description shown above the action buttons")]
+        description: String,
+        #[arg(
+            long = "action",
+            required = true,
+            help = "Action in id:label format (e.g. --action deploy:Deploy --action cancel:Cancel)"
+        )]
+        actions: Vec<String>,
+    },
     #[command(about = "Inspect conversations and messages")]
     Info {
         #[command(subcommand)]
@@ -446,6 +462,11 @@ async fn run() -> anyhow::Result<()> {
         Command::React { message_id, emoji } => react(data_dir, &message_id, &emoji).await,
         Command::Unreact { message_id, emoji } => unreact(data_dir, &message_id, &emoji).await,
         Command::Leave { conversation_id } => leave(data_dir, &conversation_id).await,
+        Command::SendActions {
+            conversation_id,
+            description,
+            actions,
+        } => send_actions(data_dir, &conversation_id, &description, &actions).await,
         Command::Info { command } => info(data_dir, command).await,
         Command::History {
             conversation_id,
@@ -790,6 +811,41 @@ async fn list(data_dir: PathBuf, kind: Option<&str>) -> anyhow::Result<()> {
     for conversation in list.items {
         println!("{}", render_conversation_row(&conversation));
     }
+    Ok(())
+}
+
+async fn send_actions(
+    data_dir: PathBuf,
+    conversation_id: &str,
+    description: &str,
+    action_args: &[String],
+) -> anyhow::Result<()> {
+    let mut actions = Vec::new();
+    for arg in action_args {
+        let (id, label) = arg
+            .split_once(':')
+            .with_context(|| format!("invalid action format '{arg}', expected id:label"))?;
+        actions.push(serde_json::json!({
+            "id": id,
+            "label": label,
+        }));
+    }
+    let actions_json = serde_json::json!({
+        "id": format!("test_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()),
+        "description": description,
+        "actions": actions,
+    });
+    let result = daemon_send_conversation(
+        &data_dir,
+        conversation_id,
+        &actions_json.to_string(),
+        Some("actions"),
+    )
+    .await?;
+    print_action_result("send-actions", &result);
     Ok(())
 }
 
