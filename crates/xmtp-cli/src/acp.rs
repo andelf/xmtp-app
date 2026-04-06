@@ -1590,31 +1590,12 @@ fn split_markdown_reply(reply: &str) -> Vec<String> {
     }
 
     let mut parts = Vec::new();
-    let mut index = 0;
-    while index < blocks.len() {
-        let mut block = blocks[index].clone();
-        // Merge a standalone heading line with the next block so headings
-        // don't become isolated messages.  Only merge when the heading block
-        // is short (single heading line, possibly with a blank line) — once
-        // the block already contains substantial content (e.g. a list), we
-        // leave it as-is.
-        if block.starts_with('#')
-            && block.lines().count() <= 2
-            && let Some(next_block) = blocks.get(index + 1)
-        {
-            let combined = format!("{block}\n\n{next_block}");
-            if combined.chars().count() <= MAX_PART_CHARS {
-                block = combined;
-                index += 1;
-            }
-        }
-
+    for block in blocks {
         if block.chars().count() > MAX_PART_CHARS {
             parts.extend(split_long_markdown_block(&block, MAX_PART_CHARS));
         } else {
             parts.push(block);
         }
-        index += 1;
     }
 
     parts
@@ -1665,9 +1646,8 @@ fn split_markdown_blocks(reply: &str) -> Vec<String> {
     let mut blocks = Vec::new();
     let mut current = String::new();
     let mut in_code_fence = false;
-    let lines: Vec<&str> = reply.lines().collect();
 
-    for (i, &line) in lines.iter().enumerate() {
+    for line in reply.lines() {
         let trimmed = line.trim_start();
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
             in_code_fence = !in_code_fence;
@@ -1678,18 +1658,8 @@ fn split_markdown_blocks(reply: &str) -> Vec<String> {
         }
         current.push_str(line);
 
+        // Split on blank lines (i.e. \n\n boundaries), except inside code fences.
         if !in_code_fence && trimmed.is_empty() {
-            // Peek ahead: if the next non-empty line starts a list item,
-            // keep accumulating so lists aren't split across messages.
-            let next_is_list = lines[i + 1..]
-                .iter()
-                .find(|l| !l.trim().is_empty())
-                .is_some_and(|next| is_list_start(next.trim_start()));
-
-            if next_is_list {
-                continue;
-            }
-
             if !current.trim().is_empty() {
                 blocks.push(current.trim().to_owned());
             }
@@ -1702,26 +1672,6 @@ fn split_markdown_blocks(reply: &str) -> Vec<String> {
     }
 
     blocks
-}
-
-/// Returns true if the line starts a new list item (ordered or unordered).
-fn is_list_start(trimmed: &str) -> bool {
-    if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
-        return true;
-    }
-    // Ordered list: digits followed by `. ` or `) `
-    let mut chars = trimmed.chars();
-    if let Some(ch) = chars.next() {
-        if ch.is_ascii_digit() {
-            for ch in chars {
-                if ch.is_ascii_digit() {
-                    continue;
-                }
-                return (ch == '.' || ch == ')') && trimmed.len() > trimmed.find(ch).unwrap() + 1;
-            }
-        }
-    }
-    false
 }
 
 
@@ -2493,9 +2443,10 @@ mod tests {
 
         let parts = split_markdown_reply(reply);
 
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0], "# Title\n\n```rust\nfn main() {}\n```");
-        assert_eq!(parts[1], "After");
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "# Title");
+        assert_eq!(parts[1], "```rust\nfn main() {}\n```");
+        assert_eq!(parts[2], "After");
     }
 
     #[test]
@@ -2523,28 +2474,15 @@ mod tests {
     }
 
     #[test]
-    fn split_markdown_reply_keeps_ordered_list_together() {
-        let reply = "## Highlights\n\n1. **Parser** — lightweight\n\n2. **Multi-segment** — order preserved\n\n3. **Intent** — semantic\n\nConclusion here.";
+    fn split_markdown_reply_splits_on_blank_lines() {
+        let reply = "Intro paragraph.\n\n1. First\n2. Second\n\nConclusion.";
 
         let parts = split_markdown_reply(reply);
 
-        // The ordered list items should NOT be split into separate parts.
-        assert_eq!(parts.len(), 2, "parts: {parts:#?}");
-        assert!(parts[0].contains("1. **Parser**"));
-        assert!(parts[0].contains("2. **Multi-segment**"));
-        assert!(parts[0].contains("3. **Intent**"));
-        assert_eq!(parts[1], "Conclusion here.");
-    }
-
-    #[test]
-    fn split_markdown_reply_keeps_unordered_list_together() {
-        let reply = "Items:\n\n- Alpha\n\n- Beta\n\n- Gamma\n\nDone.";
-
-        let parts = split_markdown_reply(reply);
-
-        assert_eq!(parts.len(), 2, "parts: {parts:#?}");
-        assert!(parts[0].contains("- Alpha"));
-        assert!(parts[0].contains("- Gamma"));
+        assert_eq!(parts.len(), 3, "parts: {parts:#?}");
+        assert_eq!(parts[0], "Intro paragraph.");
+        assert_eq!(parts[1], "1. First\n2. Second");
+        assert_eq!(parts[2], "Conclusion.");
     }
 
     #[test]
