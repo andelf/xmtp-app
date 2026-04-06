@@ -1,15 +1,16 @@
 # AGENTS.md
 
-> Context file for AI coding agents working on this project. Read [CLAUDE.md](./CLAUDE.md) first for build commands, architecture, and conventions.
+> Context file for AI coding agents working on **xmtp-app**. Read [CLAUDE.md](./CLAUDE.md) first for build commands, architecture, and conventions.
 
 ## What This Project Is
 
-A production-grade XMTP messaging client with three interfaces:
+A production-grade XMTP messaging client with four interfaces:
 - **TUI** (ratatui) — full-featured chat UI with group management, reactions, markdown, read receipts
 - **CLI** (clap) — scriptable commands for all XMTP operations
 - **Daemon** (axum) — background HTTP+SSE server bridging TUI/CLI to XMTP network
+- **Mobile** (React Native) — companion app using `@xmtp/react-native-sdk` v5 directly (no daemon)
 
-The daemon holds the XMTP client connection and exposes a REST API. TUI and CLI are thin clients that talk to the daemon over HTTP.
+The daemon holds the XMTP client connection and exposes a REST API. TUI and CLI are thin clients that talk to the daemon over HTTP. The mobile app connects to XMTP independently.
 
 ## Crate Dependency Graph
 
@@ -20,7 +21,7 @@ xmtp-core (shared types)
 ├── xmtp-logging (event log)
 └── xmtp-ipc (HTTP API types)
         ├── xmtp-daemon (server + SDK wrapper)
-        │       uses: xmtp-fork/xmtp (local fork of XMTP Rust SDK)
+        │       uses: xmtp v0.8.1 (crates.io)
         └── xmtp-tui (TUI client)
                 └── xmtp-cli (CLI entry point, depends on all above)
 ```
@@ -62,15 +63,15 @@ All in `crates/xmtp-daemon/src/lib.rs` (~3100 lines, monolithic — planned for 
 
 ## Content Types
 
-Messages are decoded in `xmtp-fork/xmtp/src/content.rs` → `Content` enum:
-- Supported: `Text`, `Markdown`, `Reaction`, `Reply`, `ReadReceipt`, `Attachment`, `RemoteAttachment`
-- **Not yet supported**: `TransactionReference`, `WalletSendCalls`, `Actions`, `Intent` — these arrive as `Content::Unknown` and display fallback text
+Supported across Rust (daemon/TUI/CLI) and Mobile:
+- **Fully supported**: Text, Markdown, Reaction, Reply, ReadReceipt, Actions, Intent
+- **Not yet supported**: TransactionReference, WalletSendCalls, Attachment, RemoteAttachment — arrive as `Content::Unknown`
 
 To add a new content type:
-1. Add variant to `Content` enum in `xmtp-fork/xmtp/src/content.rs`
-2. Add decode branch in `decode()` function (JSON via `serde_json::from_slice` for most types)
-3. Add handling in daemon's `history_item_from_message()` → set `content_kind` + `content`
-4. Add rendering in TUI's `build_message_rows()` or `render_messages()`
+1. Add decode/encode in daemon's content handling
+2. Add `content_kind` mapping in `history_item_from_message()`
+3. Add rendering in TUI's `build_message_rows()`
+4. Add handler in `xmtp-mobile/src/content/handlers/` and register in registry
 
 ## Testing
 
@@ -87,6 +88,7 @@ Integration tests use `DaemonProcess::start()` helper that spawns a real daemon 
 ## Git Conventions
 
 - Stage specific files, **never** `git add -A` (data/ directory contains local XMTP database)
+- **Never auto-push** — always wait for explicit user confirmation before `git push`
 - Commit message: imperative mood, 1-2 sentences
 - Prefer creating a new commit by default; only use `git commit --amend` when the user explicitly asks for amend
 - AI-assisted commits end with: `Co-Authored-By: Claude <noreply@anthropic.com>`
@@ -100,14 +102,20 @@ Integration tests use `DaemonProcess::start()` helper that spawns a real daemon 
 4. **SQLite direct queries** bypass SDK API — fragile, will break on libxmtp schema changes
 5. **History SSE uses std::thread** — switching conversations may accumulate short-lived zombie threads
 
+## CI
+
+GitHub Actions (`.github/workflows/`):
+- **rust.yml** — fmt + clippy + unit tests, triggered by `crates/**` changes
+- **mobile.yml** — tsc + eslint + jest + Android build, triggered by `xmtp-mobile/**` changes
+
 ## Current Backlog
 
-See `.cache/research/REPORT-2026-03-27.md` for the full protocol ecosystem analysis.
-
 **Open items:**
-- XMTP content type display: TransactionReference, WalletSendCalls, Actions/Intent
-- x402 payment integration (see `.cache/research/x402-xmtp-integration-research.md`)
+- Content types: TransactionReference, WalletSendCalls, Attachment, RemoteAttachment
+- Push notifications (FCM) for mobile
+- WalletConnect integration (replace private key login)
+- iOS support (Expo prebuild)
 - Daemon modularization
-- Attachment support (Attachment + RemoteAttachment)
+- Attachment support
 - API review (REST endpoint naming/structure cleanup)
 - Performance optimization (benchmark, SSE reconnect, connection reuse)

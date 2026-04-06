@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Rust monorepo implementing XMTP messaging protocol client: CLI + TUI + background daemon. Communicates with XMTP network via a local fork of `xmtp` crate (`xmtp-fork/xmtp`).
+**xmtp-app** — Rust monorepo implementing XMTP messaging protocol client: CLI + TUI + background daemon + React Native mobile app. Depends on `xmtp` crate v0.8.1 from crates.io.
 
 ## Build & Test
 
@@ -29,19 +29,26 @@ xmtp-cli           CLI entry point (clap), daemon process management, ACP bridge
 
 Dependency direction: `core -> config/store/logging/ipc -> daemon -> tui -> cli`. No cycles.
 
-**Key dependency:** `xmtp-daemon` depends on `xmtp = { path = "../../../xmtp-fork/xmtp" }` (local fork).
+**Key dependency:** `xmtp-daemon` depends on `xmtp = "0.8.1"` from crates.io.
 
 ## Key Patterns
 
 - **TUI is a pure state machine**: `App::handle_event(AppEvent) -> Vec<Effect>` does zero IO. `Runtime::apply_effects()` executes side effects via `tokio::spawn`.
 - **Daemon communicates via HTTP+SSE**: TUI/CLI never call daemon functions directly at runtime. They use `GET/POST /v1/...` endpoints and SSE streams.
 - **CLI has dual mode**: Some commands call daemon functions directly (no daemon process needed); others go through HTTP (need running daemon).
-- **Content types**: Messages are decoded in `xmtp-fork/xmtp/src/content.rs`. Unknown types (TransactionReference, Actions, etc.) arrive as `Content::Unknown`.
+- **Content types**: Text, Markdown, Reaction, Reply, ReadReceipt, Actions, Intent are fully supported. Unknown types arrive as `Content::Unknown`.
+
+## CI
+
+GitHub Actions (`.github/workflows/`):
+- **rust.yml** — `cargo fmt --check` + `cargo clippy` + `cargo test --workspace --lib` on `crates/**` changes
+- **mobile.yml** — `tsc --noEmit` + `eslint` + `jest` + `./gradlew assembleDebug` on `xmtp-mobile/**` changes
 
 ## Conventions
 
 - Commit messages: imperative mood, concise. Co-author line for AI-assisted commits.
 - No `git add -A` — always stage specific files to avoid committing data/ directory.
+- **Never auto-push** — always wait for explicit user confirmation before `git push`.
 - UI text in English only (no Chinese in source strings).
 - Tests: unit tests in `#[cfg(test)] mod tests` within source files; integration tests in `crates/*/tests/`.
 - Error handling: `anyhow::Result` internally, `(StatusCode, Json<ApiErrorBody>)` at HTTP boundary.
