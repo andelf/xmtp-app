@@ -33,7 +33,14 @@ use xmtp_store::{load_state, save_state};
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 pub(crate) fn http_client() -> &'static reqwest::Client {
-    HTTP_CLIENT.get_or_init(reqwest::Client::new)
+    HTTP_CLIENT.get_or_init(|| {
+        // The CLI only talks to the local daemon over HTTP/SSE. Bypass system
+        // proxies so localhost requests cannot be intercepted by a proxy setup.
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("build daemon http client")
+    })
 }
 
 #[derive(Debug, Parser)]
