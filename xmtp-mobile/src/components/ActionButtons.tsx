@@ -103,12 +103,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   btnPrimary: {
-    borderColor: "#4CAF50",
-    backgroundColor: "rgba(76, 175, 80, 0.15)",
+    borderColor: "#64B5F6",
+    backgroundColor: "rgba(100, 181, 246, 0.15)",
   },
   btnDanger: {
-    borderColor: "#F2B8B5",
-    backgroundColor: "rgba(242, 184, 181, 0.1)",
+    borderColor: "#EF5350",
+    backgroundColor: "rgba(239, 83, 80, 0.12)",
   },
   btnDefault: {
     borderColor: "#938F99",
@@ -126,10 +126,10 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   textPrimary: {
-    color: "#4CAF50",
+    color: "#64B5F6",
   },
   textDanger: {
-    color: "#F2B8B5",
+    color: "#EF5350",
   },
   textDefault: {
     color: "#E6E1E5",

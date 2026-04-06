@@ -65,7 +65,7 @@ export const actionsHandler: ContentTypeHandler = {
     if (!raw) return (msg as any).fallback ?? null;
     const payload = parseActions(raw);
     if (!payload) return raw;
-    return formatActionsSummary(payload);
+    return `[Actions] ${payload.description}`;
   },
 };
 
@@ -90,15 +90,7 @@ export const intentHandler: ContentTypeHandler = {
     }
   },
 
-  preview(msg: DecodedMessageLike): string | null {
-    const raw = extractRawContent(msg);
-    if (!raw) return (msg as any).fallback ?? null;
-    try {
-      const parsed = JSON.parse(raw);
-      const actionId = parsed.actionId ?? parsed.action_id ?? "unknown";
-      return `Selected action: ${actionId}`;
-    } catch {
-      return raw;
-    }
+  preview(): string | null {
+    return null;
   },
 };
