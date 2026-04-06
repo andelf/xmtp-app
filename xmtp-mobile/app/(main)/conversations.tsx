@@ -212,7 +212,9 @@ export default function ConversationsScreen() {
       {isSyncing && (
         <View style={styles.syncBar}>
           <ActivityIndicator size="small" color="#CAC4D0" />
-          <Text variant="bodySmall" style={styles.syncText}>Syncing...</Text>
+          <Text variant="bodySmall" style={styles.syncText}>
+            Syncing...
+          </Text>
         </View>
       )}
 

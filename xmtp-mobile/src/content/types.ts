@@ -1,7 +1,12 @@
 /**
  * Core types for the content type registry.
  */
-import type { ReplyRef, ReactionInfo, ReadReceiptInfo, DecodedMessageLike } from "../utils/messageDecoder";
+import type {
+  ReplyRef,
+  ReactionInfo,
+  ReadReceiptInfo,
+  DecodedMessageLike,
+} from "../utils/messageDecoder";
 
 export interface ActionItem {
   id: string;

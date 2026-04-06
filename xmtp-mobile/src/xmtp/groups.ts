@@ -33,9 +33,7 @@ export interface GroupMember {
   permissionLevel: PermissionLevel;
 }
 
-type Result<T = void> =
-  | { ok: true; data: T }
-  | { ok: false; error: string };
+type Result<T = void> = { ok: true; data: T } | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -157,8 +155,15 @@ export function updateGroupName(conversationId: string, name: string): Promise<R
   return withGroup(conversationId, (g) => g.updateName(name), "Failed to update name");
 }
 
-export function updateGroupDescription(conversationId: string, description: string): Promise<Result> {
-  return withGroup(conversationId, (g) => g.updateDescription(description), "Failed to update description");
+export function updateGroupDescription(
+  conversationId: string,
+  description: string
+): Promise<Result> {
+  return withGroup(
+    conversationId,
+    (g) => g.updateDescription(description),
+    "Failed to update description"
+  );
 }
 
 export function promoteToAdmin(conversationId: string, inboxId: string): Promise<Result> {
@@ -177,18 +182,17 @@ export async function createGroup(
     const client = getClient();
     if (!client) return { ok: false, error: "Client not initialised" };
 
-    const identities = addresses.map(
-      (addr) => new PublicIdentity(addr, "ETHEREUM")
-    );
+    const identities = addresses.map((addr) => new PublicIdentity(addr, "ETHEREUM"));
 
     // Pre-check for better error messages; newGroupWithIdentities would also
     // fail but with a less descriptive error.
     const canMsg = await client.canMessage(identities);
-    const unreachable = addresses.filter(
-      (addr) => !canMsg[addr] && !canMsg[addr.toLowerCase()]
-    );
+    const unreachable = addresses.filter((addr) => !canMsg[addr] && !canMsg[addr.toLowerCase()]);
     if (unreachable.length > 0) {
-      return { ok: false, error: `Not on XMTP network: ${unreachable.map(shortenAddress).join(", ")}` };
+      return {
+        ok: false,
+        error: `Not on XMTP network: ${unreachable.map(shortenAddress).join(", ")}`,
+      };
     }
 
     const name = opts?.name?.trim() || undefined;

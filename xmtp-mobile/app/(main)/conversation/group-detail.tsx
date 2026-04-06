@@ -5,14 +5,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, StyleSheet, ScrollView, Alert, Clipboard } from "react-native";
-import {
-  Text,
-  Divider,
-  ActivityIndicator,
-  Avatar,
-  Button,
-  List,
-} from "react-native-paper";
+import { Text, Divider, ActivityIndicator, Avatar, Button, List } from "react-native-paper";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 
 import { useConversationStore } from "../../../src/store/conversations";
@@ -100,17 +93,13 @@ export default function GroupDetailScreen() {
   // ---------------------------------------------------------------------------
   const policies = info?.policies;
   const canEditName =
-    myRole === "super_admin" ||
-    myRole === "admin" ||
-    policies?.updateGroupNamePolicy === "allow";
+    myRole === "super_admin" || myRole === "admin" || policies?.updateGroupNamePolicy === "allow";
   const canEditDescription =
     myRole === "super_admin" ||
     myRole === "admin" ||
     policies?.updateGroupDescriptionPolicy === "allow";
   const canAddMember =
-    myRole === "super_admin" ||
-    myRole === "admin" ||
-    policies?.addMemberPolicy === "allow";
+    myRole === "super_admin" || myRole === "admin" || policies?.addMemberPolicy === "allow";
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -326,9 +315,7 @@ export default function GroupDetailScreen() {
           Group Info
         </Text>
 
-        {creatorMember && (
-          <InfoRow label="Created by" value={creatorMember.address} />
-        )}
+        {creatorMember && <InfoRow label="Created by" value={creatorMember.address} />}
         <InfoRow
           label="Created At"
           value={conversation ? formatDateTime(conversation.createdAt) : null}

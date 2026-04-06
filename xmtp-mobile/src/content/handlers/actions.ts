@@ -6,7 +6,12 @@
  * Intent is decoded as a plain text summary ("Selected action: ...").
  */
 import { extractRawContent } from "../decode-utils";
-import type { ContentTypeHandler, DecodeResult, DecodedMessageLike, ActionsPayload } from "../types";
+import type {
+  ContentTypeHandler,
+  DecodeResult,
+  DecodedMessageLike,
+  ActionsPayload,
+} from "../types";
 
 /** Parse raw JSON content into an ActionsPayload, or null if invalid. */
 function parseActions(raw: string): ActionsPayload | null {

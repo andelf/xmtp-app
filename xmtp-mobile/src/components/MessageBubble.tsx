@@ -204,7 +204,14 @@ function shouldShowHeader(item: MessageItem, prevItem: MessageItem | null | unde
 // Component
 // ---------------------------------------------------------------------------
 
-function MessageBubbleInner({ item, prevItem, isGroup = false, respondedActionId, onReply, onRetry }: MessageBubbleProps) {
+function MessageBubbleInner({
+  item,
+  prevItem,
+  isGroup = false,
+  respondedActionId,
+  onReply,
+  onRetry,
+}: MessageBubbleProps) {
   const quickReactions = useSettingsStore((s) => s.quickReactions);
   const isOwn = item.isOwn;
   const showHeader = shouldShowHeader(item, prevItem);

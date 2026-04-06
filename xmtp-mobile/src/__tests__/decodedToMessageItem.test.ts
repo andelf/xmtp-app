@@ -128,9 +128,7 @@ describe("decodedToMessageItem", () => {
     const item = decodedToMessageItem(msg, CONV_ID, MY_INBOX);
 
     expect(item).not.toBeNull();
-    expect(item!.text).toBe(
-      "Unsupported content type: xmtp.org/transaction:1.0"
-    );
+    expect(item!.text).toBe("Unsupported content type: xmtp.org/transaction:1.0");
   });
 
   it("uses msg.fallback for unknown type", () => {
@@ -166,10 +164,7 @@ describe("decodedToMessageItem", () => {
   });
 
   it("shows unsupported for encoded with no extractable content", () => {
-    const msg = fakeMsg(
-      { encoded: JSON.stringify({}) },
-      { contentTypeId: "xmtp.org/binary:1.0" }
-    );
+    const msg = fakeMsg({ encoded: JSON.stringify({}) }, { contentTypeId: "xmtp.org/binary:1.0" });
     const item = decodedToMessageItem(msg, CONV_ID, MY_INBOX);
 
     expect(item).not.toBeNull();

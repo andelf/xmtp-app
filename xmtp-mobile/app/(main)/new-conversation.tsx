@@ -5,13 +5,7 @@
  * Group mode uses a Card Stack layout (Material Design 3 style).
  */
 import React, { useCallback, useState } from "react";
-import {
-  View,
-  StyleSheet,
-  Platform,
-  ScrollView,
-  Pressable,
-} from "react-native";
+import { View, StyleSheet, Platform, ScrollView, Pressable } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import {
   Appbar,
@@ -463,11 +457,7 @@ export default function NewConversationScreen() {
                 left={<TextInput.Icon icon="magnify" color="#938F99" />}
                 right={
                   memberInput.trim() ? (
-                    <TextInput.Icon
-                      icon="plus-circle"
-                      color="#D0BCFF"
-                      onPress={handleAddMember}
-                    />
+                    <TextInput.Icon icon="plus-circle" color="#D0BCFF" onPress={handleAddMember} />
                   ) : undefined
                 }
               />

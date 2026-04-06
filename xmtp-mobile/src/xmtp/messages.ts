@@ -60,9 +60,7 @@ export async function sendMessage(
     store.confirmSent(conversationId, tempId, confirmed);
 
     // Update conversation lastMessage preview
-    useConversationStore
-      .getState()
-      .updateLastMessage(conversationId, text, confirmed.sentAt);
+    useConversationStore.getState().updateLastMessage(conversationId, text, confirmed.sentAt);
 
     return confirmed;
   } catch (err) {
@@ -106,10 +104,9 @@ export async function sendIntent(
     const convo = await findConversation(conversationId);
     if (!convo) return false;
 
-    await convo.send(
-      { id: actionsId, actionId } as any,
-      { contentType: CoinbaseIntentContentType },
-    );
+    await convo.send({ id: actionsId, actionId } as any, {
+      contentType: CoinbaseIntentContentType,
+    });
 
     return true;
   } catch (err) {
@@ -132,7 +129,11 @@ function decrementPending(key: string): void {
 }
 
 /** Check if a self-reaction from the stream should be skipped (already applied optimistically). */
-export function consumePendingReaction(referenceMessageId: string, emoji: string, action: string): boolean {
+export function consumePendingReaction(
+  referenceMessageId: string,
+  emoji: string,
+  action: string
+): boolean {
   const key = pendingKey(referenceMessageId, emoji, action);
   const count = pendingReactions.get(key) ?? 0;
   if (count > 0) {
@@ -155,7 +156,13 @@ export async function sendReaction(
   action: "added" | "removed" = "added"
 ): Promise<boolean> {
   const myInboxId = useAuthStore.getState().inboxId ?? "";
-  const reactionInfo = { conversationId, referenceMessageId, emoji, action, senderInboxId: myInboxId };
+  const reactionInfo = {
+    conversationId,
+    referenceMessageId,
+    emoji,
+    action,
+    senderInboxId: myInboxId,
+  };
   const rollbackAction = action === "added" ? "removed" : "added";
   const key = pendingKey(referenceMessageId, emoji, action);
 
@@ -237,9 +244,7 @@ export async function sendReply(
     };
 
     store.confirmSent(conversationId, tempId, confirmed);
-    useConversationStore
-      .getState()
-      .updateLastMessage(conversationId, text, confirmed.sentAt);
+    useConversationStore.getState().updateLastMessage(conversationId, text, confirmed.sentAt);
 
     return confirmed;
   } catch (err) {

@@ -33,21 +33,14 @@ export function MemberActionSheet({
 }: MemberActionSheetProps) {
   if (!member) return null;
 
-  const canPromote =
-    myRole === "super_admin" && member.permissionLevel === "member";
-  const canDemote =
-    myRole === "super_admin" && member.permissionLevel === "admin";
+  const canPromote = myRole === "super_admin" && member.permissionLevel === "member";
+  const canDemote = myRole === "super_admin" && member.permissionLevel === "admin";
   const canRemove =
-    (myRole === "super_admin" || myRole === "admin") &&
-    member.permissionLevel !== "super_admin";
+    (myRole === "super_admin" || myRole === "admin") && member.permissionLevel !== "super_admin";
 
   return (
     <Portal>
-      <Modal
-        visible={visible}
-        onDismiss={onDismiss}
-        contentContainerStyle={styles.modal}
-      >
+      <Modal visible={visible} onDismiss={onDismiss} contentContainerStyle={styles.modal}>
         <Text variant="titleSmall" style={styles.title} numberOfLines={1}>
           {member.address}
         </Text>

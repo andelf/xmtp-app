@@ -85,7 +85,7 @@ export interface DecodedMessageLike {
 function baseMessageFields(
   msg: DecodedMessageLike,
   conversationId: string,
-  myInboxId: string | null,
+  myInboxId: string | null
 ): Omit<MessageItem, "text" | "contentType"> {
   return {
     id: msg.id,

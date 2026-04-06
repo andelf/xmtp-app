@@ -40,7 +40,7 @@ export default function ConversationScreen() {
 
   // Resolve conversation from store (single lookup)
   const conversationsLoading = useConversationStore((s) => s.isLoading);
-  const conversation = useConversationStore((s) => (id ? s.items.get(id) ?? null : null));
+  const conversation = useConversationStore((s) => (id ? (s.items.get(id) ?? null) : null));
   const conversationTitle = conversation?.title ?? (id ? shortenAddress(id) : "Chat");
   const isGroup = conversation?.kind === "group";
 
@@ -123,10 +123,7 @@ export default function ConversationScreen() {
   }, [storeMessages]);
 
   // Visible messages — intent messages are hidden (they show via ActionButtons state)
-  const messages = useMemo(
-    () => allMessages.filter((m) => !m.intentRef),
-    [allMessages]
-  );
+  const messages = useMemo(() => allMessages.filter((m) => !m.intentRef), [allMessages]);
 
   // Batch-resolve sender addresses when messages change
   useEffect(() => {
@@ -176,14 +173,11 @@ export default function ConversationScreen() {
     setReplyTo(null);
   }, []);
 
-  const handleRetry = useCallback(
-    (item: MessageItem) => {
-      const store = useMessageStore.getState();
-      store.removeFailed(item.conversationId, item.id as string);
-      sendMessage(item.conversationId as unknown as ConversationId, item.text);
-    },
-    []
-  );
+  const handleRetry = useCallback((item: MessageItem) => {
+    const store = useMessageStore.getState();
+    store.removeFailed(item.conversationId, item.id as string);
+    sendMessage(item.conversationId as unknown as ConversationId, item.text);
+  }, []);
 
   // Build a map of actionsId -> earliest selected actionId from intent messages.
   // allMessages is sorted newest-first, so we overwrite (last write = chronologically earliest).
@@ -198,7 +192,9 @@ export default function ConversationScreen() {
   }, [allMessages]);
 
   const intentMapRef = useRef(intentMap);
-  useEffect(() => { intentMapRef.current = intentMap; }, [intentMap]);
+  useEffect(() => {
+    intentMapRef.current = intentMap;
+  }, [intentMap]);
 
   const renderItem: ListRenderItem<MessageItem> = useCallback(
     ({ item, index }) => {
@@ -207,7 +203,14 @@ export default function ConversationScreen() {
         ? intentMapRef.current.get(item.actionsPayload.id)
         : undefined;
       return (
-        <MessageBubble item={item} prevItem={prevItem} isGroup={isGroup} respondedActionId={respondedActionId} onReply={handleReply} onRetry={handleRetry} />
+        <MessageBubble
+          item={item}
+          prevItem={prevItem}
+          isGroup={isGroup}
+          respondedActionId={respondedActionId}
+          onReply={handleReply}
+          onRetry={handleRetry}
+        />
       );
     },
     [isGroup, messages, handleReply, handleRetry]

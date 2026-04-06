@@ -74,18 +74,8 @@ export function EditableField({
             <ActivityIndicator size={20} color="#6750A4" style={styles.actionBtn} />
           ) : (
             <View style={styles.actions}>
-              <IconButton
-                icon="check"
-                iconColor="#81C784"
-                size={20}
-                onPress={handleSave}
-              />
-              <IconButton
-                icon="close"
-                iconColor="#938F99"
-                size={20}
-                onPress={handleCancel}
-              />
+              <IconButton icon="check" iconColor="#81C784" size={20} onPress={handleSave} />
+              <IconButton icon="close" iconColor="#938F99" size={20} onPress={handleCancel} />
             </View>
           )}
         </View>
@@ -103,12 +93,7 @@ export function EditableField({
           {value || placeholder || "\u2014"}
         </Text>
         {editable && (
-          <IconButton
-            icon="pencil"
-            iconColor="#938F99"
-            size={18}
-            onPress={handleStartEdit}
-          />
+          <IconButton icon="pencil" iconColor="#938F99" size={18} onPress={handleStartEdit} />
         )}
       </View>
     </View>

@@ -110,7 +110,10 @@ export function useConversations() {
                 // Detect self-removal from group
                 const removed = nc.groupUpdated.membersRemoved as { inboxId: string }[] | undefined;
                 if (removed?.some((m) => m.inboxId === client.inboxId)) {
-                  log("MsgStream", `self removed from group ${conversationId}, removing from store`);
+                  log(
+                    "MsgStream",
+                    `self removed from group ${conversationId}, removing from store`
+                  );
                   store().remove(conversationId);
                   return;
                 }

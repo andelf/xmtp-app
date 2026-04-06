@@ -5,13 +5,7 @@
  */
 import React, { useCallback, useState } from "react";
 import { View, StyleSheet, ScrollView, Alert } from "react-native";
-import {
-  Text,
-  TextInput,
-  Button,
-  Chip,
-  ActivityIndicator,
-} from "react-native-paper";
+import { Text, TextInput, Button, Chip, ActivityIndicator } from "react-native-paper";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 
 import { addMembers } from "../../../src/xmtp/groups";

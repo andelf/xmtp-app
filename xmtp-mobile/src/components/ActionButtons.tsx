@@ -37,9 +37,8 @@ function ActionButtonsInner({ conversationId, payload, respondedActionId }: Acti
   );
 
   // After selection (pending or confirmed), show only the selected action
-  const visibleActions = selectedId != null
-    ? payload.actions.filter((a) => a.id === selectedId)
-    : payload.actions;
+  const visibleActions =
+    selectedId != null ? payload.actions.filter((a) => a.id === selectedId) : payload.actions;
 
   return (
     <View style={styles.container}>
@@ -48,14 +47,22 @@ function ActionButtonsInner({ conversationId, payload, respondedActionId }: Acti
       </Text>
       {visibleActions.map((action) => {
         const isSelected = selectedId === action.id;
-        const btnStyle = isSelected && confirmed ? styles.btnConfirmed
-          : action.style === "danger" ? styles.btnDanger
-          : action.style === "primary" ? styles.btnPrimary
-          : styles.btnDefault;
-        const textStyle = isSelected && confirmed ? styles.textConfirmed
-          : action.style === "danger" ? styles.textDanger
-          : action.style === "primary" ? styles.textPrimary
-          : styles.textDefault;
+        const btnStyle =
+          isSelected && confirmed
+            ? styles.btnConfirmed
+            : action.style === "danger"
+              ? styles.btnDanger
+              : action.style === "primary"
+                ? styles.btnPrimary
+                : styles.btnDefault;
+        const textStyle =
+          isSelected && confirmed
+            ? styles.textConfirmed
+            : action.style === "danger"
+              ? styles.textDanger
+              : action.style === "primary"
+                ? styles.textPrimary
+                : styles.textDefault;
 
         return (
           <Pressable

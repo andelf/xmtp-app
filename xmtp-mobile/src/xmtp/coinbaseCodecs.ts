@@ -14,12 +14,12 @@ import type { JSContentCodec, ContentTypeId, EncodedContent } from "@xmtp/react-
 export interface CoinbaseActionsContent {
   id: string;
   description: string;
-  actions: Array<{
+  actions: {
     id: string;
     label: string;
     style?: string;
     imageUrl?: string;
-  }>;
+  }[];
 }
 
 export interface CoinbaseIntentContent {

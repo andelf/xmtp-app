@@ -13,7 +13,12 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { ConversationId } from "@xmtp/react-native-sdk";
 import { useAuthStore } from "../store/auth";
-import { useMessageStore, decodedToMessageItem, decodedToReaction, decodedToReadReceipt } from "../store/messages";
+import {
+  useMessageStore,
+  decodedToMessageItem,
+  decodedToReaction,
+  decodedToReadReceipt,
+} from "../store/messages";
 import { findConversation, sendReadReceipt, consumePendingReaction } from "../xmtp/messages";
 import { getNativeContent } from "../utils/nativeContent";
 import { MAX_RECONNECT, backoffDelay } from "../utils/reconnect";
@@ -50,7 +55,9 @@ export function useMessages(conversationId: ConversationId | null, options?: Use
       }
       const delay = backoffDelay(retries);
       retries++;
-      console.warn(`[useMessages] reconnecting in ${delay}ms (attempt ${retries}/${MAX_RECONNECT})...`);
+      console.warn(
+        `[useMessages] reconnecting in ${delay}ms (attempt ${retries}/${MAX_RECONNECT})...`
+      );
       setTimeout(() => {
         streamStarted.current = false;
         startStream();
@@ -76,14 +83,27 @@ export function useMessages(conversationId: ConversationId | null, options?: Use
             retries = 0;
             try {
               const nc = getNativeContent(decodedMsg);
-              console.log("[useMessages] stream msg", decodedMsg.id, "contentTypeId=", (decodedMsg as any).contentTypeId, "nc keys=", nc ? Object.keys(nc) : "null");
+              console.log(
+                "[useMessages] stream msg",
+                decodedMsg.id,
+                "contentTypeId=",
+                (decodedMsg as any).contentTypeId,
+                "nc keys=",
+                nc ? Object.keys(nc) : "null"
+              );
 
               const reaction = decodedToReaction(decodedMsg, conversationId);
               if (reaction) {
                 // Skip if this is our own reaction that was already optimistically applied
                 const myInboxId = useAuthStore.getState().inboxId ?? "";
-                if (reaction.senderInboxId === myInboxId &&
-                    consumePendingReaction(reaction.referenceMessageId, reaction.emoji, reaction.action)) {
+                if (
+                  reaction.senderInboxId === myInboxId &&
+                  consumePendingReaction(
+                    reaction.referenceMessageId,
+                    reaction.emoji,
+                    reaction.action
+                  )
+                ) {
                   return;
                 }
                 useMessageStore.getState().applyReaction(reaction);
@@ -98,7 +118,10 @@ export function useMessages(conversationId: ConversationId | null, options?: Use
                 return;
               }
               const item = decodedToMessageItem(decodedMsg, conversationId, myInboxId);
-              console.log("[useMessages] decoded item=", item ? `text="${item.text.slice(0, 60)}"` : "null");
+              console.log(
+                "[useMessages] decoded item=",
+                item ? `text="${item.text.slice(0, 60)}"` : "null"
+              );
               if (item) {
                 useMessageStore.getState().append(item);
                 // Send read receipt for new peer messages in DM (if enabled)

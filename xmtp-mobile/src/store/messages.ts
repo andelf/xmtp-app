@@ -8,6 +8,15 @@ import { create } from "zustand";
 import { getClient } from "../xmtp/client";
 import { useAuthStore } from "./auth";
 
+import {
+  decodedToMessageItem,
+  decodedToReaction,
+  decodedToReadReceipt,
+  type MessageItem,
+  type ReactionInfo,
+  type ReadReceiptInfo,
+} from "../utils/messageDecoder";
+
 // Re-export types and conversion functions from messageDecoder
 // so existing consumers (hooks, xmtp/messages.ts) don't need import changes.
 export {
@@ -17,15 +26,6 @@ export {
   type MessageItem,
   type ReplyRef,
   type Reactions,
-  type ReactionInfo,
-  type ReadReceiptInfo,
-} from "../utils/messageDecoder";
-
-import {
-  decodedToMessageItem,
-  decodedToReaction,
-  decodedToReadReceipt,
-  type MessageItem,
   type ReactionInfo,
   type ReadReceiptInfo,
 } from "../utils/messageDecoder";
@@ -57,11 +57,7 @@ export interface MessageActions {
   /** Remove a failed message (used before retry). */
   removeFailed: (conversationId: string, tempId: string) => void;
   /** Update an existing message (e.g. delivery status change). */
-  updateMessage: (
-    conversationId: string,
-    messageId: string,
-    patch: Partial<MessageItem>
-  ) => void;
+  updateMessage: (conversationId: string, messageId: string, patch: Partial<MessageItem>) => void;
   /** Apply a reaction (add/remove) to a message. */
   applyReaction: (reaction: ReactionInfo) => void;
   /** Mark all own messages in a conversation as read (peer sent a read receipt). */

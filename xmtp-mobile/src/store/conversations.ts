@@ -49,7 +49,6 @@ export interface ConversationItem {
 // Conversion helpers
 // ---------------------------------------------------------------------------
 
-
 /**
  * Convert an XMTP SDK Conversation to our ConversationItem.
  * Fetches the latest message (limit: 1) for the preview text.
@@ -58,7 +57,7 @@ export async function conversationToItem(
   conversation: Conversation,
   myInboxId?: string,
   /** Skip per-conversation sync for fast local-only load. */
-  skipSync?: boolean,
+  skipSync?: boolean
 ): Promise<ConversationItem> {
   const isGroup = conversation.version === ConversationVersion.GROUP;
   const kind: "group" | "dm" = isGroup ? "group" : "dm";
@@ -217,7 +216,9 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
       const all: Conversation[] = [...activeGroups, ...dms];
       const nextItems = new Map<string, ConversationItem>();
       const nextTopicToId = new Map<string, string>();
-      const converted = await Promise.all(all.map((c) => conversationToItem(c, myInboxId, skipSync)));
+      const converted = await Promise.all(
+        all.map((c) => conversationToItem(c, myInboxId, skipSync))
+      );
       for (const item of converted) {
         const idStr = item.id as string;
         nextItems.set(idStr, item);
@@ -309,7 +310,8 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
 
-  clear: () => set({ items: new Map(), topicToId: new Map(), error: null, activeConversationId: null }),
+  clear: () =>
+    set({ items: new Map(), topicToId: new Map(), error: null, activeConversationId: null }),
 
   sortedList: () => {
     const { items } = get();
