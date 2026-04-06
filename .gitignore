@@ -1,6 +1,7 @@
 target/
 data/
 data*/
+.trash/
 .cache/
 *.log
 .claude/
