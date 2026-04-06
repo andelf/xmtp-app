@@ -60,6 +60,29 @@ export function decodeMessage(msg: DecodedMessageLike, conversationId: string): 
       }
       // Protocol-level signals — never display
       if (nc.leaveRequest !== undefined) return { kind: "skip" };
+
+      // Unknown content types — check if we have a handler by the inner contentTypeId
+      if (nc.unknown) {
+        const unk = nc.unknown as { contentTypeId?: string };
+        if (unk.contentTypeId) {
+          const h = handlers.get(unk.contentTypeId);
+          if (h) return h.decode(msg, conversationId);
+        }
+      }
+      // Also check encoded payload's type field
+      if (nc.encoded) {
+        try {
+          const encoded = JSON.parse(nc.encoded);
+          const t = encoded.type;
+          if (t?.authorityId && t?.typeId) {
+            const typeStr = `${t.authorityId}/${t.typeId}:${t.versionMajor ?? 1}.${t.versionMinor ?? 0}`;
+            const h = handlers.get(typeStr);
+            if (h) return h.decode(msg, conversationId);
+          }
+        } catch {
+          // fall through
+        }
+      }
     }
 
     // 3. Unknown fallback

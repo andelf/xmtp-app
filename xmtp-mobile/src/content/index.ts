@@ -4,7 +4,7 @@
  * Import this module once at startup to register all handlers.
  */
 export { registerContentType, decodeMessage, previewMessage } from "./registry";
-export type { DecodeResult, ContentTypeHandler, DecodedMessageLike } from "./types";
+export type { DecodeResult, ContentTypeHandler, DecodedMessageLike, ActionsPayload, ActionItem } from "./types";
 
 // Register all built-in handlers on import
 import { registerContentType } from "./registry";
@@ -14,6 +14,7 @@ import { reactionHandler } from "./handlers/reaction";
 import { readReceiptHandler } from "./handlers/readReceipt";
 import { groupUpdatedHandler } from "./handlers/groupUpdated";
 import { markdownHandler } from "./handlers/markdown";
+import { actionsHandler, intentHandler } from "./handlers/actions";
 
 registerContentType(textHandler);
 registerContentType(replyHandler);
@@ -21,3 +22,5 @@ registerContentType(reactionHandler);
 registerContentType(readReceiptHandler);
 registerContentType(groupUpdatedHandler);
 registerContentType(markdownHandler);
+registerContentType(actionsHandler);
+registerContentType(intentHandler);

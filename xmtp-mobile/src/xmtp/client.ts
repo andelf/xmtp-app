@@ -9,6 +9,7 @@ import { Client, PublicIdentity } from "@xmtp/react-native-sdk";
 import type { Signer } from "@xmtp/react-native-sdk";
 import type { ClientOptions } from "@xmtp/react-native-sdk/build/lib/Client";
 import { Wallet } from "ethers";
+import { CoinbaseActionsCodec, CoinbaseIntentCodec } from "./coinbaseCodecs";
 
 // ---------------------------------------------------------------------------
 // Singleton
@@ -95,7 +96,10 @@ export async function initClient(
     ...(env === "local" && customLocalHost ? { customLocalHost } : {}),
   };
 
-  const client = await Client.create(signer, options);
+  const client = await Client.create(signer, {
+    ...options,
+    codecs: [new CoinbaseActionsCodec(), new CoinbaseIntentCodec()] as any,
+  });
   _client = client;
 
   return {

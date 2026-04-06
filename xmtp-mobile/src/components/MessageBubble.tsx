@@ -21,6 +21,7 @@ import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-
 
 import type { MessageItem } from "../store/messages";
 import { sendReaction } from "../xmtp/messages";
+import { ActionButtons } from "./ActionButtons";
 import { useSettingsStore } from "../store/settings";
 import { useAuthStore } from "../store/auth";
 import { formatMessageTime } from "../utils/time";
@@ -127,6 +128,8 @@ export interface MessageBubbleProps {
   item: MessageItem;
   prevItem?: MessageItem | null;
   isGroup?: boolean;
+  /** If this is an actions message and an intent response exists, the selected action id */
+  respondedActionId?: string;
   /** Called when user taps Reply in context menu */
   onReply?: (item: MessageItem) => void;
   /** Called when user taps Retry on a failed message */
@@ -201,7 +204,7 @@ function shouldShowHeader(item: MessageItem, prevItem: MessageItem | null | unde
 // Component
 // ---------------------------------------------------------------------------
 
-function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry }: MessageBubbleProps) {
+function MessageBubbleInner({ item, prevItem, isGroup = false, respondedActionId, onReply, onRetry }: MessageBubbleProps) {
   const quickReactions = useSettingsStore((s) => s.quickReactions);
   const isOwn = item.isOwn;
   const showHeader = shouldShowHeader(item, prevItem);
@@ -317,7 +320,13 @@ function MessageBubbleInner({ item, prevItem, isGroup = false, onReply, onRetry 
             isMarkdown && styles.bubbleMarkdown,
           ]}
         >
-          {isMarkdown ? (
+          {item.actionsPayload ? (
+            <ActionButtons
+              conversationId={item.conversationId}
+              payload={item.actionsPayload}
+              respondedActionId={respondedActionId}
+            />
+          ) : isMarkdown ? (
             <EnrichedMarkdownText
               markdown={item.text}
               markdownStyle={isOwn ? MD_STYLE_OWN : MD_STYLE_OTHER}

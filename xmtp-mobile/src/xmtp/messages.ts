@@ -7,6 +7,7 @@ import { getClient } from "./client";
 import { useAuthStore } from "../store/auth";
 import { useMessageStore, type MessageItem } from "../store/messages";
 import { useConversationStore } from "../store/conversations";
+import { CoinbaseIntentContentType } from "./coinbaseCodecs";
 
 /**
  * Send a text message to a conversation with optimistic UI.
@@ -90,6 +91,31 @@ export async function findConversation(conversationId: string) {
   const convo = [...groups, ...dms].find((c) => (c.id as string) === key) ?? null;
   if (convo) conversationCache.set(key, convo);
   return convo;
+}
+
+/**
+ * Send an Intent (user selected an action) to a conversation.
+ * Uses the registered CoinbaseIntentCodec via opts.contentType.
+ */
+export async function sendIntent(
+  conversationId: string,
+  actionsId: string,
+  actionId: string
+): Promise<boolean> {
+  try {
+    const convo = await findConversation(conversationId);
+    if (!convo) return false;
+
+    await convo.send(
+      { id: actionsId, actionId } as any,
+      { contentType: CoinbaseIntentContentType },
+    );
+
+    return true;
+  } catch (err) {
+    console.error("[sendIntent] Failed:", err);
+    return false;
+  }
 }
 
 /** Pending optimistic reactions — keyed by "msgId:emoji:action", value is skip count. */

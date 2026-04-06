@@ -116,10 +116,17 @@ export default function ConversationScreen() {
   const storeMessages = useMessageStore((s) => s.byConversation[id ?? ""] ?? EMPTY_MESSAGES);
   const historyLoading = useMessageStore((s) => s.isLoading);
 
-  const messages = useMemo(() => {
+  // All messages (including intents) — used for intentMap lookups
+  const allMessages = useMemo(() => {
     if (!storeMessages || storeMessages.length === 0) return [];
     return [...storeMessages].sort((a, b) => b.sentAt - a.sentAt);
   }, [storeMessages]);
+
+  // Visible messages — intent messages are hidden (they show via ActionButtons state)
+  const messages = useMemo(
+    () => allMessages.filter((m) => !m.intentRef),
+    [allMessages]
+  );
 
   // Batch-resolve sender addresses when messages change
   useEffect(() => {
@@ -178,11 +185,29 @@ export default function ConversationScreen() {
     []
   );
 
+  // Build a map of actionsId -> earliest selected actionId from intent messages.
+  // allMessages is sorted newest-first, so we overwrite (last write = chronologically earliest).
+  const intentMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const msg of allMessages) {
+      if (msg.intentRef) {
+        map.set(msg.intentRef.actionsId, msg.intentRef.actionId);
+      }
+    }
+    return map;
+  }, [allMessages]);
+
+  const intentMapRef = useRef(intentMap);
+  useEffect(() => { intentMapRef.current = intentMap; }, [intentMap]);
+
   const renderItem: ListRenderItem<MessageItem> = useCallback(
     ({ item, index }) => {
       const prevItem = index + 1 < messages.length ? messages[index + 1] : null;
+      const respondedActionId = item.actionsPayload
+        ? intentMapRef.current.get(item.actionsPayload.id)
+        : undefined;
       return (
-        <MessageBubble item={item} prevItem={prevItem} isGroup={isGroup} onReply={handleReply} onRetry={handleRetry} />
+        <MessageBubble item={item} prevItem={prevItem} isGroup={isGroup} respondedActionId={respondedActionId} onReply={handleReply} onRetry={handleRetry} />
       );
     },
     [isGroup, messages, handleReply, handleRetry]

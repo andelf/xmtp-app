@@ -7,6 +7,7 @@
  * Decoding logic is delegated to the content type registry (src/content/).
  */
 import { decodeMessage } from "../content";
+import type { ActionsPayload } from "../content/types";
 
 // ---------------------------------------------------------------------------
 // Types -- use plain strings so they are assignable from SDK branded types.
@@ -42,6 +43,10 @@ export interface MessageItem {
   replyRef?: ReplyRef;
   /** Aggregated reactions keyed by emoji */
   reactions?: Reactions;
+  /** Structured Actions payload (for actions content type) */
+  actionsPayload?: ActionsPayload;
+  /** Intent reference (for intent content type — which actions set and which action was selected) */
+  intentRef?: { actionsId: string; actionId: string };
 }
 
 export interface ReactionInfo {
@@ -77,25 +82,51 @@ export interface DecodedMessageLike {
  * Supports: text, reply. Returns null for non-displayable types (reaction, read receipt, etc.)
  * Returns "Unsupported content type: xxx" for unknown types without extractable text.
  */
+function baseMessageFields(
+  msg: DecodedMessageLike,
+  conversationId: string,
+  myInboxId: string | null,
+): Omit<MessageItem, "text" | "contentType"> {
+  return {
+    id: msg.id,
+    conversationId,
+    senderInboxId: msg.senderInboxId,
+    sentAt: msg.sentNs ? msg.sentNs / 1_000_000 : Date.now(),
+    status: msg.deliveryStatus ?? "published",
+    isOwn: msg.senderInboxId === myInboxId,
+  };
+}
+
 export function decodedToMessageItem(
   msg: DecodedMessageLike,
   conversationId: string,
   myInboxId: string | null
 ): MessageItem | null {
   const result = decodeMessage(msg, conversationId);
+  if (result.kind === "actions") {
+    return {
+      ...baseMessageFields(msg, conversationId, myInboxId),
+      text: result.text,
+      contentType: msg.contentTypeId ?? "coinbase.com/actions:1.0",
+      actionsPayload: result.payload,
+    };
+  }
+  if (result.kind === "intent") {
+    return {
+      ...baseMessageFields(msg, conversationId, myInboxId),
+      text: result.text,
+      contentType: msg.contentTypeId ?? "coinbase.com/intent:1.0",
+      intentRef: { actionsId: result.actionsId, actionId: result.actionId },
+    };
+  }
   if (result.kind !== "message") return null;
   if (!result.text) return null;
 
   return {
-    id: msg.id,
-    conversationId,
-    senderInboxId: msg.senderInboxId,
+    ...baseMessageFields(msg, conversationId, myInboxId),
     text: result.text,
     contentType: msg.contentTypeId ?? "xmtp.org/text:1.0",
     format: result.format,
-    sentAt: msg.sentNs ? msg.sentNs / 1_000_000 : Date.now(),
-    status: msg.deliveryStatus ?? "published",
-    isOwn: msg.senderInboxId === myInboxId,
     replyRef: result.replyRef,
   };
 }
