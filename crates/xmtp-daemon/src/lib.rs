@@ -561,6 +561,27 @@ fn sort_conversation_summaries(items: &mut [ConversationSummary]) {
     items.sort_by_key(|item| Reverse(item.last_message_ns.unwrap_or_default()));
 }
 
+fn send_typed_content(
+    conversation: &xmtp::conversation::Conversation,
+    text: &str,
+    content_type: Option<&str>,
+) -> anyhow::Result<String> {
+    match content_type {
+        Some("markdown") => conversation.send_markdown(text).context("send markdown"),
+        Some("actions") => {
+            let bytes = encode_coinbase_content::<CoinbaseActions>(text, "actions")
+                .context("encode actions content")?;
+            conversation.send(&bytes).context("send actions")
+        }
+        Some("intent") => {
+            let bytes = encode_coinbase_content::<CoinbaseIntent>(text, "intent")
+                .context("encode intent content")?;
+            conversation.send(&bytes).context("send intent")
+        }
+        _ => conversation.send_text(text).context("send text"),
+    }
+}
+
 fn send_dm_with_client(
     client: &Client,
     recipient: &str,
@@ -569,20 +590,7 @@ fn send_dm_with_client(
 ) -> anyhow::Result<SendMessageResult> {
     let recipient = Recipient::parse(recipient);
     let conversation = client.dm(&recipient).context("create or find DM")?;
-    let message_id = match content_type {
-        Some("markdown") => conversation
-            .send_markdown(text)
-            .context("send DM markdown")?,
-        Some("actions") => {
-            let bytes = encode_coinbase_actions(text).context("encode actions content")?;
-            conversation.send(&bytes).context("send actions")?
-        }
-        Some("intent") => {
-            let bytes = encode_coinbase_intent(text).context("encode intent content")?;
-            conversation.send(&bytes).context("send intent")?
-        }
-        _ => conversation.send_text(text).context("send DM text")?,
-    };
+    let message_id = send_typed_content(&conversation, text, content_type)?;
     Ok(SendMessageResult {
         conversation_id: conversation.id(),
         message_id,
@@ -645,22 +653,7 @@ fn send_conversation_with_client(
     content_type: Option<&str>,
 ) -> anyhow::Result<SendMessageResult> {
     let conversation = find_conversation_by_id(client, conversation_id)?;
-    let message_id = match content_type {
-        Some("markdown") => conversation
-            .send_markdown(text)
-            .context("send conversation markdown")?,
-        Some("actions") => {
-            let bytes = encode_coinbase_actions(text).context("encode actions content")?;
-            conversation.send(&bytes).context("send actions")?
-        }
-        Some("intent") => {
-            let bytes = encode_coinbase_intent(text).context("encode intent content")?;
-            conversation.send(&bytes).context("send intent")?
-        }
-        _ => conversation
-            .send_text(text)
-            .context("send conversation text")?,
-    };
+    let message_id = send_typed_content(&conversation, text, content_type)?;
     Ok(SendMessageResult {
         conversation_id: conversation.id(),
         message_id,
@@ -689,20 +682,7 @@ fn send_group_with_client_logged(
         );
     }
     let send_started = Instant::now();
-    let message_id = match content_type {
-        Some("markdown") => conversation
-            .send_markdown(text)
-            .context("send group markdown")?,
-        Some("actions") => {
-            let bytes = encode_coinbase_actions(text).context("encode actions content")?;
-            conversation.send(&bytes).context("send actions")?
-        }
-        Some("intent") => {
-            let bytes = encode_coinbase_intent(text).context("encode intent content")?;
-            conversation.send(&bytes).context("send intent")?
-        }
-        _ => conversation.send_text(text).context("send group text")?,
-    };
+    let message_id = send_typed_content(&conversation, text, content_type)?;
     if let Some(data_dir) = data_dir {
         daemon_log(
             data_dir,
@@ -1209,17 +1189,7 @@ fn history_item_from_message(
             );
             if content_type == "coinbase.com/actions:1.0" {
                 if let Some(actions) = decode_coinbase_actions(&raw) {
-                    let summary = format!(
-                        "{}\n{}",
-                        actions.description,
-                        actions
-                            .actions
-                            .iter()
-                            .enumerate()
-                            .map(|(i, a)| format!("[{}] {}", i + 1, a.label))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    );
+                    let summary = format_actions_summary(&actions);
                     let payload = ActionsPayload {
                         id: actions.id,
                         description: actions.description,
@@ -1248,7 +1218,7 @@ fn history_item_from_message(
                 }
             } else if content_type == "coinbase.com/intent:1.0" {
                 if let Some(intent) = decode_coinbase_intent(&raw) {
-                    let summary = format!("Selected action: {}", intent.action_id);
+                    let summary = format_intent_summary(&intent);
                     let payload = IntentPayload {
                         id: intent.id,
                         action_id: intent.action_id,
@@ -1358,22 +1328,12 @@ fn summarize_message_content(message: &xmtp::conversation::Message) -> String {
         Ok(Content::Unknown { content_type, raw }) => {
             if content_type == "coinbase.com/actions:1.0" {
                 if let Some(actions) = decode_coinbase_actions(&raw) {
-                    return format!(
-                        "{}\n{}",
-                        actions.description,
-                        actions
-                            .actions
-                            .iter()
-                            .enumerate()
-                            .map(|(i, a)| format!("[{}] {}", i + 1, a.label))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    );
+                    return format_actions_summary(&actions);
                 }
             } else if content_type == "coinbase.com/intent:1.0"
                 && let Some(intent) = decode_coinbase_intent(&raw)
             {
-                return format!("Selected action: {}", intent.action_id);
+                return format_intent_summary(&intent);
             }
             log_unknown_message_type(None, &content_type, &raw, message.fallback.as_ref());
             message
@@ -1758,6 +1718,24 @@ fn decode_group_updated(raw: &[u8]) -> Option<GroupUpdated> {
     GroupUpdated::decode(encoded.content.as_slice()).ok()
 }
 
+fn format_actions_summary(actions: &CoinbaseActions) -> String {
+    format!(
+        "{}\n{}",
+        actions.description,
+        actions
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(i, a)| format!("[{}] {}", i + 1, a.label))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
+fn format_intent_summary(intent: &CoinbaseIntent) -> String {
+    format!("Selected action: {}", intent.action_id)
+}
+
 fn decode_coinbase_actions(raw: &[u8]) -> Option<CoinbaseActions> {
     let encoded = xmtp::content::EncodedContent::decode(raw).ok()?;
     serde_json::from_slice(&encoded.content).ok()
@@ -1768,31 +1746,16 @@ fn decode_coinbase_intent(raw: &[u8]) -> Option<CoinbaseIntent> {
     serde_json::from_slice(&encoded.content).ok()
 }
 
-fn encode_coinbase_actions(json_str: &str) -> anyhow::Result<Vec<u8>> {
-    let _: CoinbaseActions =
-        serde_json::from_str(json_str).context("invalid Actions JSON")?;
+fn encode_coinbase_content<T: serde::de::DeserializeOwned>(
+    json_str: &str,
+    type_id: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let _: T = serde_json::from_str(json_str)
+        .with_context(|| format!("invalid {type_id} JSON"))?;
     let encoded = xmtp::content::EncodedContent {
         r#type: Some(xmtp::content::ContentTypeId {
             authority_id: "coinbase.com".into(),
-            type_id: "actions".into(),
-            version_major: 1,
-            version_minor: 0,
-        }),
-        parameters: std::collections::HashMap::new(),
-        fallback: None,
-        content: json_str.as_bytes().to_vec(),
-        compression: None,
-    };
-    Ok(encoded.encode_to_vec())
-}
-
-fn encode_coinbase_intent(json_str: &str) -> anyhow::Result<Vec<u8>> {
-    let _: CoinbaseIntent =
-        serde_json::from_str(json_str).context("invalid Intent JSON")?;
-    let encoded = xmtp::content::EncodedContent {
-        r#type: Some(xmtp::content::ContentTypeId {
-            authority_id: "coinbase.com".into(),
-            type_id: "intent".into(),
+            type_id: type_id.into(),
             version_major: 1,
             version_minor: 0,
         }),
