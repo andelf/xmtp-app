@@ -31,13 +31,13 @@ use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_core::{ConnectionState, DaemonState};
 use xmtp_ipc::{
     ActionItem, ActionResponse, ActionsPayload, ApiErrorBody, ApiErrorDetail,
-    ConversationInfoResponse, ConversationItem, ConversationListResponse,
-    ConversationUpdatedEvent, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
-    GroupCreateRequest, GroupInfoResponse, GroupMemberItem, GroupMembersResponse,
-    GroupMembersUpdateRequest, GroupMembersUpdatedEvent, GroupPermissionsResponse, HistoryItem,
-    HistoryResponse, IntentPayload, LoginRequest, MessageInfoResponse, ReactionDetail,
-    RecipientMessageRequest, RecipientRequest, RenameGroupRequest, SendDmResponse,
-    SendMessageRequest, StatusResponse, UpdatePermissionRequest, short_display_id,
+    ConversationInfoResponse, ConversationItem, ConversationListResponse, ConversationUpdatedEvent,
+    DaemonEventData, DaemonEventEnvelope, EmojiRequest, GroupCreateRequest, GroupInfoResponse,
+    GroupMemberItem, GroupMembersResponse, GroupMembersUpdateRequest, GroupMembersUpdatedEvent,
+    GroupPermissionsResponse, HistoryItem, HistoryResponse, IntentPayload, LoginRequest,
+    MessageInfoResponse, ReactionDetail, RecipientMessageRequest, RecipientRequest,
+    RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
+    UpdatePermissionRequest, short_display_id,
 };
 use xmtp_logging::append_daemon_event;
 use xmtp_store::{load_state, save_state};
@@ -1123,9 +1123,16 @@ fn history_item_from_message(
         intent_payload,
     ) = match message.decode() {
         Ok(Content::Text(text)) => ("text".to_owned(), text, None, None, None, None, None, None),
-        Ok(Content::Markdown(markdown)) => {
-            ("markdown".to_owned(), markdown, None, None, None, None, None, None)
-        }
+        Ok(Content::Markdown(markdown)) => (
+            "markdown".to_owned(),
+            markdown,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
         Ok(Content::Reaction(reaction)) => (
             "reaction".to_owned(),
             summarize_decoded_content(&Content::Reaction(reaction.clone())),
@@ -1204,7 +1211,16 @@ fn history_item_from_message(
                             })
                             .collect(),
                     };
-                    ("actions".to_owned(), summary, None, None, None, None, Some(payload), None)
+                    (
+                        "actions".to_owned(),
+                        summary,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(payload),
+                        None,
+                    )
                 } else {
                     (
                         "unknown".to_owned(),
@@ -1213,7 +1229,12 @@ fn history_item_from_message(
                             .clone()
                             .filter(|v| !v.trim().is_empty())
                             .unwrap_or_else(|| summarize_unknown_content(&content_type, &raw)),
-                        None, None, None, None, None, None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
                     )
                 }
             } else if content_type == "coinbase.com/intent:1.0" {
@@ -1223,7 +1244,16 @@ fn history_item_from_message(
                         id: intent.id,
                         action_id: intent.action_id,
                     };
-                    ("intent".to_owned(), summary, None, None, None, None, None, Some(payload))
+                    (
+                        "intent".to_owned(),
+                        summary,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(payload),
+                    )
                 } else {
                     (
                         "unknown".to_owned(),
@@ -1232,7 +1262,12 @@ fn history_item_from_message(
                             .clone()
                             .filter(|v| !v.trim().is_empty())
                             .unwrap_or_else(|| summarize_unknown_content(&content_type, &raw)),
-                        None, None, None, None, None, None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
                     )
                 }
             } else {
@@ -1243,7 +1278,12 @@ fn history_item_from_message(
                         .clone()
                         .filter(|value| !value.trim().is_empty())
                         .unwrap_or_else(|| summarize_unknown_content(&content_type, &raw)),
-                    None, None, None, None, None, None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
                 )
             }
         }
@@ -1766,8 +1806,8 @@ fn encode_coinbase_content<T: CoinbaseFallback>(
     json_str: &str,
     type_id: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    let parsed: T = serde_json::from_str(json_str)
-        .with_context(|| format!("invalid {type_id} JSON"))?;
+    let parsed: T =
+        serde_json::from_str(json_str).with_context(|| format!("invalid {type_id} JSON"))?;
     let encoded = xmtp::content::EncodedContent {
         r#type: Some(xmtp::content::ContentTypeId {
             authority_id: "coinbase.com".into(),

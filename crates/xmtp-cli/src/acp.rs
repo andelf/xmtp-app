@@ -1411,7 +1411,10 @@ fn should_forward_item(item: &HistoryItem, self_inbox_id: Option<&str>) -> bool 
     if self_inbox_id == Some(item.sender_inbox_id.as_str()) {
         return false;
     }
-    matches!(item.content_kind.as_str(), "text" | "markdown" | "reply" | "actions" | "intent")
+    matches!(
+        item.content_kind.as_str(),
+        "text" | "markdown" | "reply" | "actions" | "intent"
+    )
 }
 
 async fn seed_seen_history_items(
@@ -1719,7 +1722,6 @@ fn split_markdown_blocks(reply: &str) -> Vec<String> {
 
     blocks
 }
-
 
 fn format_agent_error_message(err: &anyhow::Error) -> String {
     let message = truncate_display(&err.to_string(), 240);
