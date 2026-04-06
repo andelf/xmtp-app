@@ -126,6 +126,12 @@ enum Command {
         )]
         reply_mode: acp::ReplyMode,
         #[arg(
+            long = "enable-actions",
+            default_value_t = false,
+            help = "Enable interactive Actions: agent can send structured choice menus and receive user selections"
+        )]
+        actions: bool,
+        #[arg(
             long = "resume",
             num_args = 0..=1,
             default_missing_value = "latest",
@@ -426,6 +432,7 @@ async fn run() -> anyhow::Result<()> {
             context_prefix,
             reactions,
             reply_mode,
+            actions,
             resume,
             command,
         } => {
@@ -435,6 +442,7 @@ async fn run() -> anyhow::Result<()> {
                 context_prefix,
                 reactions,
                 reply_mode,
+                actions,
                 resume,
                 command,
             )

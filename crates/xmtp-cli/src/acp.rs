@@ -84,6 +84,7 @@ pub async fn run_acp(
     context_prefix: bool,
     reactions: ReactionLevel,
     reply_mode: ReplyMode,
+    actions: bool,
     resume: Option<String>,
     command: Vec<String>,
 ) -> anyhow::Result<()> {
@@ -96,6 +97,7 @@ pub async fn run_acp(
             context_prefix,
             reactions,
             reply_mode,
+            actions,
             resume,
             command,
         ))
@@ -108,6 +110,7 @@ async fn run_acp_inner(
     context_prefix: bool,
     reactions: ReactionLevel,
     reply_mode: ReplyMode,
+    actions: bool,
     resume: Option<String>,
     command: Vec<String>,
 ) -> anyhow::Result<()> {
@@ -125,6 +128,17 @@ async fn run_acp_inner(
         .await
         .context("verify ACP daemon endpoints")?;
     let self_inbox_id = status.inbox_id.clone();
+
+    info!(
+        conversation_id = %conversation_id,
+        reply_mode = ?reply_mode,
+        reactions = ?reactions,
+        actions = actions,
+        context_prefix = context_prefix,
+        resume = resume.as_deref().unwrap_or("none"),
+        agent = %format!("{program} {}", args.join(" ")),
+        "ACP bridge config"
+    );
 
     let mut child = Command::new(program)
         .args(args)
@@ -146,6 +160,7 @@ async fn run_acp_inner(
         conversation_id: conversation_id.clone(),
         reactions,
         reply_mode,
+        actions,
         state: Arc::clone(&state),
     };
     let (conn, io_task) = acp::ClientSideConnection::new(
@@ -186,6 +201,7 @@ async fn run_acp_inner(
         &conversation_id,
         self_inbox_id.as_deref(),
         context_prefix,
+        actions,
         resume.as_deref(),
         &conn,
         &cwd,
@@ -201,6 +217,7 @@ async fn run_acp_inner(
         context_prefix,
         reactions,
         reply_mode,
+        actions,
         status,
         &conn,
         &session_id,
@@ -464,6 +481,7 @@ async fn ensure_acp_session(
     conversation_id: &str,
     self_inbox_id: Option<&str>,
     context_prefix: bool,
+    actions: bool,
     resume: Option<&str>,
     conn: &acp::ClientSideConnection,
     cwd: &Path,
@@ -559,11 +577,13 @@ async fn ensure_acp_session(
         }),
     );
     store_session_id(data_dir, conversation_id, &session.session_id)?;
-    if context_prefix {
+    if context_prefix || actions {
         send_bootstrap_prompt(
             data_dir,
             conversation_id,
             self_inbox_id,
+            context_prefix,
+            actions,
             conn,
             &session.session_id,
             state,
@@ -603,6 +623,7 @@ async fn bridge_history_to_acp(
     context_prefix: bool,
     reactions: ReactionLevel,
     reply_mode: ReplyMode,
+    actions: bool,
     initial_status: StatusResponse,
     conn: &acp::ClientSideConnection,
     session_id: &acp::SessionId,
@@ -842,6 +863,7 @@ async fn bridge_history_to_acp(
                                             conversation_id,
                                             reply_part,
                                             "xmtp_sent",
+                                            actions,
                                         )
                                         .await
                                         {
@@ -1032,6 +1054,7 @@ async fn bridge_history_to_acp(
                                     conversation_id,
                                     reply_part,
                                     "xmtp_sent",
+                                    actions,
                                 )
                                 .await {
                                     Ok(message_id) => message_id,
@@ -1206,21 +1229,21 @@ fn parse_reply_segments(reply: &str) -> Vec<ReplySegment> {
     let mut segments = Vec::new();
     let mut remaining = reply;
 
-    while let Some(start) = remaining.find("<actions") {
+    while let Some(start) = remaining.find("<xmtp-acp-actions") {
         let before = remaining[..start].trim();
         if !before.is_empty() {
             segments.push(ReplySegment::Text(before.to_owned()));
         }
 
         let after_start = &remaining[start..];
-        if let Some(end_offset) = after_start.find("</actions>") {
-            let tag_content = &after_start[..end_offset + "</actions>".len()];
+        if let Some(end_offset) = after_start.find("</xmtp-acp-actions>") {
+            let tag_content = &after_start[..end_offset + "</xmtp-acp-actions>".len()];
             if let Some(json) = parse_actions_xml(tag_content) {
                 segments.push(ReplySegment::Actions(json));
             } else {
                 segments.push(ReplySegment::Text(tag_content.to_owned()));
             }
-            remaining = &after_start[end_offset + "</actions>".len()..];
+            remaining = &after_start[end_offset + "</xmtp-acp-actions>".len()..];
         } else {
             segments.push(ReplySegment::Text(remaining[start..].to_owned()));
             remaining = "";
@@ -1245,7 +1268,7 @@ fn parse_actions_xml(xml: &str) -> Option<String> {
 
     let mut actions = Vec::new();
     let mut search = xml;
-    while let Some(pos) = search.find("<action ") {
+    while let Some(pos) = search.find("<xmtp-acp-action ") {
         let tag_start = &search[pos..];
         let tag_end = tag_start.find("/>")?;
         let tag = &tag_start[..tag_end + 2];
@@ -1286,6 +1309,8 @@ async fn send_bootstrap_prompt(
     data_dir: &Path,
     conversation_id: &str,
     self_inbox_id: Option<&str>,
+    context_prefix: bool,
+    actions: bool,
     conn: &acp::ClientSideConnection,
     session_id: &acp::SessionId,
     state: &Arc<Mutex<BridgeState>>,
@@ -1294,39 +1319,60 @@ async fn send_bootstrap_prompt(
         http_get(data_dir, &format!("/v1/conversations/{conversation_id}"))
             .await
             .context("load conversation info for ACP bootstrap")?;
-    let bootstrap = format!(
-        "You are an AI agent connected to an XMTP messaging conversation.\n\nContext:\n- Type: {} ({} members)\n- Conversation ID: {}\n- Your identity (inbox ID): {}\n\nMessage format:\nEach user message is prefixed with the sender short ID in brackets:\n  [0x1a2b3c4d] Hello everyone\n\nRules:\n- Respond with plain text only, do NOT include any prefix in your replies.\n- In group chats, pay attention to who said what.\n- If the conversation type is dm, there is only one other participant.",
+    let mut bootstrap = format!(
+        "You are an AI agent connected to an XMTP messaging conversation.\n\nContext:\n- Type: {} ({} members)\n- Conversation ID: {}\n- Your identity (inbox ID): {}",
         info.conversation_type,
         info.member_count,
         conversation_id,
         self_inbox_id.unwrap_or("unknown"),
     );
-    let bootstrap = format!(
-        "{bootstrap}\n\n\
-## Interactive Actions\n\
-\n\
-When you need the user to make a structured choice, embed an <actions> XML block \
-anywhere in your reply. You can include normal text before and after it.\n\
-\n\
-Format:\n\
-```\n\
-<actions id=\"unique_id\" description=\"What would you like to do?\">\n\
-  <action id=\"opt_a\" label=\"Option A\" style=\"primary\"/>\n\
-  <action id=\"opt_b\" label=\"Option B\"/>\n\
-  <action id=\"cancel\" label=\"Cancel\" style=\"danger\"/>\n\
-</actions>\n\
-```\n\
-\n\
-Rules:\n\
-- id: unique identifier for this action set\n\
-- description: shown above the button list\n\
-- Each <action> needs id and label; style is optional: primary | secondary | danger\n\
-- Maximum 10 actions per block, unique ids\n\
-- You may include multiple <actions> blocks in one reply\n\
-- Text outside <actions> tags is sent as normal markdown\n\
-- When the user selects, you receive: [Intent] User selected action_id=\"opt_a\" from actions_id=\"unique_id\"\n\
-- Use Actions sparingly, only when structured choices genuinely help"
-    );
+    if context_prefix {
+        bootstrap.push_str(
+            "\n\nMessage format:\nEach user message is prefixed with the sender short ID in brackets:\n  [0x1a2b3c4d] Hello everyone\n\nRules:\n- Respond with plain text only, do NOT include any prefix in your replies.\n- In group chats, pay attention to who said what.\n- If the conversation type is dm, there is only one other participant."
+        );
+    }
+    let bootstrap = if actions {
+        format!(
+            r###"{bootstrap}
+
+## Interactive Actions
+
+When you need the user to make a structured choice, embed an <xmtp-acp-actions> XML block anywhere in your reply. You can include normal text before and after it. Output the XML directly — never wrap it in markdown code fences.
+
+Format:
+
+<xmtp-acp-actions id="unique_id" description="What would you like to do?">
+  <xmtp-acp-action id="opt_a" label="Option A" style="primary"/>
+  <xmtp-acp-action id="opt_b" label="Option B"/>
+  <xmtp-acp-action id="cancel" label="Cancel" style="danger"/>
+</xmtp-acp-actions>
+
+Rules:
+- description is required and shown above the button list
+- Each <xmtp-acp-action> needs id and label; style is optional: primary | secondary | danger
+- id values: alphanumeric, hyphens, underscores only. Must be unique within the block
+- Attribute values must not contain double quotes
+- Maximum 10 actions per block
+- You may include multiple <xmtp-acp-actions> blocks in one reply
+- Text outside <xmtp-acp-actions> tags is sent as normal markdown
+- When the user selects, you receive: [Intent] User selected action_id="opt_a" from actions_id="unique_id"
+- Use Actions sparingly, only when structured choices genuinely help
+
+Example:
+
+I've analyzed your portfolio. Here are the recommended next steps:
+
+<xmtp-acp-actions id="portfolio_next" description="Choose an action for your portfolio">
+  <xmtp-acp-action id="rebalance" label="Rebalance now" style="primary"/>
+  <xmtp-acp-action id="details" label="Show detailed breakdown"/>
+  <xmtp-acp-action id="skip" label="No changes needed" style="danger"/>
+</xmtp-acp-actions>
+
+Let me know if you need more context on any option."###
+        )
+    } else {
+        bootstrap
+    };
     reset_session_runtime(state, session_id_str(session_id));
     log_acp_event(
         data_dir,
@@ -1685,8 +1731,13 @@ async fn send_reply_part(
     conversation_id: &str,
     reply_part: &str,
     event_name: &str,
+    actions: bool,
 ) -> anyhow::Result<String> {
-    let segments = parse_reply_segments(reply_part);
+    let segments = if actions {
+        parse_reply_segments(reply_part)
+    } else {
+        vec![ReplySegment::Text(reply_part.to_owned())]
+    };
     let mut last_message_id = String::new();
 
     for segment in segments {
@@ -1833,6 +1884,7 @@ struct BridgeClient {
     conversation_id: String,
     reactions: ReactionLevel,
     reply_mode: ReplyMode,
+    actions: bool,
     state: Arc<Mutex<BridgeState>>,
 }
 
@@ -2143,6 +2195,7 @@ impl acp::Client for BridgeClient {
                             &self.conversation_id,
                             &text,
                             "xmtp_stream_sent",
+                            self.actions,
                         )
                         .await
                         {
