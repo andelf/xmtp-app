@@ -140,6 +140,8 @@ fn history_event_roundtrips_as_json() {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: vec!["reader-1".to_owned()],
+                actions_payload: None,
+                intent_payload: None,
             },
         },
     };

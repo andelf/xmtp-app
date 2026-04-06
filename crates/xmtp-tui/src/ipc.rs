@@ -104,7 +104,8 @@ impl Runtime {
                     kind,
                     target,
                     text,
-                } => self.spawn_send_message(conversation_id, kind, target, text),
+                    content_type,
+                } => self.spawn_send_message(conversation_id, kind, target, text, content_type),
                 Effect::Reply {
                     message_id,
                     text,
@@ -358,14 +359,15 @@ impl Runtime {
         kind: String,
         target: Option<String>,
         text: String,
+        content_type: Option<String>,
     ) {
         let tx = self.tx.clone();
         let data_dir = self.data_dir.clone();
         tokio::spawn(async move {
             let result: anyhow::Result<ActionResponse> = if kind == "group" {
-                send_group(&data_dir, &conversation_id, &text).await
+                send_group(&data_dir, &conversation_id, &text, content_type.as_deref()).await
             } else if let Some(target) = target {
-                send_dm(&data_dir, &target, &text)
+                send_dm(&data_dir, &target, &text, content_type.as_deref())
                     .await
                     .map(|response| ActionResponse {
                         conversation_id: response.conversation_id,
@@ -742,6 +744,7 @@ async fn send_dm(
     data_dir: &Path,
     recipient: &str,
     message: &str,
+    content_type: Option<&str>,
 ) -> anyhow::Result<xmtp_ipc::SendDmResponse> {
     http_post(
         data_dir,
@@ -749,7 +752,7 @@ async fn send_dm(
         &RecipientMessageRequest {
             recipient: recipient.to_owned(),
             message: message.to_owned(),
-            content_type: None,
+            content_type: content_type.map(|s| s.to_owned()),
         },
     )
     .await
@@ -759,6 +762,7 @@ async fn send_group(
     data_dir: &Path,
     conversation_id: &str,
     message: &str,
+    content_type: Option<&str>,
 ) -> anyhow::Result<ActionResponse> {
     http_post(
         data_dir,
@@ -766,7 +770,7 @@ async fn send_group(
         &SendMessageRequest {
             message: message.to_owned(),
             conversation_id: None,
-            content_type: None,
+            content_type: content_type.map(|s| s.to_owned()),
         },
     )
     .await

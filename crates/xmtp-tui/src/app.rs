@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use textwrap::wrap;
 use xmtp_ipc::{
-    ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem,
+    ActionsPayload, ConversationInfoResponse, ConversationItem, GroupInfoResponse, GroupMemberItem,
     GroupPermissionsResponse, HistoryItem, ReactionDetail, StatusResponse,
 };
 
@@ -525,6 +525,8 @@ impl App {
                             reaction_action: None,
                             attached_reactions: Vec::new(),
                             read_by: Vec::new(),
+                            actions_payload: None,
+                            intent_payload: None,
                         },
                     );
                     if self.should_auto_scroll_messages() {
@@ -850,6 +852,7 @@ impl App {
                         kind: conversation.kind.clone(),
                         target,
                         text,
+                        content_type: None,
                     }];
                 }
             }
@@ -882,6 +885,34 @@ impl App {
             }
             KeyCode::End => {
                 self.cursor = self.input_char_len();
+            }
+            KeyCode::Char(c @ '1'..='9')
+                if self.input.is_empty() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                let index = (c as u8 - b'1') as usize;
+                if let Some(actions) = self.latest_actions_payload().cloned()
+                    && let Some(action) = actions.actions.get(index)
+                {
+                    let intent_json = serde_json::json!({
+                        "id": actions.id,
+                        "actionId": action.id,
+                    });
+                    if let Some(conversation) = &self.active_conversation {
+                        let target = self
+                            .active_info
+                            .as_ref()
+                            .and_then(|info| info.dm_peer_inbox_id.clone());
+                        self.pending_status = Some("Sending intent...".to_owned());
+                        return vec![Effect::SendMessage {
+                            conversation_id: conversation.id.clone(),
+                            kind: conversation.kind.clone(),
+                            target,
+                            text: intent_json.to_string(),
+                            content_type: Some("intent".to_owned()),
+                        }];
+                    }
+                }
+                self.insert_input_char(c);
             }
             KeyCode::Char(ch) => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -1526,6 +1557,12 @@ impl App {
     }
 
     pub fn color_for_message(&self, item: &HistoryItem) -> Color {
+        if item.content_kind == "actions" {
+            return Color::Yellow;
+        }
+        if item.content_kind == "intent" {
+            return Color::Magenta;
+        }
         if item.content_kind == "unknown" || item.content.starts_with("type=unknown content_type=")
         {
             return Color::White;
@@ -1535,6 +1572,14 @@ impl App {
         } else {
             Color::Cyan
         }
+    }
+
+    pub fn latest_actions_payload(&self) -> Option<&ActionsPayload> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|item| item.content_kind == "actions" && item.actions_payload.is_some())
+            .and_then(|item| item.actions_payload.as_ref())
     }
 
     pub fn message_menu_actions(&self) -> Vec<MessageMenuAction> {
@@ -1940,6 +1985,8 @@ mod tests {
             reaction_action: None,
             attached_reactions: Vec::new(),
             read_by: Vec::new(),
+            actions_payload: None,
+            intent_payload: None,
         }
     }
 
@@ -2128,6 +2175,8 @@ mod tests {
             reaction_action: None,
             attached_reactions: Vec::new(),
             read_by: Vec::new(),
+            actions_payload: None,
+            intent_payload: None,
         });
         app.focus = Focus::Conversations;
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
@@ -2368,6 +2417,8 @@ mod tests {
             reaction_action: None,
             attached_reactions: Vec::new(),
             read_by: Vec::new(),
+            actions_payload: None,
+            intent_payload: None,
         });
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -2483,6 +2534,8 @@ mod tests {
             reaction_action: None,
             attached_reactions: Vec::new(),
             read_by: Vec::new(),
+            actions_payload: None,
+            intent_payload: None,
         });
 
         let effects = app.handle_event(crate::event::AppEvent::Terminal(Event::Key(
@@ -2515,6 +2568,8 @@ mod tests {
                     reaction_action: None,
                     attached_reactions: Vec::new(),
                     read_by: Vec::new(),
+                    actions_payload: None,
+                    intent_payload: None,
                 },
                 xmtp_ipc::HistoryItem {
                     message_id: "msg-2".into(),
@@ -2530,6 +2585,8 @@ mod tests {
                     reaction_action: Some("added".into()),
                     attached_reactions: Vec::new(),
                     read_by: Vec::new(),
+                    actions_payload: None,
+                    intent_payload: None,
                 },
             ],
         });
@@ -2561,6 +2618,8 @@ mod tests {
                     reaction_action: Some("added".into()),
                     attached_reactions: Vec::new(),
                     read_by: Vec::new(),
+                    actions_payload: None,
+                    intent_payload: None,
                 },
                 xmtp_ipc::HistoryItem {
                     message_id: "msg-1".into(),
@@ -2576,6 +2635,8 @@ mod tests {
                     reaction_action: None,
                     attached_reactions: Vec::new(),
                     read_by: Vec::new(),
+                    actions_payload: None,
+                    intent_payload: None,
                 },
             ],
         });
@@ -2616,6 +2677,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             }],
         });
 
@@ -2655,6 +2718,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             }],
         });
 
@@ -2689,6 +2754,8 @@ mod tests {
             reaction_action: None,
             attached_reactions: Vec::new(),
             read_by: Vec::new(),
+            actions_payload: None,
+            intent_payload: None,
         });
         app.message_menu_index = app
             .message_menu_actions()
@@ -2887,6 +2954,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             },
             xmtp_ipc::HistoryItem {
                 message_id: "msg-2".into(),
@@ -2902,6 +2971,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             },
         ];
         app.selected_message = 0;
@@ -2922,6 +2993,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             },
         });
 
@@ -2948,6 +3021,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             },
             xmtp_ipc::HistoryItem {
                 message_id: "msg-2".into(),
@@ -2963,6 +3038,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             },
         ];
         app.selected_message = 1;
@@ -2983,6 +3060,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             },
         });
 
@@ -3009,6 +3088,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             },
             xmtp_ipc::HistoryItem {
                 message_id: "msg-2".into(),
@@ -3024,6 +3105,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             },
         ];
         app.selected_message = 0;
@@ -3044,6 +3127,8 @@ mod tests {
                 reaction_action: None,
                 attached_reactions: Vec::new(),
                 read_by: Vec::new(),
+                actions_payload: None,
+                intent_payload: None,
             },
         });
 

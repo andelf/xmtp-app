@@ -270,7 +270,36 @@ fn build_message_rows<'a>(app: &'a App, width: u16) -> Vec<MessageRow<'a>> {
             item: ListItem::new(Line::from(header_spans)).style(message_style),
         });
 
-        let mut content_lines = if item.content_kind == "markdown" {
+        let mut content_lines = if item.content_kind == "actions" {
+            if let Some(ref actions) = item.actions_payload {
+                let mut lines = vec![Line::from(Span::styled(
+                    actions.description.clone(),
+                    Style::default().fg(Color::Yellow).bg(row_bg),
+                ))];
+                for (i, action) in actions.actions.iter().enumerate() {
+                    let style_color = match action.style.as_deref() {
+                        Some("primary") => Color::Green,
+                        Some("danger") => Color::Red,
+                        _ => Color::Yellow,
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!("  [{}] {}", i + 1, action.label),
+                        Style::default().fg(style_color).bg(row_bg),
+                    )));
+                }
+                lines
+            } else {
+                wrap_text_lines(&content, wrap_width)
+                    .into_iter()
+                    .map(|segment| {
+                        Line::from(Span::styled(
+                            segment,
+                            Style::default().fg(Color::Yellow).bg(row_bg),
+                        ))
+                    })
+                    .collect()
+            }
+        } else if item.content_kind == "markdown" {
             let rendered =
                 app.cached_markdown_lines(&item.message_id, &item.content, wrap_width.max(1));
             if rendered.iter().all(|line| {

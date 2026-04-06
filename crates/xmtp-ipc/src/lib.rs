@@ -155,6 +155,33 @@ pub struct HistoryItem {
     pub attached_reactions: Vec<ReactionDetail>,
     #[serde(default)]
     pub read_by: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions_payload: Option<ActionsPayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_payload: Option<IntentPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActionItem {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActionsPayload {
+    pub id: String,
+    pub description: String,
+    pub actions: Vec<ActionItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IntentPayload {
+    pub id: String,
+    pub action_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

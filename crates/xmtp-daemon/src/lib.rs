@@ -30,13 +30,14 @@ use xmtp::{
 use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_core::{ConnectionState, DaemonState};
 use xmtp_ipc::{
-    ActionResponse, ApiErrorBody, ApiErrorDetail, ConversationInfoResponse, ConversationItem,
-    ConversationListResponse, ConversationUpdatedEvent, DaemonEventData, DaemonEventEnvelope,
-    EmojiRequest, GroupCreateRequest, GroupInfoResponse, GroupMemberItem, GroupMembersResponse,
+    ActionItem, ActionResponse, ActionsPayload, ApiErrorBody, ApiErrorDetail,
+    ConversationInfoResponse, ConversationItem, ConversationListResponse,
+    ConversationUpdatedEvent, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
+    GroupCreateRequest, GroupInfoResponse, GroupMemberItem, GroupMembersResponse,
     GroupMembersUpdateRequest, GroupMembersUpdatedEvent, GroupPermissionsResponse, HistoryItem,
-    HistoryResponse, LoginRequest, MessageInfoResponse, ReactionDetail, RecipientMessageRequest,
-    RecipientRequest, RenameGroupRequest, SendDmResponse, SendMessageRequest, StatusResponse,
-    UpdatePermissionRequest, short_display_id,
+    HistoryResponse, IntentPayload, LoginRequest, MessageInfoResponse, ReactionDetail,
+    RecipientMessageRequest, RecipientRequest, RenameGroupRequest, SendDmResponse,
+    SendMessageRequest, StatusResponse, UpdatePermissionRequest, short_display_id,
 };
 use xmtp_logging::append_daemon_event;
 use xmtp_store::{load_state, save_state};
@@ -103,6 +104,32 @@ struct DecodedReactionPayload {
     reference: String,
     action: String,
     content: String,
+}
+
+/// Coinbase Actions JSON payload (coinbase.com/actions:1.0)
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CoinbaseActions {
+    id: String,
+    description: String,
+    actions: Vec<CoinbaseAction>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CoinbaseAction {
+    id: String,
+    label: String,
+    #[serde(default, alias = "imageUrl")]
+    image_url: Option<String>,
+    #[serde(default)]
+    style: Option<String>,
+}
+
+/// Coinbase Intent JSON payload (coinbase.com/intent:1.0)
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CoinbaseIntent {
+    id: String,
+    #[serde(alias = "actionId")]
+    action_id: String,
 }
 
 fn init_tracing() {
@@ -303,6 +330,8 @@ pub struct HistoryEntry {
     pub reaction_action: Option<String>,
     pub attached_reactions: Vec<ReactionDetail>,
     pub read_by: Vec<String>,
+    pub actions_payload: Option<ActionsPayload>,
+    pub intent_payload: Option<IntentPayload>,
 }
 
 pub fn list_conversations(data_dir: &Path) -> anyhow::Result<Vec<ConversationSummary>> {
@@ -544,6 +573,14 @@ fn send_dm_with_client(
         Some("markdown") => conversation
             .send_markdown(text)
             .context("send DM markdown")?,
+        Some("actions") => {
+            let bytes = encode_coinbase_actions(text).context("encode actions content")?;
+            conversation.send(&bytes).context("send actions")?
+        }
+        Some("intent") => {
+            let bytes = encode_coinbase_intent(text).context("encode intent content")?;
+            conversation.send(&bytes).context("send intent")?
+        }
         _ => conversation.send_text(text).context("send DM text")?,
     };
     Ok(SendMessageResult {
@@ -612,6 +649,14 @@ fn send_conversation_with_client(
         Some("markdown") => conversation
             .send_markdown(text)
             .context("send conversation markdown")?,
+        Some("actions") => {
+            let bytes = encode_coinbase_actions(text).context("encode actions content")?;
+            conversation.send(&bytes).context("send actions")?
+        }
+        Some("intent") => {
+            let bytes = encode_coinbase_intent(text).context("encode intent content")?;
+            conversation.send(&bytes).context("send intent")?
+        }
         _ => conversation
             .send_text(text)
             .context("send conversation text")?,
@@ -648,6 +693,14 @@ fn send_group_with_client_logged(
         Some("markdown") => conversation
             .send_markdown(text)
             .context("send group markdown")?,
+        Some("actions") => {
+            let bytes = encode_coinbase_actions(text).context("encode actions content")?;
+            conversation.send(&bytes).context("send actions")?
+        }
+        Some("intent") => {
+            let bytes = encode_coinbase_intent(text).context("encode intent content")?;
+            conversation.send(&bytes).context("send intent")?
+        }
         _ => conversation.send_text(text).context("send group text")?,
     };
     if let Some(data_dir) = data_dir {
@@ -1070,6 +1123,8 @@ fn history_entry_from_message(
         reaction_action: item.reaction_action,
         attached_reactions: item.attached_reactions,
         read_by: item.read_by,
+        actions_payload: item.actions_payload,
+        intent_payload: item.intent_payload,
     }
 }
 
@@ -1084,10 +1139,12 @@ fn history_item_from_message(
         reaction_target_message_id,
         reaction_emoji,
         reaction_action,
+        actions_payload,
+        intent_payload,
     ) = match message.decode() {
-        Ok(Content::Text(text)) => ("text".to_owned(), text, None, None, None, None),
+        Ok(Content::Text(text)) => ("text".to_owned(), text, None, None, None, None, None, None),
         Ok(Content::Markdown(markdown)) => {
-            ("markdown".to_owned(), markdown, None, None, None, None)
+            ("markdown".to_owned(), markdown, None, None, None, None, None, None)
         }
         Ok(Content::Reaction(reaction)) => (
             "reaction".to_owned(),
@@ -1100,6 +1157,8 @@ fn history_item_from_message(
                 ReactionAction::Removed => "removed".to_owned(),
                 ReactionAction::Unspecified => "unspecified".to_owned(),
             }),
+            None,
+            None,
         ),
         Ok(Content::Reply(reply)) => (
             "reply".to_owned(),
@@ -1108,10 +1167,14 @@ fn history_item_from_message(
             None,
             None,
             None,
+            None,
+            None,
         ),
         Ok(Content::ReadReceipt) => (
             "read_receipt".to_owned(),
             "read receipt".to_owned(),
+            None,
+            None,
             None,
             None,
             None,
@@ -1124,10 +1187,14 @@ fn history_item_from_message(
             None,
             None,
             None,
+            None,
+            None,
         ),
         Ok(Content::RemoteAttachment(attachment)) => (
             "remote_attachment".to_owned(),
             summarize_decoded_content(&Content::RemoteAttachment(attachment)),
+            None,
+            None,
             None,
             None,
             None,
@@ -1140,18 +1207,75 @@ fn history_item_from_message(
                 &raw,
                 message.fallback.as_ref(),
             );
-            (
-                "unknown".to_owned(),
-                message
-                    .fallback
-                    .clone()
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| summarize_unknown_content(&content_type, &raw)),
-                None,
-                None,
-                None,
-                None,
-            )
+            if content_type == "coinbase.com/actions:1.0" {
+                if let Some(actions) = decode_coinbase_actions(&raw) {
+                    let summary = format!(
+                        "{}\n{}",
+                        actions.description,
+                        actions
+                            .actions
+                            .iter()
+                            .enumerate()
+                            .map(|(i, a)| format!("[{}] {}", i + 1, a.label))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    );
+                    let payload = ActionsPayload {
+                        id: actions.id,
+                        description: actions.description,
+                        actions: actions
+                            .actions
+                            .iter()
+                            .map(|a| ActionItem {
+                                id: a.id.clone(),
+                                label: a.label.clone(),
+                                style: a.style.clone(),
+                                image_url: a.image_url.clone(),
+                            })
+                            .collect(),
+                    };
+                    ("actions".to_owned(), summary, None, None, None, None, Some(payload), None)
+                } else {
+                    (
+                        "unknown".to_owned(),
+                        message
+                            .fallback
+                            .clone()
+                            .filter(|v| !v.trim().is_empty())
+                            .unwrap_or_else(|| summarize_unknown_content(&content_type, &raw)),
+                        None, None, None, None, None, None,
+                    )
+                }
+            } else if content_type == "coinbase.com/intent:1.0" {
+                if let Some(intent) = decode_coinbase_intent(&raw) {
+                    let summary = format!("Selected action: {}", intent.action_id);
+                    let payload = IntentPayload {
+                        id: intent.id,
+                        action_id: intent.action_id,
+                    };
+                    ("intent".to_owned(), summary, None, None, None, None, None, Some(payload))
+                } else {
+                    (
+                        "unknown".to_owned(),
+                        message
+                            .fallback
+                            .clone()
+                            .filter(|v| !v.trim().is_empty())
+                            .unwrap_or_else(|| summarize_unknown_content(&content_type, &raw)),
+                        None, None, None, None, None, None,
+                    )
+                }
+            } else {
+                (
+                    "unknown".to_owned(),
+                    message
+                        .fallback
+                        .clone()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| summarize_unknown_content(&content_type, &raw)),
+                    None, None, None, None, None, None,
+                )
+            }
         }
         Err(_) => (
             "unknown".to_owned(),
@@ -1159,6 +1283,8 @@ fn history_item_from_message(
                 .fallback
                 .clone()
                 .unwrap_or_else(|| "<undecodable>".to_owned()),
+            None,
+            None,
             None,
             None,
             None,
@@ -1191,6 +1317,8 @@ fn history_item_from_message(
         reaction_action,
         attached_reactions: Vec::new(),
         read_by,
+        actions_payload,
+        intent_payload,
     }
 }
 
@@ -1228,6 +1356,25 @@ fn fetch_latest_read_receipts_from_db(
 fn summarize_message_content(message: &xmtp::conversation::Message) -> String {
     match message.decode() {
         Ok(Content::Unknown { content_type, raw }) => {
+            if content_type == "coinbase.com/actions:1.0" {
+                if let Some(actions) = decode_coinbase_actions(&raw) {
+                    return format!(
+                        "{}\n{}",
+                        actions.description,
+                        actions
+                            .actions
+                            .iter()
+                            .enumerate()
+                            .map(|(i, a)| format!("[{}] {}", i + 1, a.label))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    );
+                }
+            } else if content_type == "coinbase.com/intent:1.0"
+                && let Some(intent) = decode_coinbase_intent(&raw)
+            {
+                return format!("Selected action: {}", intent.action_id);
+            }
             log_unknown_message_type(None, &content_type, &raw, message.fallback.as_ref());
             message
                 .fallback
@@ -1611,6 +1758,52 @@ fn decode_group_updated(raw: &[u8]) -> Option<GroupUpdated> {
     GroupUpdated::decode(encoded.content.as_slice()).ok()
 }
 
+fn decode_coinbase_actions(raw: &[u8]) -> Option<CoinbaseActions> {
+    let encoded = xmtp::content::EncodedContent::decode(raw).ok()?;
+    serde_json::from_slice(&encoded.content).ok()
+}
+
+fn decode_coinbase_intent(raw: &[u8]) -> Option<CoinbaseIntent> {
+    let encoded = xmtp::content::EncodedContent::decode(raw).ok()?;
+    serde_json::from_slice(&encoded.content).ok()
+}
+
+fn encode_coinbase_actions(json_str: &str) -> anyhow::Result<Vec<u8>> {
+    let _: CoinbaseActions =
+        serde_json::from_str(json_str).context("invalid Actions JSON")?;
+    let encoded = xmtp::content::EncodedContent {
+        r#type: Some(xmtp::content::ContentTypeId {
+            authority_id: "coinbase.com".into(),
+            type_id: "actions".into(),
+            version_major: 1,
+            version_minor: 0,
+        }),
+        parameters: std::collections::HashMap::new(),
+        fallback: None,
+        content: json_str.as_bytes().to_vec(),
+        compression: None,
+    };
+    Ok(encoded.encode_to_vec())
+}
+
+fn encode_coinbase_intent(json_str: &str) -> anyhow::Result<Vec<u8>> {
+    let _: CoinbaseIntent =
+        serde_json::from_str(json_str).context("invalid Intent JSON")?;
+    let encoded = xmtp::content::EncodedContent {
+        r#type: Some(xmtp::content::ContentTypeId {
+            authority_id: "coinbase.com".into(),
+            type_id: "intent".into(),
+            version_major: 1,
+            version_minor: 0,
+        }),
+        parameters: std::collections::HashMap::new(),
+        fallback: None,
+        content: json_str.as_bytes().to_vec(),
+        compression: None,
+    };
+    Ok(encoded.encode_to_vec())
+}
+
 fn find_message_conversation(
     client: &Client,
     message_id: &str,
@@ -1895,6 +2088,8 @@ impl DaemonApp {
                     reaction_action: item.reaction_action,
                     attached_reactions: item.attached_reactions,
                     read_by: item.read_by,
+                    actions_payload: item.actions_payload,
+                    intent_payload: item.intent_payload,
                 })
                 .collect();
         Ok(HistoryResponse { items })
@@ -2252,6 +2447,8 @@ fn history_entry_to_item(item: HistoryEntry) -> HistoryItem {
         reaction_action: item.reaction_action,
         attached_reactions: item.attached_reactions,
         read_by: item.read_by,
+        actions_payload: item.actions_payload,
+        intent_payload: item.intent_payload,
     }
 }
 
@@ -3737,6 +3934,8 @@ mod tests {
             reaction_action: None,
             attached_reactions: Vec::new(),
             read_by: Vec::new(),
+            actions_payload: None,
+            intent_payload: None,
         }
     }
 

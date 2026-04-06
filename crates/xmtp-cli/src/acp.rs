@@ -1124,11 +1124,19 @@ async fn prompt_agent(
 ) -> anyhow::Result<PromptReply> {
     begin_session_turn(state, session_id_str(session_id), &item.message_id);
     let content = if context_prefix {
-        format!(
-            "[{}] {}",
-            sender_short_id(&item.sender_inbox_id),
-            item.content
-        )
+        let prefix = format!("[{}]", sender_short_id(&item.sender_inbox_id));
+        if item.content_kind == "intent" {
+            if let Some(ref intent) = item.intent_payload {
+                format!(
+                    "{prefix} [Intent] User selected action_id=\"{}\" from actions_id=\"{}\"",
+                    intent.action_id, intent.id
+                )
+            } else {
+                format!("{prefix} {}", item.content)
+            }
+        } else {
+            format!("{prefix} {}", item.content)
+        }
     } else {
         item.content
     };
@@ -1189,6 +1197,91 @@ async fn prompt_agent(
     })
 }
 
+enum ReplySegment {
+    Text(String),
+    Actions(String),
+}
+
+fn parse_reply_segments(reply: &str) -> Vec<ReplySegment> {
+    let mut segments = Vec::new();
+    let mut remaining = reply;
+
+    while let Some(start) = remaining.find("<actions") {
+        let before = remaining[..start].trim();
+        if !before.is_empty() {
+            segments.push(ReplySegment::Text(before.to_owned()));
+        }
+
+        let after_start = &remaining[start..];
+        if let Some(end_offset) = after_start.find("</actions>") {
+            let tag_content = &after_start[..end_offset + "</actions>".len()];
+            if let Some(json) = parse_actions_xml(tag_content) {
+                segments.push(ReplySegment::Actions(json));
+            } else {
+                segments.push(ReplySegment::Text(tag_content.to_owned()));
+            }
+            remaining = &after_start[end_offset + "</actions>".len()..];
+        } else {
+            segments.push(ReplySegment::Text(remaining[start..].to_owned()));
+            remaining = "";
+        }
+    }
+
+    let tail = remaining.trim();
+    if !tail.is_empty() {
+        segments.push(ReplySegment::Text(tail.to_owned()));
+    }
+
+    if segments.is_empty() && !reply.trim().is_empty() {
+        segments.push(ReplySegment::Text(reply.to_owned()));
+    }
+
+    segments
+}
+
+fn parse_actions_xml(xml: &str) -> Option<String> {
+    let id = extract_xml_attr(xml, "id")?;
+    let description = extract_xml_attr(xml, "description").unwrap_or_default();
+
+    let mut actions = Vec::new();
+    let mut search = xml;
+    while let Some(pos) = search.find("<action ") {
+        let tag_start = &search[pos..];
+        let tag_end = tag_start.find("/>")?;
+        let tag = &tag_start[..tag_end + 2];
+
+        let action_id = extract_xml_attr(tag, "id")?;
+        let label = extract_xml_attr(tag, "label")?;
+        let style = extract_xml_attr(tag, "style");
+        actions.push(serde_json::json!({
+            "id": action_id,
+            "label": label,
+            "style": style,
+        }));
+        search = &search[pos + tag.len()..];
+    }
+
+    if actions.is_empty() || actions.len() > 10 {
+        return None;
+    }
+
+    Some(
+        serde_json::json!({
+            "id": id,
+            "description": description,
+            "actions": actions,
+        })
+        .to_string(),
+    )
+}
+
+fn extract_xml_attr(tag: &str, attr_name: &str) -> Option<String> {
+    let pattern = format!("{attr_name}=\"");
+    let start = tag.find(&pattern)? + pattern.len();
+    let end = start + tag[start..].find('"')?;
+    Some(tag[start..end].to_owned())
+}
+
 async fn send_bootstrap_prompt(
     data_dir: &Path,
     conversation_id: &str,
@@ -1207,6 +1300,32 @@ async fn send_bootstrap_prompt(
         info.member_count,
         conversation_id,
         self_inbox_id.unwrap_or("unknown"),
+    );
+    let bootstrap = format!(
+        "{bootstrap}\n\n\
+## Interactive Actions\n\
+\n\
+When you need the user to make a structured choice, embed an <actions> XML block \
+anywhere in your reply. You can include normal text before and after it.\n\
+\n\
+Format:\n\
+```\n\
+<actions id=\"unique_id\" description=\"What would you like to do?\">\n\
+  <action id=\"opt_a\" label=\"Option A\" style=\"primary\"/>\n\
+  <action id=\"opt_b\" label=\"Option B\"/>\n\
+  <action id=\"cancel\" label=\"Cancel\" style=\"danger\"/>\n\
+</actions>\n\
+```\n\
+\n\
+Rules:\n\
+- id: unique identifier for this action set\n\
+- description: shown above the button list\n\
+- Each <action> needs id and label; style is optional: primary | secondary | danger\n\
+- Maximum 10 actions per block, unique ids\n\
+- You may include multiple <actions> blocks in one reply\n\
+- Text outside <actions> tags is sent as normal markdown\n\
+- When the user selects, you receive: [Intent] User selected action_id=\"opt_a\" from actions_id=\"unique_id\"\n\
+- Use Actions sparingly, only when structured choices genuinely help"
     );
     reset_session_runtime(state, session_id_str(session_id));
     log_acp_event(
@@ -1246,7 +1365,7 @@ fn should_forward_item(item: &HistoryItem, self_inbox_id: Option<&str>) -> bool 
     if self_inbox_id == Some(item.sender_inbox_id.as_str()) {
         return false;
     }
-    matches!(item.content_kind.as_str(), "text" | "markdown" | "reply")
+    matches!(item.content_kind.as_str(), "text" | "markdown" | "reply" | "actions" | "intent")
 }
 
 async fn seed_seen_history_items(
@@ -1578,23 +1697,35 @@ async fn send_reply_part(
     reply_part: &str,
     event_name: &str,
 ) -> anyhow::Result<String> {
-    let sent = daemon_send_conversation(data_dir, conversation_id, reply_part, Some("markdown"))
-        .await
-        .with_context(|| {
-            format!(
-                "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
-            )
-        })?;
-    log_acp_event(
-        data_dir,
-        conversation_id,
-        serde_json::json!({
-            "event": event_name,
-            "conversation_id": conversation_id,
-            "message_id": sent.message_id,
-        }),
-    );
-    Ok(sent.message_id)
+    let segments = parse_reply_segments(reply_part);
+    let mut last_message_id = String::new();
+
+    for segment in segments {
+        let (text, content_type) = match segment {
+            ReplySegment::Text(t) => (t, "markdown"),
+            ReplySegment::Actions(json) => (json, "actions"),
+        };
+        let sent = daemon_send_conversation(data_dir, conversation_id, &text, Some(content_type))
+            .await
+            .with_context(|| {
+                format!(
+                    "send ACP reply back to conversation {conversation_id}; if this looks like a stale daemon, restart it with `xmtp-cli shutdown`"
+                )
+            })?;
+        log_acp_event(
+            data_dir,
+            conversation_id,
+            serde_json::json!({
+                "event": event_name,
+                "conversation_id": conversation_id,
+                "message_id": sent.message_id,
+                "content_type": content_type,
+            }),
+        );
+        last_message_id = sent.message_id;
+    }
+
+    Ok(last_message_id)
 }
 
 async fn send_bridge_error_message(data_dir: &Path, conversation_id: &str, message: String) {

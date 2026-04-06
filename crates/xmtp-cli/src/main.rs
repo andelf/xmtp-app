@@ -2073,6 +2073,8 @@ mod tests {
             reaction_action: None,
             attached_reactions: Vec::new(),
             read_by: Vec::new(),
+            actions_payload: None,
+            intent_payload: None,
         });
 
         assert_eq!(
@@ -2669,6 +2671,8 @@ mod tests {
             reaction_action: None,
             attached_reactions: Vec::new(),
             read_by: Vec::new(),
+            actions_payload: None,
+            intent_payload: None,
         });
 
         assert_eq!(

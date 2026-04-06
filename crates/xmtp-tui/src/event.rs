@@ -93,6 +93,7 @@ pub enum Effect {
         kind: String,
         target: Option<String>,
         text: String,
+        content_type: Option<String>,
     },
     Reply {
         message_id: String,
