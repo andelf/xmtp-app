@@ -31,9 +31,18 @@ use xmtp_logging::{
 use xmtp_store::{load_state, save_state};
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static WIDE_OUTPUT: OnceLock<bool> = OnceLock::new();
 
 pub(crate) fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
+
+fn fmt_id(value: &str) -> String {
+    if *WIDE_OUTPUT.get().unwrap_or(&false) {
+        value.to_owned()
+    } else {
+        short_display_id(value)
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -51,6 +60,13 @@ struct Cli {
         help = "Path to the local data directory used for config, logs, and cached state"
     )]
     data_dir: PathBuf,
+    #[arg(
+        long,
+        short = 'w',
+        global = true,
+        help = "Display full IDs and addresses without truncation"
+    )]
+    wide: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -405,6 +421,7 @@ async fn main() {
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let data_dir = cli.data_dir;
+    let _ = WIDE_OUTPUT.set(cli.wide);
 
     match cli.command {
         Command::Init { reset } => init(data_dir, reset),
@@ -1262,7 +1279,7 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                             status
                                 .inbox_id
                                 .as_deref()
-                                .map(short_display_id)
+                                .map(fmt_id)
                                 .unwrap_or_else(|| "-".to_owned())
                         ),
                     )
@@ -1281,7 +1298,7 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                         "conversation_updated",
                         &format!(
                             "{} name={} members={}",
-                            short_display_id(&update.conversation_id),
+                            fmt_id(&update.conversation_id),
                             update.name.unwrap_or_else(|| "-".to_owned()),
                             update.member_count
                         ),
@@ -1295,7 +1312,7 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                         "group_members_updated",
                         &format!(
                             "{} members={}",
-                            short_display_id(&update.conversation_id),
+                            fmt_id(&update.conversation_id),
                             update.members.len()
                         ),
                     )
@@ -1314,8 +1331,8 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                         "history",
                         &format!(
                             "{} {}",
-                            short_display_id(&conversation_id),
-                            short_display_id(&item.message_id)
+                            fmt_id(&conversation_id),
+                            fmt_id(&item.message_id)
                         ),
                     )
                 );
@@ -1821,13 +1838,13 @@ fn print_status_response(status: StatusResponse) -> anyhow::Result<()> {
     if let Some(inbox_id) = status.inbox_id {
         println!(
             "{}",
-            render_status_row("inbox_id", &short_display_id(&inbox_id))
+            render_status_row("inbox_id", &fmt_id(&inbox_id))
         );
     }
     if let Some(installation_id) = status.installation_id {
         println!(
             "{}",
-            render_status_row("installation_id", &short_display_id(&installation_id))
+            render_status_row("installation_id", &fmt_id(&installation_id))
         );
     }
     Ok(())
@@ -1866,8 +1883,8 @@ fn render_history_line(entry: &xmtp_ipc::HistoryItem) -> String {
     format!(
         "{:<16} {:<20} {:<20} {}",
         format_sent_at(entry.sent_at_ns),
-        short_display_id(&entry.message_id),
-        short_display_id(&entry.sender_inbox_id),
+        fmt_id(&entry.message_id),
+        fmt_id(&entry.sender_inbox_id),
         content
     )
 }
@@ -1889,8 +1906,8 @@ fn render_history_entry(entry: &HistoryEntry) -> String {
     format!(
         "{:<16} {:<20} {:<20} {}",
         format_sent_at(entry.sent_at_ns),
-        short_display_id(&entry.message_id),
-        short_display_id(&entry.sender_inbox_id),
+        fmt_id(&entry.message_id),
+        fmt_id(&entry.sender_inbox_id),
         content
     )
 }
@@ -1911,14 +1928,14 @@ fn render_conversation_row(conversation: &ConversationItem) -> String {
         conversation
             .dm_peer_inbox_id
             .as_deref()
-            .map(short_display_id)
-            .unwrap_or_else(|| short_display_id(&conversation.id))
+            .map(fmt_id)
+            .unwrap_or_else(|| fmt_id(&conversation.id))
     } else {
         conversation.name.clone().unwrap_or_default()
     };
     format!(
         "{:<20} {:<12} {}",
-        short_display_id(&conversation.id),
+        fmt_id(&conversation.id),
         conversation.kind,
         display_name
     )
@@ -1934,7 +1951,7 @@ fn group_members_header() -> String {
 fn render_group_member_row(member: &GroupMemberItem) -> String {
     format!(
         "{:<20} {:<12} {:<12} {:<6} {}",
-        short_display_id(&member.inbox_id),
+        fmt_id(&member.inbox_id),
         member.permission_level,
         member.consent_state,
         member.installation_count,
@@ -1952,7 +1969,7 @@ fn group_info_header() -> String {
 fn render_group_info_row(info: &GroupInfoResponse) -> String {
     format!(
         "{:<20} {:<12} {:<12} {:<20} {}",
-        short_display_id(&info.conversation_id),
+        fmt_id(&info.conversation_id),
         info.conversation_type,
         info.member_count,
         info.permission_preset,
@@ -2001,12 +2018,12 @@ fn render_action_result(action: &str, result: &ActionResponse) -> String {
     let message_id = if result.message_id.is_empty() {
         "-".to_owned()
     } else {
-        short_display_id(&result.message_id)
+        fmt_id(&result.message_id)
     };
     format!(
         "{:<16} {:<20} {}",
         action,
-        short_display_id(&result.conversation_id),
+        fmt_id(&result.conversation_id),
         message_id
     )
 }
@@ -2026,7 +2043,7 @@ fn bool_label(value: bool) -> &'static str {
 fn print_conversation_info(info: &ConversationInfoResponse) {
     println!(
         "{}",
-        render_status_row("conversation_id", &short_display_id(&info.conversation_id))
+        render_status_row("conversation_id", &fmt_id(&info.conversation_id))
     );
     println!("{}", render_status_row("type", &info.conversation_type));
     println!(
@@ -2053,22 +2070,22 @@ fn print_conversation_info(info: &ConversationInfoResponse) {
         println!("{}", render_status_row("name", name));
     }
     if let Some(peer) = &info.dm_peer_inbox_id {
-        println!("{}", render_status_row("dm_peer", &short_display_id(peer)));
+        println!("{}", render_status_row("dm_peer", &fmt_id(peer)));
     }
 }
 
 fn print_message_info(info: &MessageInfoResponse) {
     println!(
         "{}",
-        render_status_row("message_id", &short_display_id(&info.message_id))
+        render_status_row("message_id", &fmt_id(&info.message_id))
     );
     println!(
         "{}",
-        render_status_row("conversation_id", &short_display_id(&info.conversation_id))
+        render_status_row("conversation_id", &fmt_id(&info.conversation_id))
     );
     println!(
         "{}",
-        render_status_row("sender", &short_display_id(&info.sender_inbox_id))
+        render_status_row("sender", &fmt_id(&info.sender_inbox_id))
     );
     println!(
         "{}",
@@ -2114,6 +2131,18 @@ mod tests {
     fn short_id_preserves_hex_address_shape() {
         let value = "0x1234567890abcdef";
         assert_eq!(short_display_id(value), "0x1234....cdef");
+    }
+
+    #[test]
+    fn wide_flag_parses_as_global_option() {
+        let cli = Cli::parse_from(["xmtp-cli", "-w", "doctor"]);
+        assert!(cli.wide);
+
+        let cli = Cli::parse_from(["xmtp-cli", "doctor"]);
+        assert!(!cli.wide);
+
+        let cli = Cli::parse_from(["xmtp-cli", "--wide", "list"]);
+        assert!(cli.wide);
     }
 
     #[test]
