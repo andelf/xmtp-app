@@ -39,6 +39,7 @@ async fn run_async(data_dir: PathBuf, enable_read_receipt: bool) -> anyhow::Resu
     execute!(stdout, EnterAlternateScreen).context("enter alternate screen")?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create terminal")?;
+    terminal.clear().context("clear terminal")?;
     let result = run_app(&mut terminal, data_dir, enable_read_receipt).await;
     disable_raw_mode().ok();
     execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
