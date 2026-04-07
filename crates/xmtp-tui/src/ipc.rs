@@ -42,6 +42,7 @@ pub struct Runtime {
     tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     app_events_handle: Option<JoinHandle<()>>,
     watch_handle: Option<JoinHandle<()>>,
+    switch_debounce_handle: Option<JoinHandle<()>>,
 }
 
 impl Runtime {
@@ -51,6 +52,7 @@ impl Runtime {
             tx,
             app_events_handle: None,
             watch_handle: None,
+            switch_debounce_handle: None,
         }
     }
 
@@ -63,9 +65,7 @@ impl Runtime {
             match effect {
                 Effect::SubscribeAppEvents => self.subscribe_app_events(),
                 Effect::SwitchConversation { conversation_id } => {
-                    self.spawn_conversation_info(conversation_id.clone());
-                    self.spawn_history(conversation_id.clone());
-                    self.watch_conversation(conversation_id);
+                    self.debounced_switch_conversation(conversation_id);
                 }
                 Effect::SendReadReceipt { conversation_id } => {
                     self.spawn_send_read_receipt(conversation_id)
@@ -133,46 +133,54 @@ impl Runtime {
         }));
     }
 
-    fn spawn_conversation_info(&self, conversation_id: String) {
-        let tx = self.tx.clone();
-        let data_dir = self.data_dir.clone();
-        tokio::spawn(async move {
-            match conversation_info(&data_dir, &conversation_id).await {
-                Ok(info) => {
-                    let _ = tx.send(AppEvent::ConversationInfoLoaded(info));
-                }
-                Err(err) => {
-                    let _ = tx.send(AppEvent::Error(err.to_string()));
-                }
-            }
-        });
-    }
-
-    fn spawn_history(&self, conversation_id: String) {
-        let tx = self.tx.clone();
-        let data_dir = self.data_dir.clone();
-        tokio::spawn(async move {
-            match load_history(&data_dir, &conversation_id).await {
-                Ok(items) => {
-                    let _ = tx.send(AppEvent::HistoryLoaded {
-                        conversation_id,
-                        items,
-                    });
-                }
-                Err(err) => {
-                    let _ = tx.send(AppEvent::Error(err.to_string()));
-                }
-            }
-        });
-    }
-
-    fn watch_conversation(&mut self, conversation_id: String) {
+    fn debounced_switch_conversation(&mut self, conversation_id: String) {
+        // Cancel any pending debounce and the existing SSE watch immediately.
+        if let Some(handle) = self.switch_debounce_handle.take() {
+            handle.abort();
+        }
         if let Some(handle) = self.watch_handle.take() {
             handle.abort();
         }
         let tx = self.tx.clone();
         let data_dir = self.data_dir.clone();
-        self.watch_handle = Some(tokio::spawn(async move {
+        self.switch_debounce_handle = Some(tokio::spawn(async move {
+            // Wait 150ms — if another SwitchConversation arrives before this,
+            // this task gets aborted and no requests are fired.
+            tokio::time::sleep(Duration::from_millis(150)).await;
+
+            // Fire conversation info + history fetch concurrently.
+            let info_data_dir = data_dir.clone();
+            let info_id = conversation_id.clone();
+            let info_tx = tx.clone();
+            tokio::spawn(async move {
+                match conversation_info(&info_data_dir, &info_id).await {
+                    Ok(info) => {
+                        let _ = info_tx.send(AppEvent::ConversationInfoLoaded(info));
+                    }
+                    Err(err) => {
+                        let _ = info_tx.send(AppEvent::Error(err.to_string()));
+                    }
+                }
+            });
+
+            let hist_data_dir = data_dir.clone();
+            let hist_id = conversation_id.clone();
+            let hist_tx = tx.clone();
+            tokio::spawn(async move {
+                match load_history(&hist_data_dir, &hist_id).await {
+                    Ok(items) => {
+                        let _ = hist_tx.send(AppEvent::HistoryLoaded {
+                            conversation_id: hist_id,
+                            items,
+                        });
+                    }
+                    Err(err) => {
+                        let _ = hist_tx.send(AppEvent::Error(err.to_string()));
+                    }
+                }
+            });
+
+            // Open SSE watch for the new conversation.
             if let Err(err) = watch_history(&data_dir, &conversation_id, tx.clone()).await {
                 let _ = tx.send(AppEvent::Error(err.to_string()));
             }
@@ -578,9 +586,14 @@ async fn watch_history(
                 continue;
             }
         };
-        retry_delay = Duration::from_millis(100);
+        let connected_at = Instant::now();
         let mut stream = response.bytes_stream().eventsource();
         while let Some(event) = stream.next().await {
+            // Only reset backoff after the connection has been healthy for 10+ seconds,
+            // preventing rapid reconnect loops when the stream opens but immediately fails.
+            if connected_at.elapsed() > Duration::from_secs(10) {
+                retry_delay = Duration::from_millis(100);
+            }
             let event = match event.context("read history sse event") {
                 Ok(event) => event,
                 Err(err) => {
@@ -591,9 +604,9 @@ async fn watch_history(
             let envelope: DaemonEventEnvelope =
                 match serde_json::from_str(&event.data).context("decode history event envelope") {
                     Ok(envelope) => envelope,
-                    Err(err) => {
-                        let _ = tx.send(AppEvent::Error(err.to_string()));
-                        break;
+                    Err(_err) => {
+                        // Skip malformed events instead of reconnecting the entire stream.
+                        continue;
                     }
                 };
             match envelope.payload {
@@ -696,9 +709,12 @@ async fn watch_app_events(
                 continue;
             }
         };
-        retry_delay = Duration::from_millis(100);
+        let connected_at = Instant::now();
         let mut stream = response.bytes_stream().eventsource();
         while let Some(event) = stream.next().await {
+            if connected_at.elapsed() > Duration::from_secs(10) {
+                retry_delay = Duration::from_millis(100);
+            }
             let event = match event.context("read app event") {
                 Ok(event) => event,
                 Err(err) => {
@@ -709,9 +725,9 @@ async fn watch_app_events(
             let envelope: DaemonEventEnvelope =
                 match serde_json::from_str(&event.data).context("decode app event envelope") {
                     Ok(envelope) => envelope,
-                    Err(err) => {
-                        let _ = tx.send(AppEvent::Error(err.to_string()));
-                        break;
+                    Err(_err) => {
+                        // Skip malformed events instead of reconnecting the entire stream.
+                        continue;
                     }
                 };
             match envelope.payload {

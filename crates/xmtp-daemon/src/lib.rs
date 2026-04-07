@@ -25,7 +25,7 @@ use tracing::{debug, error, info, warn};
 use xmtp::content::{Content, ReactionAction};
 use xmtp::{
     AlloySigner, Client, CreateGroupOptions, Env, GroupPermissionsPreset, MetadataField,
-    PermissionLevel, PermissionPolicy, PermissionUpdateType, Recipient,
+    PermissionLevel, PermissionPolicy, PermissionUpdateType, Recipient, Signer,
 };
 use xmtp_config::{AppConfig, load_config, save_config};
 use xmtp_core::{ConnectionState, DaemonState};
@@ -45,8 +45,8 @@ use xmtp_store::{load_state, save_state};
 static TRACING_INIT: OnceLock<()> = OnceLock::new();
 static EVENT_COUNTER: AtomicU64 = AtomicU64::new(1);
 const HISTORY_STREAM_PAGE_LIMIT: usize = 200;
-const HISTORY_STREAM_RETRY_DELAY_MIN_MS: u64 = 100;
-const HISTORY_STREAM_RETRY_DELAY_MAX_MS: u64 = 5_000;
+const HISTORY_STREAM_RETRY_DELAY_MIN_MS: u64 = 500;
+const HISTORY_STREAM_RETRY_DELAY_MAX_MS: u64 = 30_000;
 
 #[derive(Clone, prost::Message)]
 struct GroupUpdatedInbox {
@@ -252,6 +252,23 @@ fn build_client(
     signer: &AlloySigner,
     data_dir: &Path,
 ) -> anyhow::Result<Client> {
+    build_client_inner(config, signer, data_dir, true)
+}
+
+fn build_client_existing(
+    config: &AppConfig,
+    signer: &AlloySigner,
+    data_dir: &Path,
+) -> anyhow::Result<Client> {
+    build_client_inner(config, signer, data_dir, false)
+}
+
+fn build_client_inner(
+    config: &AppConfig,
+    signer: &AlloySigner,
+    data_dir: &Path,
+    allow_register: bool,
+) -> anyhow::Result<Client> {
     let mut builder = Client::builder()
         .env(parse_env(&config.xmtp_env))
         .db_path(data_dir.join("xmtp.db3").display().to_string());
@@ -261,7 +278,14 @@ fn build_client(
     if let Some(gateway_url) = &config.gateway_url {
         builder = builder.gateway_host(gateway_url.clone());
     }
-    let client = builder.build(signer).context("build XMTP client")?;
+    let client = if allow_register {
+        builder.build(signer).context("build XMTP client")?
+    } else {
+        let ident = signer.identifier();
+        builder
+            .build_existing(&ident.address, ident.kind)
+            .context("build XMTP client (existing identity)")?
+    };
     Ok(client)
 }
 
@@ -274,7 +298,42 @@ fn open_client_with_login(data_dir: &Path, env: &str) -> anyhow::Result<Client> 
         config.xmtp_env = env.to_owned();
         save_config(&data_dir.join("config.json"), &config)?;
     }
-    build_client(&config, &signer, data_dir)
+    let client = build_client(&config, &signer, data_dir)?;
+
+    // Verify the address is actually discoverable on the XMTP network.
+    // build() calls register_identity if !is_registered(), but the local DB may
+    // incorrectly report is_registered=true (e.g. stale DB after network switch).
+    let address = signer.address();
+    let ident = xmtp::AccountIdentifier {
+        address: address.to_lowercase(),
+        kind: xmtp::IdentifierKind::Ethereum,
+    };
+    match client.can_message(&[ident]) {
+        Ok(results) if results.first() == Some(&true) => {
+            daemon_log(data_dir, "info", format!("address {address} is registered on XMTP"));
+        }
+        Ok(_) => {
+            daemon_log(
+                data_dir,
+                "warn",
+                format!(
+                    "address {address} is NOT discoverable on XMTP network after login. \
+                     This may indicate a stale local database. \
+                     Try: xmtp-cli --data-dir {} init --reset && login again",
+                    data_dir.display()
+                ),
+            );
+        }
+        Err(err) => {
+            daemon_log(
+                data_dir,
+                "warn",
+                format!("can_message self-check failed: {err:#}"),
+            );
+        }
+    }
+
+    Ok(client)
 }
 
 pub fn configure_runtime(
@@ -388,13 +447,25 @@ pub fn watch_history_with_kind<F>(
     data_dir: &Path,
     conversation_id: &str,
     kind: Option<&str>,
-    mut on_item: F,
+    on_item: F,
 ) -> anyhow::Result<()>
 where
     F: FnMut(HistoryItem) -> anyhow::Result<()>,
 {
     let client = open_existing_client(data_dir)?;
-    let conversation = find_conversation_by_id_with_kind(&client, conversation_id, kind)?;
+    watch_history_with_client(&client, conversation_id, kind, on_item)
+}
+
+fn watch_history_with_client<F>(
+    client: &Client,
+    conversation_id: &str,
+    kind: Option<&str>,
+    mut on_item: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(HistoryItem) -> anyhow::Result<()>,
+{
+    let conversation = find_conversation_by_id_with_kind(client, conversation_id, kind)?;
     let subscription = xmtp::stream::conversation_messages(&conversation)
         .context("watch conversation messages")?;
 
@@ -521,7 +592,9 @@ fn open_existing_client(data_dir: &Path) -> anyhow::Result<Client> {
     let signer_hex = load_or_create_signer_key_hex(data_dir)?;
     let signer = AlloySigner::from_hex(&signer_hex).context("load signer from hex")?;
     let config = load_config(&data_dir.join("config.json"))?;
-    build_client(&config, &signer, data_dir)
+    // Use build_existing to avoid accidental registration with the wrong env.
+    // Only open_client_with_login (called during explicit login) should register.
+    build_client_existing(&config, &signer, data_dir)
 }
 
 fn list_conversations_with_client(
@@ -530,6 +603,37 @@ fn list_conversations_with_client(
 ) -> anyhow::Result<Vec<ConversationSummary>> {
     client.sync_welcomes().context("sync welcomes")?;
     client.sync_all(&[]).context("sync conversations")?;
+    let conversations = client.conversations().context("list conversations")?;
+    let mut summaries = Vec::with_capacity(conversations.len());
+    for conversation in conversations {
+        let kind = match conversation.conversation_type() {
+            Some(kind) => format!("{kind:?}").to_lowercase(),
+            None => "unknown".to_owned(),
+        };
+        if let Some(filter_kind) = filter_kind
+            && kind != filter_kind
+        {
+            continue;
+        }
+        summaries.push(ConversationSummary {
+            id: conversation.id(),
+            kind,
+            name: conversation.name(),
+            dm_peer_inbox_id: conversation.dm_peer_inbox_id(),
+            last_message_ns: conversation
+                .last_message()
+                .ok()
+                .and_then(|message| message.map(|message| message.sent_at_ns)),
+        });
+    }
+    sort_conversation_summaries(&mut summaries);
+    Ok(summaries)
+}
+
+fn list_conversations_local_only(
+    client: &Client,
+    filter_kind: Option<&str>,
+) -> anyhow::Result<Vec<ConversationSummary>> {
     let conversations = client.conversations().context("list conversations")?;
     let mut summaries = Vec::with_capacity(conversations.len());
     for conversation in conversations {
@@ -991,11 +1095,21 @@ fn message_info_with_client(
     client: &Client,
     message_id: &str,
 ) -> anyhow::Result<MessageInfoResponse> {
-    let (_conversation, resolved_message_id) = find_message_conversation(client, message_id)?;
-    let message = client
-        .message_by_id(&resolved_message_id)
+    // Fast path: try direct lookup by full ID first (local DB only, no network sync).
+    // Falls back to find_message_conversation (full scan) only for prefix/display-form IDs.
+    let message = if let Some(msg) = client
+        .message_by_id(message_id)
         .context("load message by id")?
-        .context("message not found")?;
+    {
+        msg
+    } else {
+        let (_conversation, resolved_message_id) =
+            find_message_conversation(client, message_id)?;
+        client
+            .message_by_id(&resolved_message_id)
+            .context("load message by id")?
+            .context("message not found")?
+    };
     let content_summary = summarize_message_content(&message);
 
     Ok(MessageInfoResponse {
@@ -1019,8 +1133,22 @@ fn history_with_client(
     before_ns: Option<i64>,
     limit: usize,
 ) -> anyhow::Result<Vec<HistoryEntry>> {
+    history_with_client_inner(data_dir, client, conversation_id, kind, before_ns, limit, true)
+}
+
+fn history_with_client_inner(
+    data_dir: &Path,
+    client: &Client,
+    conversation_id: &str,
+    kind: Option<&str>,
+    before_ns: Option<i64>,
+    limit: usize,
+    sync: bool,
+) -> anyhow::Result<Vec<HistoryEntry>> {
     let conversation = find_conversation_by_id_with_kind(client, conversation_id, kind)?;
-    conversation.sync().context("sync conversation")?;
+    if sync {
+        conversation.sync().context("sync conversation")?;
+    }
     let latest_read_receipts = fetch_latest_read_receipts_from_db(data_dir, &conversation.id())
         .context("fetch read receipts from sqlite")?;
     let messages = conversation
@@ -1919,6 +2047,22 @@ impl DaemonApp {
         Ok(ConversationListResponse { items })
     }
 
+    fn conversation_list_local_only(&mut self) -> anyhow::Result<ConversationListResponse> {
+        let items: Vec<ConversationItem> =
+            list_conversations_local_only(self.ensure_client()?, None)?
+                .into_iter()
+                .map(|item| ConversationItem {
+                    id: item.id,
+                    kind: item.kind,
+                    name: item.name,
+                    dm_peer_inbox_id: item.dm_peer_inbox_id,
+                    last_message_ns: item.last_message_ns,
+                })
+                .collect();
+        self.remember_conversation_items(&items);
+        Ok(ConversationListResponse { items })
+    }
+
     fn ensure_client(&mut self) -> anyhow::Result<&Client> {
         if self.client.is_none() {
             daemon_log(
@@ -2018,8 +2162,12 @@ impl DaemonApp {
         Some(DaemonEventData::Status(status))
     }
 
-    fn next_conversation_list_event(&mut self) -> Option<DaemonEventData> {
-        let conversations = self.conversation_list().ok()?;
+    fn next_conversation_list_event(&mut self, network_sync: bool) -> Option<DaemonEventData> {
+        let conversations = if network_sync {
+            self.conversation_list().ok()?
+        } else {
+            self.conversation_list_local_only().ok()?
+        };
         if self.last_conversation_event.as_ref() == Some(&conversations) {
             return None;
         }
@@ -2439,12 +2587,12 @@ fn next_retry_delay(current: Duration) -> Duration {
 
 fn load_recent_history_items(
     data_dir: &Path,
+    client: &Client,
     conversation_id: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<HistoryItem>> {
-    let client = open_existing_client(data_dir)?;
     Ok(
-        history_with_client(data_dir, &client, conversation_id, None, None, limit)?
+        history_with_client(data_dir, client, conversation_id, None, None, limit)?
             .into_iter()
             .map(history_entry_to_item)
             .collect(),
@@ -2508,25 +2656,27 @@ fn collect_catch_up_items(
 
 fn load_catch_up_items(
     data_dir: &Path,
+    client: &Client,
     conversation_id: &str,
     state: &HistoryStreamState,
 ) -> anyhow::Result<Vec<HistoryItem>> {
     let Some(latest_sent_at_ns) = state.latest_sent_at_ns else {
         return Ok(Vec::new());
     };
-
-    let client = open_existing_client(data_dir)?;
     let mut pages = Vec::new();
     let mut before_ns = None;
 
-    for _ in 0..100 {
-        let page_entries = history_with_client(
+    for page_idx in 0..100 {
+        // Only sync on the first page to avoid repeated QueryGroupMessages API calls.
+        let sync = page_idx == 0;
+        let page_entries = history_with_client_inner(
             data_dir,
             &client,
             conversation_id,
             None,
             before_ns,
             HISTORY_STREAM_PAGE_LIMIT,
+            sync,
         )?;
         if page_entries.is_empty() {
             break;
@@ -2600,10 +2750,24 @@ fn stream_history_events(
     let mut retry_delay = Duration::from_millis(HISTORY_STREAM_RETRY_DELAY_MIN_MS);
     let mut initialized = false;
 
+    // Create the client once and reuse across reconnect iterations to avoid
+    // repeated GetIdentityUpdates API calls that trigger rate limits.
+    let client = match open_existing_client(&data_dir) {
+        Ok(c) => c,
+        Err(err) => {
+            let _ = send_history_stream_error(&event_tx, format!("{err:#}"));
+            return;
+        }
+    };
+
     loop {
         if !initialized {
-            match load_recent_history_items(&data_dir, &conversation_id, HISTORY_STREAM_PAGE_LIMIT)
-            {
+            match load_recent_history_items(
+                &data_dir,
+                &client,
+                &conversation_id,
+                HISTORY_STREAM_PAGE_LIMIT,
+            ) {
                 Ok(items) => {
                     for item in &items {
                         state.remember(item);
@@ -2628,7 +2792,7 @@ fn stream_history_events(
                 }
             }
         } else {
-            match load_catch_up_items(&data_dir, &conversation_id, &state) {
+            match load_catch_up_items(&data_dir, &client, &conversation_id, &state) {
                 Ok(items) => {
                     for item in items {
                         if !send_history_event(&event_tx, &conversation_id, item, &mut state) {
@@ -2652,7 +2816,7 @@ fn stream_history_events(
             }
         }
 
-        let stream_result = watch_history_with_kind(&data_dir, &conversation_id, None, |item| {
+        let stream_result = watch_history_with_client(&client, &conversation_id, None, |item| {
             if !send_history_event(&event_tx, &conversation_id, item, &mut state) {
                 anyhow::bail!("history stream receiver dropped");
             }
@@ -2698,16 +2862,18 @@ fn publish_snapshot_events(state: &HttpState, status: bool, conversations: bool)
     if status && let Some(payload) = guard.next_status_event() {
         send_event(&state.events_tx, payload);
     }
-    if conversations && let Some(payload) = guard.next_conversation_list_event() {
+    if conversations && let Some(payload) = guard.next_conversation_list_event(false) {
         send_event(&state.events_tx, payload);
     }
 }
 
 fn publish_conversation_snapshot_now(state: &HttpState) {
+    // Use local-only read: the preceding SDK write already updated the local DB,
+    // so we don't need another sync_welcomes + sync_all round-trip.
     let payload = {
         let mut guard = state.app.lock().expect("lock daemon app");
         guard
-            .conversation_list()
+            .conversation_list_local_only()
             .ok()
             .map(DaemonEventData::ConversationList)
     };
@@ -3295,7 +3461,10 @@ async fn app_events_handler(
                     payload: DaemonEventData::Status(status),
                 });
             }
-            if let Ok(conversations) = guard.conversation_list() {
+            // Use local-only read for the initial snapshot to avoid triggering
+            // sync_welcomes + sync_all on every SSE connection open.
+            // The monitor's periodic network sync will push fresh data shortly.
+            if let Ok(conversations) = guard.conversation_list_local_only() {
                 snapshots.push(DaemonEventEnvelope {
                     event_id: next_event_id(),
                     payload: DaemonEventData::ConversationList(conversations),
@@ -3429,16 +3598,25 @@ pub async fn serve(data_dir: &Path) -> anyhow::Result<()> {
     let monitor_app = app.clone();
     let monitor_events_tx = events_tx.clone();
     let monitor_handle = tokio::spawn(async move {
+        // Network sync runs every NETWORK_SYNC_TICKS * 2s (~16s) to avoid API rate limits.
+        // Local-only change detection runs every 2s for responsive UI updates.
+        const NETWORK_SYNC_TICKS: u64 = 8;
+        let mut tick_counter: u64 = 0;
+
         loop {
-            // Background monitor that periodically pushes fresh status and conversation-list
-            // snapshots to global SSE subscribers when those views change.
+            let network_sync = tick_counter.is_multiple_of(NETWORK_SYNC_TICKS);
+            tick_counter = tick_counter.wrapping_add(1);
+
             let snapshots = tokio::task::spawn_blocking({
                 let app = monitor_app.clone();
                 move || {
                     let mut guard = app.lock().expect("lock daemon app");
-                    guard.refresh_connection_state();
+                    // Only probe network connectivity on network sync ticks.
+                    if network_sync {
+                        guard.refresh_connection_state();
+                    }
                     let status = guard.next_status_event();
-                    let conversations = guard.next_conversation_list_event();
+                    let conversations = guard.next_conversation_list_event(network_sync);
                     (status, conversations)
                 }
             })
