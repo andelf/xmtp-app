@@ -83,10 +83,8 @@ impl MarkdownRenderer {
 
     fn start_tag(&mut self, tag: Tag<'_>) {
         match tag {
-            Tag::Paragraph => {
-                if self.in_item {
-                    self.push_list_prefix();
-                }
+            Tag::Paragraph if self.in_item => {
+                self.push_list_prefix();
             }
             Tag::Heading { level, .. } => {
                 self.flush_inline(true);

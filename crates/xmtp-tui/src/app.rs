@@ -739,19 +739,15 @@ impl App {
             return Vec::new();
         }
         match key.code {
-            KeyCode::Up => {
-                if self.selected_conversation > 0 {
-                    self.selected_conversation -= 1;
-                    let conversation = self.conversations[self.selected_conversation].clone();
-                    return self.activate_conversation(conversation);
-                }
+            KeyCode::Up if self.selected_conversation > 0 => {
+                self.selected_conversation -= 1;
+                let conversation = self.conversations[self.selected_conversation].clone();
+                return self.activate_conversation(conversation);
             }
-            KeyCode::Down => {
-                if self.selected_conversation + 1 < self.conversations.len() {
-                    self.selected_conversation += 1;
-                    let conversation = self.conversations[self.selected_conversation].clone();
-                    return self.activate_conversation(conversation);
-                }
+            KeyCode::Down if self.selected_conversation + 1 < self.conversations.len() => {
+                self.selected_conversation += 1;
+                let conversation = self.conversations[self.selected_conversation].clone();
+                return self.activate_conversation(conversation);
             }
             KeyCode::Enter => {
                 if self
@@ -787,15 +783,11 @@ impl App {
 
     fn handle_message_list_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Up => {
-                if self.selected_message > 0 {
-                    self.selected_message -= 1;
-                }
+            KeyCode::Up if self.selected_message > 0 => {
+                self.selected_message -= 1;
             }
-            KeyCode::Down => {
-                if self.selected_message + 1 < self.messages.len() {
-                    self.selected_message += 1;
-                }
+            KeyCode::Down if self.selected_message + 1 < self.messages.len() => {
+                self.selected_message += 1;
             }
             KeyCode::Char('r') => {
                 if let Some(message) = self.messages.get(self.selected_message) {
@@ -803,11 +795,9 @@ impl App {
                     self.focus = Focus::Input;
                 }
             }
-            KeyCode::Enter => {
-                if !self.messages.is_empty() {
-                    self.modal = Modal::MessageMenu;
-                    self.message_menu_index = 0;
-                }
+            KeyCode::Enter if !self.messages.is_empty() => {
+                self.modal = Modal::MessageMenu;
+                self.message_menu_index = 0;
             }
             _ => {}
         }
@@ -935,15 +925,11 @@ impl App {
 
     fn handle_message_menu_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Up => {
-                if self.message_menu_index > 0 {
-                    self.message_menu_index -= 1;
-                }
+            KeyCode::Up if self.message_menu_index > 0 => {
+                self.message_menu_index -= 1;
             }
-            KeyCode::Down => {
-                if self.message_menu_index + 1 < self.message_menu_actions().len() {
-                    self.message_menu_index += 1;
-                }
+            KeyCode::Down if self.message_menu_index + 1 < self.message_menu_actions().len() => {
+                self.message_menu_index += 1;
             }
             KeyCode::Enter => {
                 if let Some(message) = self.selected_history_item() {
@@ -990,10 +976,8 @@ impl App {
 
     fn handle_message_detail_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Up => {
-                if self.detail_scroll > 0 {
-                    self.detail_scroll -= 1;
-                }
+            KeyCode::Up if self.detail_scroll > 0 => {
+                self.detail_scroll -= 1;
             }
             KeyCode::Down => {
                 let max_scroll = self.detail_max_scroll();
@@ -1006,15 +990,11 @@ impl App {
 
     fn handle_reaction_picker_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Up => {
-                if self.reaction_picker_index > 0 {
-                    self.reaction_picker_index -= 1;
-                }
+            KeyCode::Up if self.reaction_picker_index > 0 => {
+                self.reaction_picker_index -= 1;
             }
-            KeyCode::Down => {
-                if self.reaction_picker_index + 1 < reaction_choices().len() {
-                    self.reaction_picker_index += 1;
-                }
+            KeyCode::Down if self.reaction_picker_index + 1 < reaction_choices().len() => {
+                self.reaction_picker_index += 1;
             }
             KeyCode::Enter => {
                 if let Some(message) = self.selected_history_item() {
@@ -1050,10 +1030,8 @@ impl App {
                     return vec![Effect::OpenDm { recipient }];
                 }
             }
-            KeyCode::Char(ch) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.dm_dialog.recipient.push(ch);
-                }
+            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.dm_dialog.recipient.push(ch);
             }
             _ => {}
         }
@@ -1109,15 +1087,13 @@ impl App {
 
     fn handle_group_management_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Up => {
-                if self.group_management.menu_index > 0 {
-                    self.group_management.menu_index -= 1;
-                }
+            KeyCode::Up if self.group_management.menu_index > 0 => {
+                self.group_management.menu_index -= 1;
             }
-            KeyCode::Down => {
-                if self.group_management.menu_index + 1 < GroupManagementAction::all().len() {
-                    self.group_management.menu_index += 1;
-                }
+            KeyCode::Down
+                if self.group_management.menu_index + 1 < GroupManagementAction::all().len() =>
+            {
+                self.group_management.menu_index += 1;
             }
             KeyCode::Char(ch) if ('1'..='7').contains(&ch) => {
                 let index = (ch as u8 - b'1') as usize;
@@ -1200,10 +1176,8 @@ impl App {
 
     fn handle_group_members_view_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Up => {
-                if self.group_management.info_member_scroll > 0 {
-                    self.group_management.info_member_scroll -= 1;
-                }
+            KeyCode::Up if self.group_management.info_member_scroll > 0 => {
+                self.group_management.info_member_scroll -= 1;
             }
             KeyCode::Down => {
                 let visible = self.group_management.members_list_visible_rows.get();
@@ -1234,15 +1208,11 @@ impl App {
                 }
                 self.modal = Modal::GroupManagement;
             }
-            KeyCode::Up => {
-                if self.group_management.permissions_cursor > 0 {
-                    self.group_management.permissions_cursor -= 1;
-                }
+            KeyCode::Up if self.group_management.permissions_cursor > 0 => {
+                self.group_management.permissions_cursor -= 1;
             }
-            KeyCode::Down => {
-                if self.group_management.permissions_cursor < 7 {
-                    self.group_management.permissions_cursor += 1;
-                }
+            KeyCode::Down if self.group_management.permissions_cursor < 7 => {
+                self.group_management.permissions_cursor += 1;
             }
             KeyCode::Left => {
                 self.shift_permission_policy(false);
@@ -1308,10 +1278,8 @@ impl App {
                     }];
                 }
             }
-            KeyCode::Char(ch) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.group_management.add_members_input.push(ch);
-                }
+            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.group_management.add_members_input.push(ch);
             }
             _ => {}
         }
@@ -1320,15 +1288,14 @@ impl App {
 
     fn handle_group_remove_members_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Up => {
-                if self.group_management.selected_member > 0 {
-                    self.group_management.selected_member -= 1;
-                }
+            KeyCode::Up if self.group_management.selected_member > 0 => {
+                self.group_management.selected_member -= 1;
             }
-            KeyCode::Down => {
-                if self.group_management.selected_member + 1 < self.group_management.members.len() {
-                    self.group_management.selected_member += 1;
-                }
+            KeyCode::Down
+                if self.group_management.selected_member + 1
+                    < self.group_management.members.len() =>
+            {
+                self.group_management.selected_member += 1;
             }
             KeyCode::Enter => {
                 let Some(conversation_id) = self.active_group_id().map(str::to_owned) else {

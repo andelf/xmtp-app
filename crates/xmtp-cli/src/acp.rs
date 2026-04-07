@@ -78,6 +78,7 @@ fn init_acp_tracing() {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_acp(
     data_dir: PathBuf,
     conversation_id: String,
@@ -104,6 +105,7 @@ pub async fn run_acp(
         .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_acp_inner(
     data_dir: PathBuf,
     conversation_id: String,
@@ -476,6 +478,7 @@ fn store_session_id(
     save_acp_sessions(data_dir, &sessions)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ensure_acp_session(
     data_dir: &Path,
     conversation_id: &str,
@@ -616,6 +619,7 @@ async fn ensure_acp_send_endpoint(data_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn bridge_history_to_acp(
     data_dir: &Path,
     conversation_id: &str,
@@ -1135,6 +1139,7 @@ async fn bridge_history_to_acp(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn prompt_agent(
     data_dir: &Path,
     conversation_id: &str,
@@ -1305,6 +1310,7 @@ fn extract_xml_attr(tag: &str, attr_name: &str) -> Option<String> {
     Some(tag[start..end].to_owned())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_bootstrap_prompt(
     data_dir: &Path,
     conversation_id: &str,
@@ -1460,7 +1466,7 @@ async fn catch_up_unseen_items(
         }
     })
     .await;
-    unseen.sort_by(|a, b| a.sent_at_ns.cmp(&b.sent_at_ns));
+    unseen.sort_by_key(|a| a.sent_at_ns);
     unseen
 }
 
@@ -1992,16 +1998,16 @@ impl BridgeClient {
 
         if let Some(message_id) = reply_message_id {
             // Verbose: per-tool-call emoji
-            if self.reactions.allows_verbose() {
-                if let Some(emoji) = start_reaction {
-                    send_reaction(
-                        &self.base_url,
-                        &self.data_dir,
-                        &self.conversation_id,
-                        &message_id,
-                        emoji,
-                    );
-                }
+            if self.reactions.allows_verbose()
+                && let Some(emoji) = start_reaction
+            {
+                send_reaction(
+                    &self.base_url,
+                    &self.data_dir,
+                    &self.conversation_id,
+                    &message_id,
+                    emoji,
+                );
             }
             // Basic: warning on failure
             if self.reactions.allows_basic() && failure {
@@ -2189,52 +2195,52 @@ impl acp::Client for BridgeClient {
                     }
                     None
                 };
-                if let Some(text) = flushed_text {
-                    if !text.trim().is_empty() {
-                        let t_send = std::time::Instant::now();
-                        match send_reply_part(
-                            &self.data_dir,
-                            &self.conversation_id,
-                            &text,
-                            "xmtp_stream_sent",
-                            self.actions,
-                        )
-                        .await
-                        {
-                            Ok(message_id) => {
-                                info!(
-                                    message_id = %sender_short_id(&message_id),
-                                    bytes = text.len(),
-                                    send_ms = t_send.elapsed().as_millis(),
-                                    "stream part sent"
-                                );
-                                set_last_reply_message_id(&self.state, &session_id, &message_id);
-                                log_acp_event(
-                                    &self.data_dir,
-                                    &self.conversation_id,
-                                    serde_json::json!({
-                                        "event": "xmtp_stream_sent_meta",
-                                        "conversation_id": self.conversation_id,
-                                        "message_id": message_id,
-                                    }),
-                                );
-                                if let Ok(mut state) = self.state.lock() {
-                                    if let Some(runtime) = state.sessions.get_mut(&session_id) {
-                                        runtime.stream_sent_count += 1;
-                                    }
-                                }
+                if let Some(text) = flushed_text
+                    && !text.trim().is_empty()
+                {
+                    let t_send = std::time::Instant::now();
+                    match send_reply_part(
+                        &self.data_dir,
+                        &self.conversation_id,
+                        &text,
+                        "xmtp_stream_sent",
+                        self.actions,
+                    )
+                    .await
+                    {
+                        Ok(message_id) => {
+                            info!(
+                                message_id = %sender_short_id(&message_id),
+                                bytes = text.len(),
+                                send_ms = t_send.elapsed().as_millis(),
+                                "stream part sent"
+                            );
+                            set_last_reply_message_id(&self.state, &session_id, &message_id);
+                            log_acp_event(
+                                &self.data_dir,
+                                &self.conversation_id,
+                                serde_json::json!({
+                                    "event": "xmtp_stream_sent_meta",
+                                    "conversation_id": self.conversation_id,
+                                    "message_id": message_id,
+                                }),
+                            );
+                            if let Ok(mut state) = self.state.lock()
+                                && let Some(runtime) = state.sessions.get_mut(&session_id)
+                            {
+                                runtime.stream_sent_count += 1;
                             }
-                            Err(err) => {
-                                error!("ACP streamed reply send failed: {err:#}");
-                                log_acp_event(
-                                    &self.data_dir,
-                                    &self.conversation_id,
-                                    serde_json::json!({
-                                        "event": "error",
-                                        "message": format!("ACP streamed reply send failed: {err:#}"),
-                                    }),
-                                );
-                            }
+                        }
+                        Err(err) => {
+                            error!("ACP streamed reply send failed: {err:#}");
+                            log_acp_event(
+                                &self.data_dir,
+                                &self.conversation_id,
+                                serde_json::json!({
+                                    "event": "error",
+                                    "message": format!("ACP streamed reply send failed: {err:#}"),
+                                }),
+                            );
                         }
                     }
                 }
