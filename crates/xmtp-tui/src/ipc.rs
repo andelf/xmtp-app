@@ -603,7 +603,7 @@ async fn watch_history(
                 } => {
                     let _ = tx.send(AppEvent::HistoryEvent {
                         conversation_id,
-                        item,
+                        item: *item,
                     });
                 }
                 DaemonEventData::DaemonError { message } => {

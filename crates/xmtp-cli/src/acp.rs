@@ -1010,7 +1010,7 @@ async fn bridge_history_to_acp(
                             session_id,
                             state,
                             reply_mode,
-                            item,
+                            *item,
                             context_prefix,
                         )
                         .await {

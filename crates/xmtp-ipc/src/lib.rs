@@ -267,7 +267,7 @@ pub enum DaemonEventData {
     GroupMembersUpdated(GroupMembersUpdatedEvent),
     HistoryItem {
         conversation_id: String,
-        item: HistoryItem,
+        item: Box<HistoryItem>,
     },
     DaemonError {
         message: String,

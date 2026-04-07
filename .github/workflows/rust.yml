@@ -41,6 +41,8 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -C link-arg=-Wl,--allow-multiple-definition
     steps:
       - uses: actions/checkout@v4
 

@@ -2568,7 +2568,7 @@ fn send_history_event(
         event_id: next_event_id(),
         payload: DaemonEventData::HistoryItem {
             conversation_id: conversation_id.to_owned(),
-            item,
+            item: Box::new(item),
         },
     };
     event_tx

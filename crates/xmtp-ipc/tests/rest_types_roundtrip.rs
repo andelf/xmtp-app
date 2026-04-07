@@ -126,7 +126,7 @@ fn history_event_roundtrips_as_json() {
         event_id: "evt-2".to_owned(),
         payload: DaemonEventData::HistoryItem {
             conversation_id: "conv-1".to_owned(),
-            item: HistoryItem {
+            item: Box::new(HistoryItem {
                 message_id: "msg-1".to_owned(),
                 sender_inbox_id: "sender-1".to_owned(),
                 sent_at_ns: 1,
@@ -142,7 +142,7 @@ fn history_event_roundtrips_as_json() {
                 read_by: vec!["reader-1".to_owned()],
                 actions_payload: None,
                 intent_payload: None,
-            },
+            }),
         },
     };
 
