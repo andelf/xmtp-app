@@ -11,6 +11,7 @@
  * Messages themselves should be read from useMessageStore in the component.
  */
 import { useEffect, useRef, useCallback } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import type { ConversationId } from "@xmtp/react-native-sdk";
 import { useAuthStore } from "../store/auth";
 import {
@@ -150,8 +151,24 @@ export function useMessages(conversationId: ConversationId | null, options?: Use
 
     startStream();
 
+    // Restart stream on foreground resume (stream likely dead after background)
+    let prevState: AppStateStatus = AppState.currentState;
+    const appStateSub = AppState.addEventListener("change", (next: AppStateStatus) => {
+      if (prevState.match(/inactive|background/) && next === "active" && !cancelled) {
+        retries = 0;
+        streamStarted.current = false;
+        if (conversationRef.current) {
+          try { conversationRef.current.cancelStreamMessages?.(); } catch {}
+        }
+        useMessageStore.getState().fetchMessages(conversationId!, { limit: PAGE_SIZE });
+        startStream();
+      }
+      prevState = next;
+    });
+
     return () => {
       cancelled = true;
+      appStateSub.remove();
       if (streamStarted.current && conversationRef.current) {
         try {
           conversationRef.current.cancelStreamMessages?.();
