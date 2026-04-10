@@ -1,6 +1,6 @@
 # XMTP Mobile App — Backlog & Roadmap
 
-> Last updated: 2026-04-02
+> Last updated: 2026-04-10
 
 ## Current State (MVP Complete)
 
@@ -54,7 +54,8 @@ Implemented: long-press → 5-emoji quick-react row, send/receive reactions, bad
 - [x] Reaction badge overflow wrap/collapse (verified: flexWrap already handles)
 
 ### ~~P1.4 Message Action Menu~~ ✅ DONE
-Implemented: long-press context menu with emoji quick-react row, Copy, Reply actions.
+Implemented: long-press context menu with emoji quick-react row, Copy, Reply, Share actions.
+- [x] Share via system share sheet (2026-04-10)
 
 ### P1.5 Unread Count + New Message Indicator (partial ✅)
 **Why**: Users can't tell which conversations have new messages.
@@ -127,35 +128,40 @@ Implemented (2026-03-31~04): Group management UI with full CRUD.
 - [x] Leave group with confirmation alert
 - [ ] Group permissions edit UI (currently read-only via policy checks)
 
-### P3.2 Attachment Support
+### P3.2 Message Forward
+- [ ] "Forward" action in long-press menu
+- [ ] Conversation picker for forwarding target
+- [ ] Re-send message content to selected conversation
+
+### P3.3 Attachment Support
 - [ ] Image send/receive (camera + gallery picker)
 - [ ] File attachment support
 - [ ] Inline image preview in chat
 - [ ] Download/save attachment to device
 
-### P3.3 WalletConnect Integration
+### P3.4 WalletConnect Integration
 - [ ] Replace raw private key login with WalletConnect v2
 - [ ] Support MetaMask, Coinbase Wallet, Rainbow
 - [ ] Proper wallet signature UX flow
 - [ ] Remove private key input (or keep as "advanced" option)
 
-### P3.4 ENS Resolution
+### P3.5 ENS Resolution
 - [ ] Resolve ENS names in new conversation address input
 - [ ] Display ENS name as conversation title when available
 - [ ] ENS avatar display
 
-### P3.5 Disappearing Messages
+### P3.6 Disappearing Messages
 - [ ] Set message expiration per conversation
 - [ ] Timer display on expiring messages
 - [ ] Auto-delete expired messages locally
 
-### P3.6 Performance Optimization
+### P3.7 Performance Optimization
 - [ ] Profile and optimize FlashList rendering (large message lists)
 - [ ] Lazy load conversation list (virtual scroll)
 - [ ] Image caching strategy
 - [ ] Reduce bundle size (tree-shake unused react-native-paper components)
 
-### P3.7 iOS Support
+### P3.8 iOS Support
 - [ ] Expo prebuild for iOS
 - [ ] Test all screens on iOS
 - [ ] APNs push notification integration

@@ -3,7 +3,7 @@
  *
  * Long-press shows a horizontal context menu:
  *   Row 1: Quick-react emoji bar (tap to send reaction — placeholder)
- *   Row 2: Copy | Reply action buttons
+ *   Row 2: Copy | Reply | Share action buttons
  */
 import React, { memo, useState, useCallback, useEffect } from "react";
 import {
@@ -15,6 +15,7 @@ import {
   Modal,
   TouchableWithoutFeedback,
   Linking,
+  Share,
 } from "react-native";
 import { Text, Icon } from "react-native-paper";
 import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-markdown";
@@ -155,7 +156,7 @@ const SENDER_COLORS = [
   "#B388FF",
 ];
 
-const MENU_WIDTH = 240;
+const MENU_WIDTH = 280;
 
 function senderColor(inboxId: string): string {
   let hash = 0;
@@ -261,6 +262,11 @@ function MessageBubbleInner({
     setMenuVisible(false);
     onReply?.(item);
   }, [onReply, item]);
+
+  const handleShare = useCallback(() => {
+    setMenuVisible(false);
+    void Share.share({ message: item.text }).catch(() => {});
+  }, [item.text]);
 
   const myInboxId = useAuthStore((s) => s.inboxId) ?? "";
 
@@ -408,6 +414,16 @@ function MessageBubbleInner({
                   >
                     <Icon source="reply" size={16} color="#E6E1E5" />
                     <Text style={styles.actionLabel}>Reply</Text>
+                  </Pressable>
+
+                  <View style={styles.actionDivider} />
+
+                  <Pressable
+                    style={({ pressed }) => [styles.actionBtn, pressed && styles.actionBtnPressed]}
+                    onPress={handleShare}
+                  >
+                    <Icon source="share-variant" size={16} color="#E6E1E5" />
+                    <Text style={styles.actionLabel}>Share</Text>
                   </Pressable>
                 </View>
               </View>
