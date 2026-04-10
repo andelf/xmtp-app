@@ -846,6 +846,20 @@ async fn bridge_history_to_acp(
                                     Ok(reply) => reply,
                                     Err(err) => {
                                         error!("ACP agent error on catch-up: {err:#}");
+                                        log_acp_event(
+                                            data_dir,
+                                            conversation_id,
+                                            serde_json::json!({
+                                                "event": "error",
+                                                "message": format!("ACP catch-up prompt failed: {err:#}"),
+                                            }),
+                                        );
+                                        send_bridge_error_message(
+                                            data_dir,
+                                            conversation_id,
+                                            format_agent_error_message(&err),
+                                        )
+                                        .await;
                                         continue;
                                     }
                                 };
@@ -1730,7 +1744,7 @@ fn split_markdown_blocks(reply: &str) -> Vec<String> {
 }
 
 fn format_agent_error_message(err: &anyhow::Error) -> String {
-    let message = truncate_display(&err.to_string(), 240);
+    let message = truncate_display(&format!("{err:#}"), 240);
     format!("ACP agent error: {message}")
 }
 
