@@ -50,8 +50,8 @@ Implemented: long-press → Reply action, quoted preview above input, send via r
 
 ### ~~P1.3 Reaction (Emoji)~~ ✅ DONE
 Implemented: long-press → 5-emoji quick-react row, send/receive reactions, badge display on bubbles.
-- [ ] Tap same emoji to toggle/remove reaction (remaining)
-- [ ] Reaction badge overflow wrap/collapse (remaining — see Known Issues)
+- [x] Tap same emoji to toggle/remove reaction (2026-04)
+- [x] Reaction badge overflow wrap/collapse (verified: flexWrap already handles)
 
 ### ~~P1.4 Message Action Menu~~ ✅ DONE
 Implemented: long-press context menu with emoji quick-react row, Copy, Reply actions.
@@ -117,14 +117,15 @@ Tasks:
 
 ## P3 — Low Priority (Future)
 
-### P3.1 Group Management (partial ✅)
-Implemented (2026-03-31): Group management UI with view group info, member list, basic management actions.
+### ~~P3.1 Group Management~~ ✅ DONE (mostly)
+Implemented (2026-03-31~04): Group management UI with full CRUD.
 - [x] View group info (name, description, member count)
 - [x] View member list
-- [ ] Add/remove members (permission-aware)
-- [ ] Rename group
-- [ ] Leave group with confirmation
-- [ ] Group permissions view/edit
+- [x] Add members (dedicated add-member screen with address validation)
+- [x] Remove members (permission-aware, role-gated)
+- [x] Rename group + edit description (EditableField component)
+- [x] Leave group with confirmation alert
+- [ ] Group permissions edit UI (currently read-only via policy checks)
 
 ### P3.2 Attachment Support
 - [ ] Image send/receive (camera + gallery picker)
