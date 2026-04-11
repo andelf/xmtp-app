@@ -1189,19 +1189,19 @@ async fn bridge_history_to_acp(
                                 );
                             }
                         } else {
-                            let message = "ACP agent could not produce a reply for this message. Check the agent/session logs for details.".to_owned();
                             log_acp_event(
                                 data_dir,
                                 conversation_id,
                                 serde_json::json!({
                                     "event": "warning",
-                                    "message": message,
+                                    "message": "agent returned empty reply",
                                 }),
                             );
+                            warn!("agent returned empty reply");
                             send_bridge_error_message(
                                 data_dir,
                                 conversation_id,
-                                "ACP agent could not produce a reply for this message.".to_owned(),
+                                "(no reply)".to_owned(),
                             )
                             .await;
                         }

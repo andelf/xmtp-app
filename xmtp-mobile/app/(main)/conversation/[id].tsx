@@ -174,6 +174,8 @@ export default function ConversationScreen() {
   const handleSend = useCallback(
     (text: string) => {
       if (!id) return;
+      isAtBottomRef.current = true;
+      if (showNewMsgChip) hideChip();
       const cid = id as unknown as ConversationId;
       if (replyTo) {
         sendReply(cid, replyTo.id as string, text);
