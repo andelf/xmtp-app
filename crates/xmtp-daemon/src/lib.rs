@@ -47,6 +47,7 @@ static EVENT_COUNTER: AtomicU64 = AtomicU64::new(1);
 const HISTORY_STREAM_PAGE_LIMIT: usize = 200;
 const HISTORY_STREAM_RETRY_DELAY_MIN_MS: u64 = 500;
 const HISTORY_STREAM_RETRY_DELAY_MAX_MS: u64 = 30_000;
+const HISTORY_STREAM_HEARTBEAT_INTERVAL_SECS: u64 = 15;
 
 #[derive(Clone, prost::Message)]
 struct GroupUpdatedInbox {
@@ -3515,9 +3516,26 @@ async fn history_events_handler(
     );
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Result<Event, std::convert::Infallible>>();
+    let heartbeat_tx = event_tx.clone();
     let data_dir_for_thread = data_dir.clone();
     std::thread::spawn(move || {
         stream_history_events(data_dir_for_thread, conversation_id, event_tx);
+    });
+
+    // Send periodic heartbeat data events so that SSE clients using
+    // eventsource parsers (which filter out SSE comments) can detect stale
+    // connections via idle timeout.
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(HISTORY_STREAM_HEARTBEAT_INTERVAL_SECS)).await;
+            let envelope = DaemonEventEnvelope {
+                event_id: next_event_id(),
+                payload: DaemonEventData::Heartbeat,
+            };
+            if heartbeat_tx.send(Ok(sse_event_from_envelope(&envelope))).is_err() {
+                break;
+            }
+        }
     });
 
     Sse::new(UnboundedReceiverStream::new(event_rx)).keep_alive(KeepAlive::default())

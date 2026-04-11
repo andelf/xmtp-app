@@ -625,7 +625,8 @@ async fn watch_history(
                 DaemonEventData::Status(_)
                 | DaemonEventData::ConversationList(_)
                 | DaemonEventData::ConversationUpdated(_)
-                | DaemonEventData::GroupMembersUpdated(_) => {}
+                | DaemonEventData::GroupMembersUpdated(_)
+                | DaemonEventData::Heartbeat => {}
             }
         }
         tokio::time::sleep(retry_delay).await;
@@ -748,7 +749,7 @@ async fn watch_app_events(
                 }
                 // Global /v1/events currently only carries app-level snapshots and errors.
                 // History items come from the dedicated /v1/conversations/:id/events stream.
-                DaemonEventData::HistoryItem { .. } => {}
+                DaemonEventData::HistoryItem { .. } | DaemonEventData::Heartbeat => {}
             }
         }
         tokio::time::sleep(retry_delay).await;

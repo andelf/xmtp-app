@@ -1072,7 +1072,8 @@ async fn watch_history(
             DaemonEventData::Status(_)
             | DaemonEventData::ConversationList(_)
             | DaemonEventData::ConversationUpdated(_)
-            | DaemonEventData::GroupMembersUpdated(_) => {}
+            | DaemonEventData::GroupMembersUpdated(_)
+            | DaemonEventData::Heartbeat => {}
         }
     }
     Ok(())
@@ -1337,6 +1338,7 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                     )
                 );
             }
+            DaemonEventData::Heartbeat => {}
         }
     }
     Ok(())

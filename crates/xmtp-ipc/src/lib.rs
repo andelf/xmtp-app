@@ -272,4 +272,5 @@ pub enum DaemonEventData {
     DaemonError {
         message: String,
     },
+    Heartbeat,
 }

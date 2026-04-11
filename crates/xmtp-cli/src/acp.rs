@@ -18,6 +18,11 @@ use tokio::time::{Duration, sleep, timeout};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{error, info, warn};
 use xmtp_core::ConnectionState;
+
+/// If no SSE event (including heartbeat) is received within this duration,
+/// the connection is considered stale and will be reconnected.
+/// Must be greater than the daemon's heartbeat interval (15s).
+const SSE_IDLE_TIMEOUT_SECS: u64 = 60;
 use xmtp_daemon::resolve_conversation_id;
 use xmtp_ipc::{
     ApiErrorBody, ConversationInfoResponse, DaemonEventData, DaemonEventEnvelope, EmojiRequest,
@@ -56,26 +61,67 @@ impl ReactionLevel {
 
 static TRACING_INIT: OnceLock<()> = OnceLock::new();
 
-fn init_acp_tracing() {
+fn init_acp_tracing(data_dir: &Path, conversation_id: &str) {
     TRACING_INIT.get_or_init(|| {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::Layer;
+
         let time_format = time::macros::format_description!(
             "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3][offset_hour sign:mandatory]:[offset_minute]"
         );
         let timer = tracing_subscriber::fmt::time::LocalTime::new(time_format);
-        let subscriber = tracing_subscriber::fmt()
-            .with_timer(timer)
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+        // stderr layer — INFO+ with color, same as before
+        let stderr_layer = tracing_subscriber::fmt::layer()
+            .with_timer(timer.clone())
             .with_target(false)
-            .with_thread_ids(false)
-            .with_thread_names(false)
             .with_ansi(true)
             .with_writer(std::io::stderr)
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-            )
-            .finish();
+            .with_filter(env_filter);
+
+        // File layer — DEBUG+ with no color, for post-mortem debugging
+        let file_layer = match create_acp_log_file(data_dir, conversation_id) {
+            Some(file) => {
+                let file_filter = tracing_subscriber::EnvFilter::new("debug");
+                Some(
+                    tracing_subscriber::fmt::layer()
+                        .with_timer(timer)
+                        .with_target(true)
+                        .with_ansi(false)
+                        .with_writer(Mutex::new(file))
+                        .with_filter(file_filter),
+                )
+            }
+            None => {
+                eprintln!("warning: failed to create ACP debug log file");
+                None
+            }
+        };
+
+        let subscriber = tracing_subscriber::registry()
+            .with(stderr_layer)
+            .with(file_layer);
         let _ = tracing::subscriber::set_global_default(subscriber);
     });
+}
+
+fn create_acp_log_file(data_dir: &Path, conversation_id: &str) -> Option<fs::File> {
+    let log_dir = data_dir.join("logs").join("acp");
+    fs::create_dir_all(&log_dir).ok()?;
+    let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let short_id = if conversation_id.len() > 8 {
+        &conversation_id[..8]
+    } else {
+        conversation_id
+    };
+    let path = log_dir.join(format!("{short_id}.{timestamp}.debug.log"));
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .ok()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -89,7 +135,7 @@ pub async fn run_acp(
     resume: Option<String>,
     command: Vec<String>,
 ) -> anyhow::Result<()> {
-    init_acp_tracing();
+    init_acp_tracing(&data_dir, &conversation_id);
     let local = LocalSet::new();
     local
         .run_until(run_acp_inner(
@@ -923,7 +969,25 @@ async fn bridge_history_to_acp(
                         }
                     }
                 }
-                event = stream.next() => {
+                event = timeout(Duration::from_secs(SSE_IDLE_TIMEOUT_SECS), stream.next()) => {
+                    let event = match event {
+                        Ok(event) => event,
+                        Err(_elapsed) => {
+                            warn!("ACP history SSE idle timeout ({SSE_IDLE_TIMEOUT_SECS}s), reconnecting");
+                            reconnect_attempt = reconnect_attempt.saturating_add(1);
+                            log_acp_event(
+                                data_dir,
+                                conversation_id,
+                                serde_json::json!({
+                                    "event": "sse_reconnect",
+                                    "attempt": reconnect_attempt,
+                                    "reason": "idle_timeout",
+                                    "delay_ms": retry_delay.as_millis() as u64,
+                                }),
+                            );
+                            break;
+                        }
+                    };
                     let Some(event) = event else {
                         reconnect_attempt = reconnect_attempt.saturating_add(1);
                         log_acp_event(
