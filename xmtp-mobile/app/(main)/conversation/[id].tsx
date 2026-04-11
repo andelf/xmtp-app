@@ -6,7 +6,7 @@
  * behavior="translate-with-padding" (purpose-built for chat screens).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, StyleSheet, Keyboard } from "react-native";
+import { View, StyleSheet, Keyboard, Pressable, Animated } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { ActivityIndicator, IconButton, Text } from "react-native-paper";
@@ -80,6 +80,21 @@ export default function ConversationScreen() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const isAtBottomRef = useRef(true);
 
+  // "New messages" floating chip
+  const [showNewMsgChip, setShowNewMsgChip] = useState(false);
+  const chipOpacity = useRef(new Animated.Value(0)).current;
+
+  const showChip = useCallback(() => {
+    setShowNewMsgChip(true);
+    Animated.timing(chipOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+  }, [chipOpacity]);
+
+  const hideChip = useCallback(() => {
+    Animated.timing(chipOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(() =>
+      setShowNewMsgChip(false)
+    );
+  }, [chipOpacity]);
+
   // Reply state
   const [replyTo, setReplyTo] = useState<MessageItem | null>(null);
 
@@ -108,9 +123,11 @@ export default function ConversationScreen() {
   const handleScroll = useCallback((e: any) => {
     try {
       const offset = e?.nativeEvent?.contentOffset?.y ?? 0;
+      const wasAtBottom = isAtBottomRef.current;
       isAtBottomRef.current = offset < 150;
+      if (!wasAtBottom && isAtBottomRef.current && showNewMsgChip) hideChip();
     } catch {}
-  }, []);
+  }, [showNewMsgChip, hideChip]);
 
   // Messages from store
   const storeMessages = useMessageStore((s) => s.byConversation[id ?? ""] ?? EMPTY_MESSAGES);
@@ -132,15 +149,19 @@ export default function ConversationScreen() {
     resolveAddresses(inboxIds);
   }, [isGroup, storeMessages]);
 
-  // Auto-scroll to bottom when new messages arrive (only if at bottom)
+  // Auto-scroll to bottom when new messages arrive, or show chip if scrolled up
   const prevMessageCount = useRef(0);
   useEffect(() => {
     const len = messages?.length ?? 0;
-    if (len > prevMessageCount.current && len > 0 && isAtBottomRef.current) {
-      setTimeout(scrollToBottom, 50);
+    if (len > prevMessageCount.current && len > 0) {
+      if (isAtBottomRef.current) {
+        setTimeout(scrollToBottom, 50);
+      } else {
+        showChip();
+      }
     }
     prevMessageCount.current = len;
-  }, [messages, scrollToBottom]);
+  }, [messages, scrollToBottom, showChip]);
 
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -274,6 +295,20 @@ export default function ConversationScreen() {
             ListFooterComponent={renderFooter}
             contentContainerStyle={styles.listContent}
           />
+          {/* "New messages" floating chip */}
+          {showNewMsgChip && (
+            <Animated.View style={[styles.newMsgChip, { opacity: chipOpacity }]}>
+              <Pressable
+                onPress={() => {
+                  scrollToBottom();
+                  hideChip();
+                }}
+                style={styles.newMsgChipInner}
+              >
+                <Text style={styles.newMsgChipText}>↓ New messages</Text>
+              </Pressable>
+            </Animated.View>
+          )}
         </View>
 
         {/* Input bar — only pad for nav bar when keyboard is closed */}
@@ -298,5 +333,27 @@ const styles = StyleSheet.create({
   loadingMore: {
     paddingVertical: 16,
     alignItems: "center",
+  },
+  newMsgChip: {
+    position: "absolute",
+    bottom: 8,
+    alignSelf: "center",
+    zIndex: 10,
+  },
+  newMsgChipInner: {
+    backgroundColor: "#6750A4",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  newMsgChipText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "600",
   },
 });
