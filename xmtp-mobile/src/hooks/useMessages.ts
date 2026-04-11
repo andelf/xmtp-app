@@ -158,7 +158,9 @@ export function useMessages(conversationId: ConversationId | null, options?: Use
         retries = 0;
         streamStarted.current = false;
         if (conversationRef.current) {
-          try { conversationRef.current.cancelStreamMessages?.(); } catch {}
+          try {
+            conversationRef.current.cancelStreamMessages?.();
+          } catch {}
         }
         useMessageStore.getState().fetchMessages(conversationId!, { limit: PAGE_SIZE });
         startStream();

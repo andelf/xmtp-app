@@ -120,14 +120,17 @@ export default function ConversationScreen() {
   }, []);
 
   // Track scroll position — inverted list: offset near 0 means at bottom
-  const handleScroll = useCallback((e: any) => {
-    try {
-      const offset = e?.nativeEvent?.contentOffset?.y ?? 0;
-      const wasAtBottom = isAtBottomRef.current;
-      isAtBottomRef.current = offset < 150;
-      if (!wasAtBottom && isAtBottomRef.current && showNewMsgChip) hideChip();
-    } catch {}
-  }, [showNewMsgChip, hideChip]);
+  const handleScroll = useCallback(
+    (e: any) => {
+      try {
+        const offset = e?.nativeEvent?.contentOffset?.y ?? 0;
+        const wasAtBottom = isAtBottomRef.current;
+        isAtBottomRef.current = offset < 150;
+        if (!wasAtBottom && isAtBottomRef.current && showNewMsgChip) hideChip();
+      } catch {}
+    },
+    [showNewMsgChip, hideChip]
+  );
 
   // Messages from store
   const storeMessages = useMessageStore((s) => s.byConversation[id ?? ""] ?? EMPTY_MESSAGES);

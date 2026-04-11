@@ -311,7 +311,11 @@ fn open_client_with_login(data_dir: &Path, env: &str) -> anyhow::Result<Client> 
     };
     match client.can_message(&[ident]) {
         Ok(results) if results.first() == Some(&true) => {
-            daemon_log(data_dir, "info", format!("address {address} is registered on XMTP"));
+            daemon_log(
+                data_dir,
+                "info",
+                format!("address {address} is registered on XMTP"),
+            );
         }
         Ok(_) => {
             daemon_log(
@@ -1104,8 +1108,7 @@ fn message_info_with_client(
     {
         msg
     } else {
-        let (_conversation, resolved_message_id) =
-            find_message_conversation(client, message_id)?;
+        let (_conversation, resolved_message_id) = find_message_conversation(client, message_id)?;
         client
             .message_by_id(&resolved_message_id)
             .context("load message by id")?
@@ -1134,7 +1137,15 @@ fn history_with_client(
     before_ns: Option<i64>,
     limit: usize,
 ) -> anyhow::Result<Vec<HistoryEntry>> {
-    history_with_client_inner(data_dir, client, conversation_id, kind, before_ns, limit, true)
+    history_with_client_inner(
+        data_dir,
+        client,
+        conversation_id,
+        kind,
+        before_ns,
+        limit,
+        true,
+    )
 }
 
 fn history_with_client_inner(
@@ -3527,12 +3538,18 @@ async fn history_events_handler(
     // connections via idle timeout.
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(HISTORY_STREAM_HEARTBEAT_INTERVAL_SECS)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(
+                HISTORY_STREAM_HEARTBEAT_INTERVAL_SECS,
+            ))
+            .await;
             let envelope = DaemonEventEnvelope {
                 event_id: next_event_id(),
                 payload: DaemonEventData::Heartbeat,
             };
-            if heartbeat_tx.send(Ok(sse_event_from_envelope(&envelope))).is_err() {
+            if heartbeat_tx
+                .send(Ok(sse_event_from_envelope(&envelope)))
+                .is_err()
+            {
                 break;
             }
         }

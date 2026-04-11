@@ -1330,11 +1330,7 @@ async fn watch_app_events(data_dir: PathBuf) -> anyhow::Result<()> {
                     "{}",
                     render_event_row(
                         "history",
-                        &format!(
-                            "{} {}",
-                            fmt_id(&conversation_id),
-                            fmt_id(&item.message_id)
-                        ),
+                        &format!("{} {}", fmt_id(&conversation_id), fmt_id(&item.message_id)),
                     )
                 );
             }
@@ -1838,10 +1834,7 @@ fn print_status_response(status: StatusResponse) -> anyhow::Result<()> {
         render_status_row("connection_state", &status.connection_state.to_string())
     );
     if let Some(inbox_id) = status.inbox_id {
-        println!(
-            "{}",
-            render_status_row("inbox_id", &fmt_id(&inbox_id))
-        );
+        println!("{}", render_status_row("inbox_id", &fmt_id(&inbox_id)));
     }
     if let Some(installation_id) = status.installation_id {
         println!(
