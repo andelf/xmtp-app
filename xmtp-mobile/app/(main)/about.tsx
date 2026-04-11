@@ -5,6 +5,7 @@ import React from "react";
 import { View, StyleSheet, ScrollView } from "react-native";
 import { Text, Divider } from "react-native-paper";
 import { Stack } from "expo-router";
+import Constants from "expo-constants";
 import { useAuthStore } from "../../src/store/auth";
 import { InfoRow } from "../../src/components/InfoRow";
 
@@ -12,6 +13,8 @@ export default function AboutScreen() {
   const address = useAuthStore((s) => s.address);
   const inboxId = useAuthStore((s) => s.inboxId);
   const env = useAuthStore((s) => s.env);
+  const gitCommit = Constants.expoConfig?.extra?.gitCommit ?? "unknown";
+  const buildTime = Constants.expoConfig?.extra?.buildTime ?? "";
 
   return (
     <>
@@ -32,7 +35,7 @@ export default function AboutScreen() {
             XMTP Messenger
           </Text>
           <Text variant="bodySmall" style={styles.version}>
-            v0.1.0
+            v0.1.0 ({gitCommit})
           </Text>
         </View>
 
@@ -53,6 +56,15 @@ export default function AboutScreen() {
         </Text>
         <InfoRow label="Environment" value={env} />
         <InfoRow label="Protocol" value="XMTP v3 (MLS)" />
+
+        <Divider style={styles.divider} />
+
+        {/* Build */}
+        <Text variant="titleMedium" style={styles.sectionTitle}>
+          Build
+        </Text>
+        <InfoRow label="Commit" value={gitCommit} />
+        {buildTime ? <InfoRow label="Build Time" value={buildTime} /> : null}
 
         <Divider style={styles.divider} />
 
