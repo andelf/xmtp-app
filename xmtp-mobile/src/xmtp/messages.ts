@@ -35,7 +35,7 @@ export async function sendMessage(
   const tempId = store.addPending(conversationId, text);
 
   try {
-    const convo = await findConversation(conversationId);
+    const convo = await findConversation(conversationId, { useCache: false });
     if (!convo) {
       store.markFailed(conversationId, tempId);
       return null;
@@ -59,8 +59,10 @@ export async function sendMessage(
 
     store.confirmSent(conversationId, tempId, confirmed);
 
-    // Update conversation lastMessage preview
-    useConversationStore.getState().updateLastMessage(conversationId, text, confirmed.sentAt);
+    // Update conversation lastMessage preview without creating unread for self-send
+    useConversationStore
+      .getState()
+      .updateLastMessage(conversationId, text, confirmed.sentAt, { incrementUnread: false });
 
     return confirmed;
   } catch (err) {
@@ -71,7 +73,7 @@ export async function sendMessage(
   }
 }
 
-/** Find a conversation object by id, with module-level cache. */
+/** Find a conversation object by id, with optional module-level cache. */
 const conversationCache = new Map<string, any>();
 
 /** Clear cached conversation objects (call on logout). */
@@ -79,15 +81,21 @@ export function clearConversationCache() {
   conversationCache.clear();
 }
 
-export async function findConversation(conversationId: string) {
-  const key = conversationId;
-  if (conversationCache.has(key)) return conversationCache.get(key)!;
+async function lookupConversation(conversationId: string) {
   const client = getClient();
   if (!client) return null;
   const groups = await client.conversations.listGroups();
   const dms = await client.conversations.listDms();
-  const convo = [...groups, ...dms].find((c) => (c.id as string) === key) ?? null;
-  if (convo) conversationCache.set(key, convo);
+  return [...groups, ...dms].find((c) => (c.id as string) === conversationId) ?? null;
+}
+
+export async function findConversation(conversationId: string, options?: { useCache?: boolean }) {
+  const useCache = options?.useCache ?? true;
+  if (useCache && conversationCache.has(conversationId)) {
+    return conversationCache.get(conversationId)!;
+  }
+  const convo = await lookupConversation(conversationId);
+  if (convo && useCache) conversationCache.set(conversationId, convo);
   return convo;
 }
 
@@ -101,7 +109,7 @@ export async function sendIntent(
   actionId: string
 ): Promise<boolean> {
   try {
-    const convo = await findConversation(conversationId);
+    const convo = await findConversation(conversationId, { useCache: false });
     if (!convo) return false;
 
     await convo.send({ id: actionsId, actionId } as any, {
@@ -171,7 +179,7 @@ export async function sendReaction(
   pendingReactions.set(key, (pendingReactions.get(key) ?? 0) + 1);
 
   try {
-    const convo = await findConversation(conversationId);
+    const convo = await findConversation(conversationId, { useCache: false });
     if (!convo) {
       useMessageStore.getState().applyReaction({ ...reactionInfo, action: rollbackAction });
       decrementPending(key);
@@ -213,7 +221,7 @@ export async function sendReply(
   const tempId = store.addPending(conversationId, text);
 
   try {
-    const convo = await findConversation(conversationId);
+    const convo = await findConversation(conversationId, { useCache: false });
     if (!convo) {
       store.markFailed(conversationId, tempId);
       return null;
@@ -244,7 +252,9 @@ export async function sendReply(
     };
 
     store.confirmSent(conversationId, tempId, confirmed);
-    useConversationStore.getState().updateLastMessage(conversationId, text, confirmed.sentAt);
+    useConversationStore
+      .getState()
+      .updateLastMessage(conversationId, text, confirmed.sentAt, { incrementUnread: false });
 
     return confirmed;
   } catch (err) {
@@ -260,7 +270,7 @@ export async function sendReply(
  */
 async function sendReadReceiptRaw(conversationId: string): Promise<boolean> {
   try {
-    const convo = await findConversation(conversationId);
+    const convo = await findConversation(conversationId, { useCache: false });
     if (!convo) return false;
     await convo.send({ readReceipt: {} } as any);
     return true;

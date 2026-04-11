@@ -133,11 +133,14 @@ export function useConversations() {
               const timestamp = message.sentNs ? message.sentNs / 1_000_000 : Date.now();
 
               if (text) {
+                const isOwn = (message as any).senderInboxId === client.inboxId;
                 log(
                   "MsgStream",
-                  `updateLastMessage convId=${conversationId} text="${text.slice(0, 30)}" ts=${timestamp}`
+                  `updateLastMessage convId=${conversationId} text="${text.slice(0, 30)}" ts=${timestamp} own=${isOwn}`
                 );
-                store().updateLastMessage(conversationId, text, timestamp);
+                store().updateLastMessage(conversationId, text, timestamp, {
+                  incrementUnread: !isOwn,
+                });
                 log(
                   "MsgStream",
                   `after update, item.lastMessageText="${store().items.get(conversationId)?.lastMessageText}"`

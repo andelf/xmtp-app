@@ -173,7 +173,12 @@ export interface ConversationActions {
   /** Remove a conversation from the store (e.g. after leaving a group). */
   remove: (conversationId: string) => void;
   /** Update the last message preview for a conversation. */
-  updateLastMessage: (conversationId: string, text: string, timestamp: number) => void;
+  updateLastMessage: (
+    conversationId: string,
+    text: string,
+    timestamp: number,
+    options?: { incrementUnread?: boolean }
+  ) => void;
   /** Mark a conversation as read (reset unread count). */
   markRead: (conversationId: string) => void;
   setActiveConversation: (id: string | null) => void;
@@ -272,7 +277,7 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
     });
   },
 
-  updateLastMessage: (conversationId, text, timestamp) => {
+  updateLastMessage: (conversationId, text, timestamp, options) => {
     set((state) => {
       const existing = state.items.get(conversationId);
       if (!existing) return state;
@@ -288,11 +293,12 @@ export const useConversationStore = create<ConversationStore>((set, get) => ({
 
       const next = new Map(state.items);
       const isActive = state.activeConversationId === conversationId;
+      const incrementUnread = options?.incrementUnread ?? true;
       next.set(conversationId, {
         ...existing,
         lastMessageText: text,
         lastMessageAt: timestamp,
-        unreadCount: isActive ? 0 : existing.unreadCount + 1,
+        unreadCount: isActive || !incrementUnread ? existing.unreadCount : existing.unreadCount + 1,
       });
       return { items: next };
     });
