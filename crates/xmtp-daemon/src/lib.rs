@@ -475,7 +475,7 @@ where
         .context("watch conversation messages")?;
 
     for event in subscription {
-        let item = history_item_by_message_id_with_client(&client, &event.message_id)?;
+        let item = history_item_by_message_id_with_client(client, &event.message_id)?;
         on_item(item)?;
     }
 
@@ -2683,7 +2683,7 @@ fn load_catch_up_items(
         let sync = page_idx == 0;
         let page_entries = history_with_client_inner(
             data_dir,
-            &client,
+            client,
             conversation_id,
             None,
             before_ns,
