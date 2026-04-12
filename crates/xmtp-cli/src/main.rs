@@ -131,7 +131,7 @@ enum Command {
             long = "reactions",
             value_enum,
             default_value_t = acp::ReactionLevel::Off,
-            help = "Reaction level: off (none), basic (eyes + warning + done), verbose (per-tool-call emoji)"
+            help = "Reaction level: off (none), basic (eyes + warning + done), verbose (per-tool-call emoji), full-message (batched short progress messages)"
         )]
         reactions: acp::ReactionLevel,
         #[arg(

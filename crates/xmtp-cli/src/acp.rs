@@ -13,6 +13,7 @@ use chrono::Utc;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 use tokio::time::{Duration, sleep, timeout};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -47,6 +48,8 @@ pub enum ReactionLevel {
     Basic,
     /// Detailed per-tool-call emoji (read, edit, execute, search, etc.)
     Verbose,
+    /// Send short text progress messages instead of reactions
+    FullMessage,
 }
 
 impl ReactionLevel {
@@ -56,6 +59,10 @@ impl ReactionLevel {
 
     fn allows_verbose(self) -> bool {
         matches!(self, Self::Verbose)
+    }
+
+    fn uses_full_messages(self) -> bool {
+        matches!(self, Self::FullMessage)
     }
 }
 
@@ -197,11 +204,27 @@ async fn run_acp_inner(
         .spawn()
         .with_context(|| format!("spawn ACP subprocess: {}", program))?;
 
+    info!(pid = child.id(), program = %program, "ACP subprocess spawned");
+    log_acp_event(
+        &data_dir,
+        &conversation_id,
+        serde_json::json!({
+            "event": "subprocess",
+            "action": "spawned",
+            "pid": child.id(),
+            "program": program,
+            "args": args,
+        }),
+    );
+
     let child_stdin = child.stdin.take().context("take ACP subprocess stdin")?;
     let child_stdout = child.stdout.take().context("take ACP subprocess stdout")?;
 
     let state = Arc::new(Mutex::new(BridgeState::default()));
     let base_url = daemon_base_url(&data_dir)?;
+    let full_message_progress = reactions
+        .uses_full_messages()
+        .then(|| FullMessageProgressSender::new(data_dir.clone(), conversation_id.clone()));
     let client = BridgeClient {
         base_url: base_url.clone(),
         data_dir: data_dir.clone(),
@@ -209,6 +232,7 @@ async fn run_acp_inner(
         reactions,
         reply_mode,
         actions,
+        full_message_progress: full_message_progress.clone(),
         state: Arc::clone(&state),
     };
     let (conn, io_task) = acp::ClientSideConnection::new(
@@ -258,6 +282,45 @@ async fn run_acp_inner(
     .await?;
     info!(session_id = %session_id_str(&session_id), "ACP session ready");
 
+    let monitor_state = Arc::clone(&state);
+    let monitor_data_dir = data_dir.clone();
+    let monitor_conversation_id = conversation_id.clone();
+    let monitor_session_id = session_id_owned(&session_id);
+    let prompt_monitor_handle = tokio::task::spawn_local(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            if let Some(snapshot) = active_turn_snapshot(&monitor_state, &monitor_session_id) {
+                let age_ms = Utc::now().timestamp_millis() - snapshot.started_at_ms;
+                info!(
+                    session_id = monitor_session_id,
+                    source_message_id = snapshot.source_message_id,
+                    age_ms,
+                    tool_call_count = snapshot.tool_call_titles.len(),
+                    "ACP turn still active"
+                );
+                log_acp_event(
+                    &monitor_data_dir,
+                    &monitor_conversation_id,
+                    serde_json::json!({
+                        "event": "turn_still_active",
+                        "session_id": monitor_session_id,
+                        "source_message_id": snapshot.source_message_id,
+                        "source_sender_inbox_id": snapshot.source_sender_inbox_id,
+                        "source_content_kind": snapshot.source_content_kind,
+                        "source_preview": snapshot.source_preview,
+                        "started_at_ms": snapshot.started_at_ms,
+                        "age_ms": age_ms,
+                        "last_reply_message_id": snapshot.last_reply_message_id,
+                        "started_tool_call_count": snapshot.started_tool_call_count,
+                        "tool_call_titles": snapshot.tool_call_titles,
+                    }),
+                );
+            }
+        }
+    });
+
     let bridge_result = bridge_history_to_acp(
         &data_dir,
         &conversation_id,
@@ -266,6 +329,7 @@ async fn run_acp_inner(
         reactions,
         reply_mode,
         actions,
+        full_message_progress.as_ref(),
         status,
         &conn,
         &session_id,
@@ -277,6 +341,7 @@ async fn run_acp_inner(
         error!("ACP bridge error: {err:#}");
     }
 
+    prompt_monitor_handle.abort();
     io_handle.abort();
     let _ = child.start_kill();
     match timeout(Duration::from_secs(2), child.wait()).await {
@@ -330,6 +395,10 @@ struct SessionRuntime {
 #[derive(Debug, Default)]
 struct ActiveTurn {
     source_message_id: String,
+    source_sender_inbox_id: String,
+    source_content_kind: String,
+    source_preview: String,
+    started_at_ms: i64,
     last_reply_message_id: Option<String>,
     started_tool_calls: HashSet<String>,
 }
@@ -674,6 +743,7 @@ async fn bridge_history_to_acp(
     reactions: ReactionLevel,
     reply_mode: ReplyMode,
     actions: bool,
+    full_message_progress: Option<&FullMessageProgressSender>,
     initial_status: StatusResponse,
     conn: &acp::ClientSideConnection,
     session_id: &acp::SessionId,
@@ -857,13 +927,16 @@ async fn bridge_history_to_acp(
                                     message = %truncate_display(&item.content, 80),
                                     "catch-up message after reconnect"
                                 );
-                                if reactions.allows_basic() {
-                                    send_reaction(
+                                if reactions.allows_basic() || reactions.uses_full_messages() {
+                                    emit_feedback(
+                                        reactions,
+                                        full_message_progress,
                                         &base_url,
                                         data_dir,
                                         conversation_id,
                                         &source_message_id,
                                         ReactionEmoji::Eyes,
+                                        Some("received message"),
                                     );
                                 }
                                 log_acp_event(
@@ -1066,13 +1139,16 @@ async fn bridge_history_to_acp(
                             message = %truncate_display(&item.content, 80),
                             "received conversation message"
                         );
-                        if reactions.allows_basic() {
-                            send_reaction(
+                        if reactions.allows_basic() || reactions.uses_full_messages() {
+                            emit_feedback(
+                                reactions,
+                                full_message_progress,
                                 &base_url,
                                 data_dir,
                                 conversation_id,
                                 &source_message_id,
                                 ReactionEmoji::Eyes,
+                                Some("received message"),
                             );
                         }
                         log_acp_event(
@@ -1179,13 +1255,18 @@ async fn bridge_history_to_acp(
                             if send_failed {
                                 continue;
                             }
-                            if reactions.allows_basic() && reply_mode == ReplyMode::Stream {
-                                send_reaction(
+                            if (reactions.allows_basic() || reactions.uses_full_messages())
+                                && reply_mode == ReplyMode::Stream
+                            {
+                                emit_feedback(
+                                    reactions,
+                                    full_message_progress,
                                     &base_url,
                                     data_dir,
                                     conversation_id,
                                     &source_message_id,
                                     ReactionEmoji::Done,
+                                    Some("done"),
                                 );
                             }
                         } else {
@@ -1228,7 +1309,18 @@ async fn prompt_agent(
     item: HistoryItem,
     context_prefix: bool,
 ) -> anyhow::Result<PromptReply> {
-    begin_session_turn(state, session_id_str(session_id), &item.message_id);
+    let source_message_id = item.message_id.clone();
+    let source_sender_inbox_id = item.sender_inbox_id.clone();
+    let source_content_kind = item.content_kind.clone();
+    let source_preview = truncate_display(&item.content, 160);
+    begin_session_turn(
+        state,
+        session_id_str(session_id),
+        &source_message_id,
+        &source_sender_inbox_id,
+        &source_content_kind,
+        &source_preview,
+    );
     let content = if context_prefix {
         let prefix = format!("[{}]", sender_short_id(&item.sender_inbox_id));
         if item.content_kind == "intent" {
@@ -1252,10 +1344,19 @@ async fn prompt_agent(
         serde_json::json!({
             "event": "agent_prompt",
             "session_id": session_id_str(session_id),
+            "source_message_id": source_message_id,
+            "source_sender_inbox_id": source_sender_inbox_id,
+            "source_content_kind": source_content_kind,
+            "source_preview": source_preview,
             "content": content,
         }),
     );
-    info!("prompting agent");
+    info!(
+        session_id = session_id_str(session_id),
+        source_message_id = source_message_id,
+        source_content_kind = source_content_kind,
+        "prompting agent"
+    );
     let t_prompt = std::time::Instant::now();
     let prompt_result = conn
         .prompt(acp::PromptRequest::new(
@@ -1264,12 +1365,52 @@ async fn prompt_agent(
         ))
         .await;
     if let Err(err) = prompt_result {
+        let err_text = format!("{err:#}");
+        info!(
+            session_id = session_id_str(session_id),
+            source_message_id = source_message_id,
+            elapsed_ms = t_prompt.elapsed().as_millis(),
+            error = %err_text,
+            "agent prompt returned error"
+        );
+        log_acp_event(
+            data_dir,
+            conversation_id,
+            serde_json::json!({
+                "event": "agent_prompt_result",
+                "session_id": session_id_str(session_id),
+                "source_message_id": source_message_id,
+                "source_sender_inbox_id": source_sender_inbox_id,
+                "source_content_kind": source_content_kind,
+                "source_preview": source_preview,
+                "ok": false,
+                "elapsed_ms": t_prompt.elapsed().as_millis(),
+                "error": err_text,
+                "method_not_found": err_text.contains("Method not found"),
+            }),
+        );
         end_session_turn(state, session_id_str(session_id));
         return Err(err).context("ACP prompt");
     }
     info!(
+        session_id = session_id_str(session_id),
+        source_message_id = source_message_id,
         elapsed_ms = t_prompt.elapsed().as_millis(),
         "agent responded"
+    );
+    log_acp_event(
+        data_dir,
+        conversation_id,
+        serde_json::json!({
+            "event": "agent_prompt_result",
+            "session_id": session_id_str(session_id),
+            "source_message_id": source_message_id,
+            "source_sender_inbox_id": source_sender_inbox_id,
+            "source_content_kind": source_content_kind,
+            "source_preview": source_preview,
+            "ok": true,
+            "elapsed_ms": t_prompt.elapsed().as_millis(),
+        }),
     );
 
     // Allow any final session notifications to land before we read the buffered chunks.
@@ -1598,7 +1739,14 @@ fn reset_session_runtime(state: &Arc<Mutex<BridgeState>>, session_id: &str) {
     }
 }
 
-fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, source_message_id: &str) {
+fn begin_session_turn(
+    state: &Arc<Mutex<BridgeState>>,
+    session_id: &str,
+    source_message_id: &str,
+    source_sender_inbox_id: &str,
+    source_content_kind: &str,
+    source_preview: &str,
+) {
     if let Ok(mut state) = state.lock() {
         let runtime = state.sessions.entry(session_id.to_owned()).or_default();
         runtime.chunks.clear();
@@ -1607,6 +1755,10 @@ fn begin_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str, source_
         runtime.stream_sent_count = 0;
         runtime.active_turn = Some(ActiveTurn {
             source_message_id: source_message_id.to_owned(),
+            source_sender_inbox_id: source_sender_inbox_id.to_owned(),
+            source_content_kind: source_content_kind.to_owned(),
+            source_preview: source_preview.to_owned(),
+            started_at_ms: Utc::now().timestamp_millis(),
             last_reply_message_id: None,
             started_tool_calls: HashSet::new(),
         });
@@ -1620,6 +1772,46 @@ fn end_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str) {
         runtime.active_turn = None;
         runtime.tool_calls.clear();
     }
+}
+
+#[derive(Debug, Clone)]
+struct ActiveTurnSnapshot {
+    source_message_id: String,
+    source_sender_inbox_id: String,
+    source_content_kind: String,
+    source_preview: String,
+    started_at_ms: i64,
+    last_reply_message_id: Option<String>,
+    started_tool_call_count: usize,
+    tool_call_titles: Vec<String>,
+}
+
+fn active_turn_snapshot(
+    state: &Arc<Mutex<BridgeState>>,
+    session_id: &str,
+) -> Option<ActiveTurnSnapshot> {
+    let Ok(state) = state.lock() else {
+        return None;
+    };
+    let runtime = state.sessions.get(session_id)?;
+    let active_turn = runtime.active_turn.as_ref()?;
+    let mut tool_call_titles = runtime
+        .tool_calls
+        .values()
+        .filter_map(|snapshot| snapshot.title.clone())
+        .collect::<Vec<_>>();
+    tool_call_titles.sort();
+    tool_call_titles.dedup();
+    Some(ActiveTurnSnapshot {
+        source_message_id: active_turn.source_message_id.clone(),
+        source_sender_inbox_id: active_turn.source_sender_inbox_id.clone(),
+        source_content_kind: active_turn.source_content_kind.clone(),
+        source_preview: active_turn.source_preview.clone(),
+        started_at_ms: active_turn.started_at_ms,
+        last_reply_message_id: active_turn.last_reply_message_id.clone(),
+        started_tool_call_count: active_turn.started_tool_calls.len(),
+        tool_call_titles,
+    })
 }
 
 fn take_session_chunks(state: &Arc<Mutex<BridgeState>>, session_id: &str) -> Vec<String> {
@@ -1812,6 +2004,140 @@ fn format_agent_error_message(err: &anyhow::Error) -> String {
     format!("ACP agent error: {message}")
 }
 
+#[derive(Clone)]
+struct FullMessageProgressSender {
+    tx: mpsc::UnboundedSender<String>,
+}
+
+const FULL_MESSAGE_INITIAL_DELAY_MS: u64 = 300;
+const FULL_MESSAGE_BATCH_WINDOW_MS: u64 = 2_000;
+
+impl FullMessageProgressSender {
+    fn new(data_dir: PathBuf, conversation_id: String) -> Self {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        tokio::task::spawn_local(async move {
+            while let Some(first) = rx.recv().await {
+                let mut lines = vec![first];
+                sleep(Duration::from_millis(FULL_MESSAGE_INITIAL_DELAY_MS)).await;
+                while let Ok(line) = rx.try_recv() {
+                    lines.push(line);
+                }
+                let first_batch = std::mem::take(&mut lines);
+                send_full_message_progress_batch(&data_dir, &conversation_id, first_batch).await;
+
+                loop {
+                    let next = timeout(
+                        Duration::from_millis(FULL_MESSAGE_BATCH_WINDOW_MS),
+                        rx.recv(),
+                    )
+                    .await;
+                    let Ok(Some(first_followup)) = next else {
+                        break;
+                    };
+                    let mut followup = vec![first_followup];
+                    sleep(Duration::from_millis(FULL_MESSAGE_INITIAL_DELAY_MS)).await;
+                    while let Ok(line) = rx.try_recv() {
+                        followup.push(line);
+                    }
+                    send_full_message_progress_batch(&data_dir, &conversation_id, followup).await;
+                }
+            }
+        });
+        Self { tx }
+    }
+
+    fn send(&self, line: String) {
+        let _ = self.tx.send(line);
+    }
+}
+
+async fn send_full_message_progress_batch(
+    data_dir: &Path,
+    conversation_id: &str,
+    lines: Vec<String>,
+) {
+    if lines.is_empty() {
+        return;
+    }
+    let body = format!("```text\n{}\n```", lines.join("\n"));
+    match daemon_send_conversation(data_dir, conversation_id, &body, Some("markdown")).await {
+        Ok(sent) => {
+            info!(
+                conversation_id = conversation_id,
+                message_id = %sender_short_id(&sent.message_id),
+                line_count = lines.len(),
+                "full-message progress sent"
+            );
+            log_acp_event(
+                data_dir,
+                conversation_id,
+                serde_json::json!({
+                    "event": "full_message_progress_sent",
+                    "message_id": sent.message_id,
+                    "line_count": lines.len(),
+                    "body": body,
+                }),
+            );
+        }
+        Err(err) => {
+            warn!("ACP full-message progress send failed: {err:#}");
+            log_acp_event(
+                data_dir,
+                conversation_id,
+                serde_json::json!({
+                    "event": "warning",
+                    "message": format!("ACP full-message progress send failed: {err:#}"),
+                    "body": body,
+                }),
+            );
+        }
+    }
+}
+
+fn full_message_description(emoji: ReactionEmoji, description: Option<&str>) -> String {
+    let label = description.unwrap_or(match emoji {
+        ReactionEmoji::Eyes => "received message",
+        ReactionEmoji::Read => "read file",
+        ReactionEmoji::Edit => "edit file",
+        ReactionEmoji::Delete => "delete file",
+        ReactionEmoji::Move => "move file",
+        ReactionEmoji::Search => "search",
+        ReactionEmoji::Execute => "run command",
+        ReactionEmoji::Think => "think",
+        ReactionEmoji::Fetch => "fetch",
+        ReactionEmoji::SwitchMode => "switch mode",
+        ReactionEmoji::Tool => "tool call",
+        ReactionEmoji::Subagent => "subagent",
+        ReactionEmoji::Warning => "warning",
+        ReactionEmoji::Done => "done",
+    });
+    let label = match emoji {
+        ReactionEmoji::Execute => truncate_display(label.trim(), 120),
+        _ => label.trim().to_owned(),
+    };
+    format!("{} {}", emoji.as_str(), label)
+}
+
+fn emit_feedback(
+    reaction_mode: ReactionLevel,
+    full_message_progress: Option<&FullMessageProgressSender>,
+    base_url: &str,
+    data_dir: &Path,
+    conversation_id: &str,
+    message_id: &str,
+    emoji: ReactionEmoji,
+    description: Option<&str>,
+) {
+    let lifecycle_reaction = matches!(emoji, ReactionEmoji::Eyes | ReactionEmoji::Done);
+    if reaction_mode.uses_full_messages() && !lifecycle_reaction {
+        if let Some(progress) = full_message_progress {
+            progress.send(full_message_description(emoji, description));
+        }
+        return;
+    }
+    send_reaction(base_url, data_dir, conversation_id, message_id, emoji);
+}
+
 async fn send_reply_part(
     data_dir: &Path,
     conversation_id: &str,
@@ -1971,6 +2297,7 @@ struct BridgeClient {
     reactions: ReactionLevel,
     reply_mode: ReplyMode,
     actions: bool,
+    full_message_progress: Option<FullMessageProgressSender>,
     state: Arc<Mutex<BridgeState>>,
 }
 
@@ -2014,16 +2341,19 @@ impl BridgeClient {
             }),
         );
 
-        if let (true, Some(message_id), Some(emoji)) =
-            (self.reactions.allows_verbose(), reply_message_id, reaction)
-        {
-            send_reaction(
-                &self.base_url,
-                &self.data_dir,
-                &self.conversation_id,
-                &message_id,
-                emoji,
-            );
+        if let (Some(message_id), Some(emoji)) = (reply_message_id, reaction) {
+            if self.reactions.allows_verbose() || self.reactions.uses_full_messages() {
+                emit_feedback(
+                    self.reactions,
+                    self.full_message_progress.as_ref(),
+                    &self.base_url,
+                    &self.data_dir,
+                    &self.conversation_id,
+                    &message_id,
+                    emoji,
+                    snapshot.title.as_deref(),
+                );
+            }
         }
     }
 
@@ -2075,26 +2405,30 @@ impl BridgeClient {
         );
 
         if let Some(message_id) = reply_message_id {
-            // Verbose: per-tool-call emoji
-            if self.reactions.allows_verbose()
-                && let Some(emoji) = start_reaction
-            {
-                send_reaction(
-                    &self.base_url,
-                    &self.data_dir,
-                    &self.conversation_id,
-                    &message_id,
-                    emoji,
-                );
+            if let Some(emoji) = start_reaction {
+                if self.reactions.allows_verbose() || self.reactions.uses_full_messages() {
+                    emit_feedback(
+                        self.reactions,
+                        self.full_message_progress.as_ref(),
+                        &self.base_url,
+                        &self.data_dir,
+                        &self.conversation_id,
+                        &message_id,
+                        emoji,
+                        snapshot.title.as_deref(),
+                    );
+                }
             }
-            // Basic: warning on failure
-            if self.reactions.allows_basic() && failure {
-                send_reaction(
+            if (self.reactions.allows_basic() || self.reactions.uses_full_messages()) && failure {
+                emit_feedback(
+                    self.reactions,
+                    self.full_message_progress.as_ref(),
                     &self.base_url,
                     &self.data_dir,
                     &self.conversation_id,
                     &message_id,
                     ReactionEmoji::Warning,
+                    snapshot.title.as_deref(),
                 );
             }
         }
@@ -2399,10 +2733,10 @@ mod tests {
 
     use super::{
         BridgeState, PersistedSessionEntry, PromptReply, ReactionEmoji, ReplyMode, SessionRuntime,
-        ToolCallSnapshot, begin_session_turn, format_agent_error_message, infer_subagent_tool,
-        reaction_for_tool_start, reaction_target_message_id, remember_processed_message,
-        resolve_resume_session_selector, set_last_reply_message_id, split_markdown_reply,
-        split_reply_for_mode, truncate_display,
+        ToolCallSnapshot, active_turn_snapshot, begin_session_turn, format_agent_error_message,
+        full_message_description, infer_subagent_tool, reaction_for_tool_start,
+        reaction_target_message_id, remember_processed_message, resolve_resume_session_selector,
+        set_last_reply_message_id, split_markdown_reply, split_reply_for_mode, truncate_display,
     };
 
     #[test]
@@ -2625,6 +2959,63 @@ mod tests {
     }
 
     #[test]
+    fn full_message_description_truncates_long_execute_lines() {
+        let line = full_message_description(
+            ReactionEmoji::Execute,
+            Some(
+                "terminal: this is a very long command that should be truncated once it gets too wide for the mobile UI because horizontal scrolling feels awkward when the line keeps going and going and going",
+            ),
+        );
+
+        assert!(line.starts_with("💻 "));
+        assert!(line.contains("should be truncated"), "{line}");
+        assert!(line.ends_with("..."), "{line}");
+        assert_eq!(line.chars().count(), 125, "{line}");
+    }
+
+    #[test]
+    fn full_message_description_keeps_short_lines() {
+        let line = full_message_description(ReactionEmoji::Search, Some("search: Cargo.toml"));
+
+        assert_eq!(line, "🔍 search: Cargo.toml");
+    }
+
+    #[test]
+    fn full_message_batch_body_uses_one_line_per_event() {
+        let body = [
+            full_message_description(ReactionEmoji::Search, Some("search: Cargo.toml")),
+            full_message_description(ReactionEmoji::Execute, Some("run: cargo build -p xmtp-cli")),
+        ]
+        .join("\n");
+
+        assert!(body.contains('\n'));
+        assert_eq!(body.lines().count(), 2);
+    }
+
+    #[test]
+    fn begin_session_turn_records_metadata_for_debugging() {
+        let state = Arc::new(Mutex::new(BridgeState::default()));
+
+        begin_session_turn(
+            &state,
+            "session-1",
+            "msg-1",
+            "sender-1",
+            "intent",
+            "Selected action: retry",
+        );
+
+        let snapshot = active_turn_snapshot(&state, "session-1").expect("active turn snapshot");
+        assert_eq!(snapshot.source_message_id, "msg-1");
+        assert_eq!(snapshot.source_sender_inbox_id, "sender-1");
+        assert_eq!(snapshot.source_content_kind, "intent");
+        assert_eq!(snapshot.source_preview, "Selected action: retry");
+        assert!(snapshot.started_at_ms > 0);
+        assert_eq!(snapshot.started_tool_call_count, 0);
+        assert!(snapshot.tool_call_titles.is_empty());
+    }
+
+    #[test]
     fn remember_processed_message_skips_duplicates_case_insensitively() {
         let state = Arc::new(Mutex::new(BridgeState::default()));
 
@@ -2682,6 +3073,10 @@ mod tests {
                     full_text: "stale".to_owned(),
                     active_turn: Some(super::ActiveTurn {
                         source_message_id: "old-user-message".to_owned(),
+                        source_sender_inbox_id: "old-sender".to_owned(),
+                        source_content_kind: "text".to_owned(),
+                        source_preview: "old preview".to_owned(),
+                        started_at_ms: 1,
                         last_reply_message_id: Some("old-reply-message".to_owned()),
                         started_tool_calls: std::collections::HashSet::new(),
                     }),
@@ -2690,7 +3085,14 @@ mod tests {
             );
         }
 
-        begin_session_turn(&state, "session-1", "message-1");
+        begin_session_turn(
+            &state,
+            "session-1",
+            "message-1",
+            "sender-1",
+            "text",
+            "preview-1",
+        );
 
         let (chunks, full_text, last_reply_message_id) = state
             .lock()
@@ -2718,7 +3120,14 @@ mod tests {
     fn set_last_reply_message_id_updates_active_turn() {
         let state = Arc::new(Mutex::new(BridgeState::default()));
 
-        begin_session_turn(&state, "session-1", "message-1");
+        begin_session_turn(
+            &state,
+            "session-1",
+            "message-1",
+            "sender-1",
+            "text",
+            "preview-1",
+        );
         set_last_reply_message_id(&state, "session-1", "reply-1");
 
         let last_reply_message_id = state.lock().ok().and_then(|bridge_state| {
@@ -2736,6 +3145,10 @@ mod tests {
     fn reaction_target_falls_back_to_user_message_before_first_reply() {
         let turn = super::ActiveTurn {
             source_message_id: "user-1".to_owned(),
+            source_sender_inbox_id: "sender-1".to_owned(),
+            source_content_kind: "text".to_owned(),
+            source_preview: "preview-1".to_owned(),
+            started_at_ms: 1,
             last_reply_message_id: None,
             started_tool_calls: std::collections::HashSet::new(),
         };
@@ -2747,6 +3160,10 @@ mod tests {
     fn reaction_target_prefers_latest_reply_message() {
         let turn = super::ActiveTurn {
             source_message_id: "user-1".to_owned(),
+            source_sender_inbox_id: "sender-1".to_owned(),
+            source_content_kind: "text".to_owned(),
+            source_preview: "preview-1".to_owned(),
+            started_at_ms: 1,
             last_reply_message_id: Some("reply-1".to_owned()),
             started_tool_calls: std::collections::HashSet::new(),
         };
