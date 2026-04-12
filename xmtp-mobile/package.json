@@ -10,8 +10,7 @@
     "lint": "eslint src/ app/",
     "lint:fix": "eslint src/ app/ --fix",
     "format": "prettier --write 'src/**/*.{ts,tsx}' 'app/**/*.{ts,tsx}'",
-    "test": "jest",
-    "postinstall": "npx patch-package"
+    "test": "jest"
   },
   "dependencies": {
     "@shopify/flash-list": "^2.3.1",
@@ -30,7 +29,7 @@
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-native": "0.83.4",
-    "react-native-enriched-markdown": "^0.4.1",
+    "react-native-enriched-markdown": "file:../vendor/react-native-enriched-markdown",
     "react-native-keyboard-controller": "1.20.7",
     "react-native-paper": "^5.15.0",
     "react-native-reanimated": "4.2.1",

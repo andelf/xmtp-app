@@ -1,0 +1,4 @@
+[submodule "vendor/react-native-enriched-markdown"]
+	path = vendor/react-native-enriched-markdown
+	url = git@github.com:andelf/react-native-enriched-markdown.git
+	branch = xmtp-mobile
