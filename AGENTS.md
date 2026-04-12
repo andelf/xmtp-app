@@ -98,6 +98,10 @@ Integration tests use `DaemonProcess::start()` helper that spawns a real daemon 
 - Prefer creating a new commit by default; only use `git commit --amend` when the user explicitly asks for amend
 - AI-assisted commits end with: `Co-Authored-By: Claude <noreply@anthropic.com>`
 - Run `cargo build --workspace` before committing
+- Main repo pushes go to `origin/main`
+- `vendor/react-native-enriched-markdown` uses local branch `xmtp-mobile`, which tracks and should be pushed to `origin/xmtp-mobile`
+- When a task updates the submodule pointer in the main repo, treat it as incomplete until the submodule commit itself is pushed to its remote branch and `git submodule status` points at that pushed commit
+- Before pushing the submodule, verify branch wiring with `git -C vendor/react-native-enriched-markdown branch -vv` and `git -C vendor/react-native-enriched-markdown remote show origin`
 
 ## Known Architectural Debt
 
