@@ -390,6 +390,10 @@ struct SessionRuntime {
     tool_calls: HashMap<String, ToolCallSnapshot>,
     active_turn: Option<ActiveTurn>,
     stream_sent_count: usize,
+    /// Set to `true` when a turn is cancelled via ACP cancel notification.
+    /// While true, `session_notification` callbacks discard incoming chunks
+    /// and tool updates to prevent stale output from leaking into the next turn.
+    interrupted: bool,
 }
 
 #[derive(Debug, Default)]
@@ -435,6 +439,7 @@ enum ReactionEmoji {
     Subagent,
     Warning,
     Done,
+    Interrupted,
 }
 
 impl ReactionEmoji {
@@ -454,6 +459,7 @@ impl ReactionEmoji {
             Self::Subagent => "🤖",
             Self::Warning => "⚠️",
             Self::Done => "✅",
+            Self::Interrupted => "\u{23ED}\u{FE0F}",
         }
     }
 }
@@ -734,46 +740,44 @@ async fn ensure_acp_send_endpoint(data_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// SSE intake task: connects to the daemon SSE stream, receives user messages,
+/// and forwards them through the channel for the dispatch loop to process.
+/// Runs as a `spawn_local` task so the dispatch loop can process messages
+/// concurrently with prompt execution.
 #[allow(clippy::too_many_arguments)]
-async fn bridge_history_to_acp(
-    data_dir: &Path,
-    conversation_id: &str,
-    self_inbox_id: Option<&str>,
-    context_prefix: bool,
+async fn run_sse_intake(
+    data_dir: PathBuf,
+    conversation_id: String,
+    self_inbox_id: Option<String>,
     reactions: ReactionLevel,
-    reply_mode: ReplyMode,
-    actions: bool,
-    full_message_progress: Option<&FullMessageProgressSender>,
+    full_message_progress: Option<FullMessageProgressSender>,
     initial_status: StatusResponse,
-    conn: &acp::ClientSideConnection,
-    session_id: &acp::SessionId,
-    state: &Arc<Mutex<BridgeState>>,
-) -> anyhow::Result<()> {
+    state: Arc<Mutex<BridgeState>>,
+    msg_tx: mpsc::UnboundedSender<Box<HistoryItem>>,
+) {
     let mut retry_delay = Duration::from_millis(100);
     let mut reconnect_attempt: u64 = 0;
     let mut last_connection_state = initial_status.connection_state;
-
-    seed_seen_history_items(data_dir, conversation_id, self_inbox_id, state)
-        .await
-        .context("seed existing conversation history for ACP bridge")?;
+    let self_inbox_ref = self_inbox_id.as_deref();
+    let fmp_ref = full_message_progress.as_ref();
 
     loop {
-        let base_url = match daemon_base_url(data_dir) {
+        let base_url = match daemon_base_url(&data_dir) {
             Ok(base_url) => base_url,
             Err(err) => {
                 error!("ACP history base URL error: {err:#}");
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                 log_acp_event(
-                    data_dir,
-                    conversation_id,
+                    &data_dir,
+                    &conversation_id,
                     serde_json::json!({
                         "event": "error",
                         "message": format!("ACP history base URL error: {err:#}"),
                     }),
                 );
                 log_acp_event(
-                    data_dir,
-                    conversation_id,
+                    &data_dir,
+                    &conversation_id,
                     serde_json::json!({
                         "event": "sse_reconnect",
                         "attempt": reconnect_attempt,
@@ -782,8 +786,7 @@ async fn bridge_history_to_acp(
                 );
                 tokio::select! {
                     signal = tokio::signal::ctrl_c() => {
-                        signal.context("wait for ctrl-c")?;
-                        break;
+                        if signal.is_ok() { return; }
                     }
                     _ = sleep(retry_delay) => {}
                 }
@@ -791,7 +794,7 @@ async fn bridge_history_to_acp(
                 continue;
             }
         };
-        let url = format!("{base_url}/v1/conversations/{conversation_id}/events");
+        let url = format!("{base_url}/v1/conversations/{}/events", conversation_id);
         let response = match http_client().get(url).send().await {
             Ok(response) => match response.error_for_status() {
                 Ok(response) => response,
@@ -799,16 +802,16 @@ async fn bridge_history_to_acp(
                     error!("ACP history SSE status error: {err:#}");
                     reconnect_attempt = reconnect_attempt.saturating_add(1);
                     log_acp_event(
-                        data_dir,
-                        conversation_id,
+                        &data_dir,
+                        &conversation_id,
                         serde_json::json!({
                             "event": "error",
                             "message": format!("ACP history SSE status error: {err:#}"),
                         }),
                     );
                     log_acp_event(
-                        data_dir,
-                        conversation_id,
+                        &data_dir,
+                        &conversation_id,
                         serde_json::json!({
                             "event": "sse_reconnect",
                             "attempt": reconnect_attempt,
@@ -817,8 +820,7 @@ async fn bridge_history_to_acp(
                     );
                     tokio::select! {
                         signal = tokio::signal::ctrl_c() => {
-                            signal.context("wait for ctrl-c")?;
-                            break;
+                            if signal.is_ok() { return; }
                         }
                         _ = sleep(retry_delay) => {}
                     }
@@ -830,16 +832,16 @@ async fn bridge_history_to_acp(
                 error!("ACP history SSE connect error: {err:#}");
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                 log_acp_event(
-                    data_dir,
-                    conversation_id,
+                    &data_dir,
+                    &conversation_id,
                     serde_json::json!({
                         "event": "error",
                         "message": format!("ACP history SSE connect error: {err:#}"),
                     }),
                 );
                 log_acp_event(
-                    data_dir,
-                    conversation_id,
+                    &data_dir,
+                    &conversation_id,
                     serde_json::json!({
                         "event": "sse_reconnect",
                         "attempt": reconnect_attempt,
@@ -848,8 +850,7 @@ async fn bridge_history_to_acp(
                 );
                 tokio::select! {
                     signal = tokio::signal::ctrl_c() => {
-                        signal.context("wait for ctrl-c")?;
-                        break;
+                        if signal.is_ok() { return; }
                     }
                     _ = sleep(retry_delay) => {}
                 }
@@ -867,17 +868,16 @@ async fn bridge_history_to_acp(
         loop {
             tokio::select! {
                 signal = tokio::signal::ctrl_c() => {
-                    signal.context("wait for ctrl-c")?;
-                    return Ok(());
+                    if signal.is_ok() { return; }
                 }
                 _ = status_tick.tick() => {
-                    let status: StatusResponse = match http_get(data_dir, "/v1/status").await {
+                    let status: StatusResponse = match http_get(&data_dir, "/v1/status").await {
                         Ok(status) => status,
                         Err(err) => {
                             warn!("ACP daemon status poll failed: {err:#}");
                             log_acp_event(
-                                data_dir,
-                                conversation_id,
+                                &data_dir,
+                                &conversation_id,
                                 serde_json::json!({
                                     "event": "error",
                                     "message": format!("ACP daemon status poll failed: {err:#}"),
@@ -894,8 +894,8 @@ async fn bridge_history_to_acp(
                             "daemon status changed"
                         );
                         log_acp_event(
-                            data_dir,
-                            conversation_id,
+                            &data_dir,
+                            &conversation_id,
                             serde_json::json!({
                                 "event": "daemon_status",
                                 "daemon_state": status.daemon_state,
@@ -908,20 +908,15 @@ async fn bridge_history_to_acp(
                         last_connection_state = status.connection_state;
 
                         if should_force_reconnect {
-                            // Catch up on messages that may have arrived while the
-                            // daemon was disconnected.  We pull the full history and
-                            // forward any items not yet in seen_message_ids.
                             let catch_up_items = catch_up_unseen_items(
-                                data_dir,
-                                conversation_id,
-                                self_inbox_id,
-                                state,
+                                &data_dir,
+                                &conversation_id,
+                                self_inbox_ref,
+                                &state,
                             )
                             .await;
                             let catch_up_count = catch_up_items.len();
                             for item in catch_up_items {
-                                let source_message_id = item.message_id.clone();
-                                let t_received = std::time::Instant::now();
                                 info!(
                                     sender = %sender_short_id(&item.sender_inbox_id),
                                     message = %truncate_display(&item.content, 80),
@@ -930,95 +925,28 @@ async fn bridge_history_to_acp(
                                 if reactions.allows_basic() || reactions.uses_full_messages() {
                                     emit_feedback(
                                         reactions,
-                                        full_message_progress,
+                                        fmp_ref,
                                         &base_url,
-                                        data_dir,
-                                        conversation_id,
-                                        &source_message_id,
+                                        &data_dir,
+                                        &conversation_id,
+                                        &item.message_id,
                                         ReactionEmoji::Eyes,
                                         Some("received message"),
                                     );
                                 }
                                 log_acp_event(
-                                    data_dir,
-                                    conversation_id,
+                                    &data_dir,
+                                    &conversation_id,
                                     serde_json::json!({
                                         "event": "user_message",
-                                        "conversation_id": conversation_id,
+                                        "conversation_id": &conversation_id,
                                         "sender_inbox_id": item.sender_inbox_id.clone(),
                                         "content": item.content.clone(),
                                         "catch_up": true,
                                     }),
                                 );
-                                let reply = match prompt_agent(
-                                    data_dir,
-                                    conversation_id,
-                                    conn,
-                                    session_id,
-                                    state,
-                                    reply_mode,
-                                    item,
-                                    context_prefix,
-                                )
-                                .await
-                                {
-                                    Ok(reply) => reply,
-                                    Err(err) => {
-                                        error!("ACP agent error on catch-up: {err:#}");
-                                        log_acp_event(
-                                            data_dir,
-                                            conversation_id,
-                                            serde_json::json!({
-                                                "event": "error",
-                                                "message": format!("ACP catch-up prompt failed: {err:#}"),
-                                            }),
-                                        );
-                                        send_bridge_error_message(
-                                            data_dir,
-                                            conversation_id,
-                                            format_agent_error_message(&err),
-                                        )
-                                        .await;
-                                        continue;
-                                    }
-                                };
-                                if !reply.full_text.trim().is_empty() {
-                                    let reply_parts = split_reply_for_mode(&reply, reply_mode);
-                                    let final_parts = reply_parts.len();
-                                    let total_parts = reply.streamed_parts + final_parts;
-                                    info!(
-                                        total_parts,
-                                        streamed_parts = reply.streamed_parts,
-                                        final_parts,
-                                        bytes = reply.full_text.len(),
-                                        total_ms = t_received.elapsed().as_millis(),
-                                        "sending catch-up reply"
-                                    );
-                                    for reply_part in &reply_parts {
-                                        match send_reply_part(
-                                            data_dir,
-                                            conversation_id,
-                                            reply_part,
-                                            "xmtp_sent",
-                                            actions,
-                                        )
-                                        .await
-                                        {
-                                            Ok(message_id) => {
-                                                if reply_mode == ReplyMode::Stream {
-                                                    set_last_reply_message_id(
-                                                        state,
-                                                        session_id_str(session_id),
-                                                        &message_id,
-                                                    );
-                                                }
-                                            }
-                                            Err(err) => {
-                                                error!("ACP catch-up reply send failed: {err:#}");
-                                                break;
-                                            }
-                                        }
-                                    }
+                                if msg_tx.send(Box::new(item)).is_err() {
+                                    return; // dispatch loop dropped
                                 }
                             }
 
@@ -1028,8 +956,8 @@ async fn bridge_history_to_acp(
                                 "force reconnect SSE after connection restored"
                             );
                             log_acp_event(
-                                data_dir,
-                                conversation_id,
+                                &data_dir,
+                                &conversation_id,
                                 serde_json::json!({
                                     "event": "sse_reconnect",
                                     "attempt": reconnect_attempt,
@@ -1049,8 +977,8 @@ async fn bridge_history_to_acp(
                             warn!("ACP history SSE idle timeout ({SSE_IDLE_TIMEOUT_SECS}s), reconnecting");
                             reconnect_attempt = reconnect_attempt.saturating_add(1);
                             log_acp_event(
-                                data_dir,
-                                conversation_id,
+                                &data_dir,
+                                &conversation_id,
                                 serde_json::json!({
                                     "event": "sse_reconnect",
                                     "attempt": reconnect_attempt,
@@ -1064,8 +992,8 @@ async fn bridge_history_to_acp(
                     let Some(event) = event else {
                         reconnect_attempt = reconnect_attempt.saturating_add(1);
                         log_acp_event(
-                            data_dir,
-                            conversation_id,
+                            &data_dir,
+                            &conversation_id,
                             serde_json::json!({
                                 "event": "sse_reconnect",
                                 "attempt": reconnect_attempt,
@@ -1080,16 +1008,16 @@ async fn bridge_history_to_acp(
                             warn!("ACP history SSE read error: {err:#}");
                             reconnect_attempt = reconnect_attempt.saturating_add(1);
                             log_acp_event(
-                                data_dir,
-                                conversation_id,
+                                &data_dir,
+                                &conversation_id,
                                 serde_json::json!({
                                     "event": "error",
                                     "message": format!("ACP history SSE read error: {err:#}"),
                                 }),
                             );
                             log_acp_event(
-                                data_dir,
-                                conversation_id,
+                                &data_dir,
+                                &conversation_id,
                                 serde_json::json!({
                                     "event": "sse_reconnect",
                                     "attempt": reconnect_attempt,
@@ -1109,16 +1037,16 @@ async fn bridge_history_to_acp(
                                 warn!("ACP history SSE decode error: {err:#}");
                                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                                 log_acp_event(
-                                    data_dir,
-                                    conversation_id,
+                                    &data_dir,
+                                    &conversation_id,
                                     serde_json::json!({
                                         "event": "error",
                                         "message": format!("ACP history SSE decode error: {err:#}"),
                                     }),
                                 );
                                 log_acp_event(
-                                    data_dir,
-                                    conversation_id,
+                                    &data_dir,
+                                    &conversation_id,
                                     serde_json::json!({
                                         "event": "sse_reconnect",
                                         "attempt": reconnect_attempt,
@@ -1129,11 +1057,9 @@ async fn bridge_history_to_acp(
                             }
                         };
                     if let DaemonEventData::HistoryItem { item, .. } = envelope.payload
-                        && should_forward_item(&item, self_inbox_id)
-                        && remember_processed_message(state, &item.message_id)
+                        && should_forward_item(&item, self_inbox_ref)
+                        && remember_processed_message(&state, &item.message_id)
                     {
-                        let source_message_id = item.message_id.clone();
-                        let t_received = std::time::Instant::now();
                         info!(
                             sender = %sender_short_id(&item.sender_inbox_id),
                             message = %truncate_display(&item.content, 80),
@@ -1142,149 +1068,27 @@ async fn bridge_history_to_acp(
                         if reactions.allows_basic() || reactions.uses_full_messages() {
                             emit_feedback(
                                 reactions,
-                                full_message_progress,
+                                fmp_ref,
                                 &base_url,
-                                data_dir,
-                                conversation_id,
-                                &source_message_id,
+                                &data_dir,
+                                &conversation_id,
+                                &item.message_id,
                                 ReactionEmoji::Eyes,
                                 Some("received message"),
                             );
                         }
                         log_acp_event(
-                            data_dir,
-                            conversation_id,
+                            &data_dir,
+                            &conversation_id,
                             serde_json::json!({
                                 "event": "user_message",
-                                "conversation_id": conversation_id,
+                                "conversation_id": &conversation_id,
                                 "sender_inbox_id": item.sender_inbox_id.clone(),
                                 "content": item.content.clone(),
                             }),
                         );
-                        let reply = match prompt_agent(
-                            data_dir,
-                            conversation_id,
-                            conn,
-                            session_id,
-                            state,
-                            reply_mode,
-                            *item,
-                            context_prefix,
-                        )
-                        .await {
-                            Ok(reply) => reply,
-                            Err(err) => {
-                                error!("ACP prompt failed: {err:#}");
-                                log_acp_event(
-                                    data_dir,
-                                    conversation_id,
-                                    serde_json::json!({
-                                        "event": "error",
-                                        "message": format!("ACP prompt failed: {err:#}"),
-                                    }),
-                                );
-                                send_bridge_error_message(
-                                    data_dir,
-                                    conversation_id,
-                                    format_agent_error_message(&err),
-                                )
-                                .await;
-                                continue;
-                            }
-                        };
-                        if !reply.full_text.trim().is_empty() {
-                            let reply_parts = split_reply_for_mode(&reply, reply_mode);
-                            let final_parts = reply_parts.len();
-                            let total_parts = reply.streamed_parts + final_parts;
-                            info!(
-                                total_parts,
-                                streamed_parts = reply.streamed_parts,
-                                final_parts,
-                                bytes = reply.full_text.len(),
-                                total_ms = t_received.elapsed().as_millis(),
-                                "sending reply"
-                            );
-                            let mut send_failed = false;
-                            for (index, reply_part) in reply_parts.iter().enumerate() {
-                                let t_send = std::time::Instant::now();
-                                let message_id = match send_reply_part(
-                                    data_dir,
-                                    conversation_id,
-                                    reply_part,
-                                    "xmtp_sent",
-                                    actions,
-                                )
-                                .await {
-                                    Ok(message_id) => message_id,
-                                    Err(err) => {
-                                        error!("ACP reply send failed: {err:#}");
-                                        log_acp_event(
-                                            data_dir,
-                                            conversation_id,
-                                            serde_json::json!({
-                                                "event": "error",
-                                                "message": format!("ACP reply send failed: {err:#}"),
-                                            }),
-                                        );
-                                        send_failed = true;
-                                        break;
-                                    }
-                                };
-                                info!(
-                                    message_index = index + 1,
-                                    message_count = reply_parts.len(),
-                                    message_id = %sender_short_id(&message_id),
-                                    send_ms = t_send.elapsed().as_millis(),
-                                    "reply part sent"
-                                );
-                                log_acp_event(
-                                    data_dir,
-                                    conversation_id,
-                                    serde_json::json!({
-                                        "event": "xmtp_sent_meta",
-                                        "conversation_id": conversation_id,
-                                        "message_id": message_id,
-                                        "message_index": index + 1,
-                                        "message_count": reply_parts.len(),
-                                    }),
-                                );
-                                if reply_mode == ReplyMode::Stream {
-                                    set_last_reply_message_id(state, session_id_str(session_id), &message_id);
-                                }
-                            }
-                            if send_failed {
-                                continue;
-                            }
-                            if (reactions.allows_basic() || reactions.uses_full_messages())
-                                && reply_mode == ReplyMode::Stream
-                            {
-                                emit_feedback(
-                                    reactions,
-                                    full_message_progress,
-                                    &base_url,
-                                    data_dir,
-                                    conversation_id,
-                                    &source_message_id,
-                                    ReactionEmoji::Done,
-                                    Some("done"),
-                                );
-                            }
-                        } else {
-                            log_acp_event(
-                                data_dir,
-                                conversation_id,
-                                serde_json::json!({
-                                    "event": "warning",
-                                    "message": "agent returned empty reply",
-                                }),
-                            );
-                            warn!("agent returned empty reply");
-                            send_bridge_error_message(
-                                data_dir,
-                                conversation_id,
-                                "(no reply)".to_owned(),
-                            )
-                            .await;
+                        if msg_tx.send(item).is_err() {
+                            return; // dispatch loop dropped
                         }
                     }
                 }
@@ -1294,7 +1098,248 @@ async fn bridge_history_to_acp(
         sleep(retry_delay).await;
         retry_delay = next_retry_delay(retry_delay);
     }
+}
 
+#[allow(clippy::too_many_arguments)]
+async fn bridge_history_to_acp(
+    data_dir: &Path,
+    conversation_id: &str,
+    self_inbox_id: Option<&str>,
+    context_prefix: bool,
+    reactions: ReactionLevel,
+    reply_mode: ReplyMode,
+    actions: bool,
+    full_message_progress: Option<&FullMessageProgressSender>,
+    initial_status: StatusResponse,
+    conn: &acp::ClientSideConnection,
+    session_id: &acp::SessionId,
+    state: &Arc<Mutex<BridgeState>>,
+) -> anyhow::Result<()> {
+    seed_seen_history_items(data_dir, conversation_id, self_inbox_id, state)
+        .await
+        .context("seed existing conversation history for ACP bridge")?;
+
+    let base_url = daemon_base_url(data_dir)?;
+    let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<Box<HistoryItem>>();
+
+    tokio::task::spawn_local(run_sse_intake(
+        data_dir.to_owned(),
+        conversation_id.to_owned(),
+        self_inbox_id.map(str::to_owned),
+        reactions,
+        full_message_progress.cloned(),
+        initial_status,
+        state.clone(),
+        msg_tx,
+    ));
+
+    while let Some(item) = msg_rx.recv().await {
+        let mut current_item = *item;
+        let t_received = std::time::Instant::now();
+
+        // Prompt with interrupt support: if a new message arrives while
+        // prompt_agent is running, cancel the current turn and switch.
+        let mut cancel_retries = 0u8;
+        let reply = 'prompt: loop {
+            let t_prompt_start = std::time::Instant::now();
+            let prompt_fut = prompt_agent(
+                data_dir,
+                conversation_id,
+                conn,
+                session_id,
+                state,
+                reply_mode,
+                current_item.clone(),
+                context_prefix,
+            );
+            tokio::pin!(prompt_fut);
+
+            tokio::select! {
+                result = &mut prompt_fut => {
+                    match result {
+                        Ok(reply) => {
+                            // Detect cancelled prompt: agent returned empty in <100ms.
+                            // This happens when cancel poisons the next prompt via
+                            // promptQueueing race.  Retry up to 3 times with a short delay.
+                            if reply.full_text.trim().is_empty()
+                                && reply.streamed_parts == 0
+                                && t_prompt_start.elapsed().as_millis() < 100
+                                && cancel_retries < 3
+                            {
+                                cancel_retries += 1;
+                                info!(
+                                    elapsed_ms = t_prompt_start.elapsed().as_millis(),
+                                    retry = cancel_retries,
+                                    "prompt returned empty too fast, retrying after delay"
+                                );
+                                sleep(Duration::from_millis(300)).await;
+                                continue;
+                            }
+                            break 'prompt reply;
+                        }
+                        Err(err) => {
+                            error!("ACP prompt failed: {err:#}");
+                            log_acp_event(
+                                data_dir,
+                                conversation_id,
+                                serde_json::json!({
+                                    "event": "error",
+                                    "message": format!("ACP prompt failed: {err:#}"),
+                                }),
+                            );
+                            send_bridge_error_message(
+                                data_dir,
+                                conversation_id,
+                                format_agent_error_message(&err),
+                            )
+                            .await;
+                            break 'prompt PromptReply::default();
+                        }
+                    }
+                }
+                new_msg = msg_rx.recv() => {
+                    if let Some(new_item) = new_msg {
+                        // Interrupt the running turn: cancel, await completion,
+                        // then wait for the agent to finish cancel cleanup.
+                        // Without the delay the next prompt gets cancelled too
+                        // (see docs/pitfalls/acp-interrupt-cancel-race.md).
+                        interrupt_session_turn(state, session_id_str(session_id));
+                        let _ = conn.cancel(acp::CancelNotification::new(session_id.clone())).await;
+                        let _ = prompt_fut.await;
+                        sleep(Duration::from_millis(500)).await;
+                        send_reaction(
+                            &base_url,
+                            data_dir,
+                            conversation_id,
+                            &current_item.message_id,
+                            ReactionEmoji::Interrupted,
+                        );
+                        info!(
+                            interrupted_msg = %sender_short_id(&current_item.message_id),
+                            new_msg = %sender_short_id(&new_item.message_id),
+                            elapsed_ms = t_received.elapsed().as_millis(),
+                            "turn interrupted by new message"
+                        );
+                        log_acp_event(
+                            data_dir,
+                            conversation_id,
+                            serde_json::json!({
+                                "event": "turn_interrupted",
+                                "session_id": session_id_str(session_id),
+                                "interrupted_message_id": current_item.message_id,
+                                "replacement_message_id": new_item.message_id,
+                                "elapsed_ms": t_received.elapsed().as_millis() as u64,
+                            }),
+                        );
+                        // Drain channel, keep only the latest message.
+                        let mut latest = *new_item;
+                        while let Ok(even_newer) = msg_rx.try_recv() {
+                            latest = *even_newer;
+                        }
+                        current_item = latest;
+                        continue;
+                    } else {
+                        return Ok(());
+                    }
+                }
+            }
+        };
+
+        // Send reply parts.
+        if !reply.full_text.trim().is_empty() {
+            let reply_parts = split_reply_for_mode(&reply, reply_mode);
+            let final_parts = reply_parts.len();
+            let total_parts = reply.streamed_parts + final_parts;
+            info!(
+                total_parts,
+                streamed_parts = reply.streamed_parts,
+                final_parts,
+                bytes = reply.full_text.len(),
+                total_ms = t_received.elapsed().as_millis(),
+                "sending reply"
+            );
+            let mut send_failed = false;
+            for (index, reply_part) in reply_parts.iter().enumerate() {
+                let t_send = std::time::Instant::now();
+                let message_id = match send_reply_part(
+                    data_dir,
+                    conversation_id,
+                    reply_part,
+                    "xmtp_sent",
+                    actions,
+                )
+                .await
+                {
+                    Ok(message_id) => message_id,
+                    Err(err) => {
+                        error!("ACP reply send failed: {err:#}");
+                        log_acp_event(
+                            data_dir,
+                            conversation_id,
+                            serde_json::json!({
+                                "event": "error",
+                                "message": format!("ACP reply send failed: {err:#}"),
+                            }),
+                        );
+                        send_failed = true;
+                        break;
+                    }
+                };
+                info!(
+                    message_index = index + 1,
+                    message_count = reply_parts.len(),
+                    message_id = %sender_short_id(&message_id),
+                    send_ms = t_send.elapsed().as_millis(),
+                    "reply part sent"
+                );
+                log_acp_event(
+                    data_dir,
+                    conversation_id,
+                    serde_json::json!({
+                        "event": "xmtp_sent_meta",
+                        "conversation_id": conversation_id,
+                        "message_id": message_id,
+                        "message_index": index + 1,
+                        "message_count": reply_parts.len(),
+                    }),
+                );
+                if reply_mode == ReplyMode::Stream {
+                    set_last_reply_message_id(state, session_id_str(session_id), &message_id);
+                }
+            }
+            if !send_failed
+                && (reactions.allows_basic() || reactions.uses_full_messages())
+                && reply_mode == ReplyMode::Stream
+            {
+                emit_feedback(
+                    reactions,
+                    full_message_progress,
+                    &base_url,
+                    data_dir,
+                    conversation_id,
+                    &current_item.message_id,
+                    ReactionEmoji::Done,
+                    Some("done"),
+                );
+            }
+        } else if reply.streamed_parts == 0 {
+            log_acp_event(
+                data_dir,
+                conversation_id,
+                serde_json::json!({
+                    "event": "warning",
+                    "message": "agent returned empty reply",
+                }),
+            );
+            warn!("agent returned empty reply");
+            send_bridge_error_message(
+                data_dir,
+                conversation_id,
+                "(no reply)".to_owned(),
+            )
+            .await;
+        }
+    }
     Ok(())
 }
 
@@ -1753,6 +1798,7 @@ fn begin_session_turn(
         runtime.full_text.clear();
         runtime.tool_calls.clear();
         runtime.stream_sent_count = 0;
+        runtime.interrupted = false;
         runtime.active_turn = Some(ActiveTurn {
             source_message_id: source_message_id.to_owned(),
             source_sender_inbox_id: source_sender_inbox_id.to_owned(),
@@ -1771,6 +1817,19 @@ fn end_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str) {
     {
         runtime.active_turn = None;
         runtime.tool_calls.clear();
+    }
+}
+
+/// Mark the current turn as interrupted.  The `session_notification` callback
+/// will discard subsequent chunks and tool updates while the flag is set.
+/// `begin_session_turn` resets the flag when the next turn starts.
+fn interrupt_session_turn(state: &Arc<Mutex<BridgeState>>, session_id: &str) {
+    if let Ok(mut state) = state.lock()
+        && let Some(runtime) = state.sessions.get_mut(session_id)
+    {
+        runtime.interrupted = true;
+        runtime.chunks.clear();
+        runtime.full_text.clear();
     }
 }
 
@@ -2111,6 +2170,7 @@ fn full_message_description(emoji: ReactionEmoji, description: Option<&str>) -> 
         ReactionEmoji::Subagent => "subagent",
         ReactionEmoji::Warning => "warning",
         ReactionEmoji::Done => "done",
+        ReactionEmoji::Interrupted => "interrupted",
     });
     let label = match emoji {
         ReactionEmoji::Execute => truncate_display(label.trim(), 120),
@@ -2694,7 +2754,7 @@ impl acp::Client for BridgeClient {
                 };
                 if let Ok(mut state) = self.state.lock() {
                     let runtime = state.sessions.entry(session_id.clone()).or_default();
-                    if runtime.active_turn.is_none() {
+                    if runtime.active_turn.is_none() || runtime.interrupted {
                         return Ok(());
                     }
                     runtime.chunks.push(text.clone());
@@ -2705,7 +2765,7 @@ impl acp::Client for BridgeClient {
                 let flushed_text = if self.reply_mode == ReplyMode::Stream {
                     if let Ok(mut state) = self.state.lock() {
                         let runtime = state.sessions.entry(session_id.clone()).or_default();
-                        if runtime.active_turn.is_some() {
+                        if runtime.active_turn.is_some() && !runtime.interrupted {
                             Some(std::mem::take(&mut runtime.chunks).join(""))
                         } else {
                             None
@@ -2718,7 +2778,10 @@ impl acp::Client for BridgeClient {
                     // a tool call doesn't merge into one markdown paragraph.
                     if let Ok(mut state) = self.state.lock() {
                         let runtime = state.sessions.entry(session_id.clone()).or_default();
-                        if runtime.active_turn.is_some() && !runtime.chunks.is_empty() {
+                        if runtime.active_turn.is_some()
+                            && !runtime.interrupted
+                            && !runtime.chunks.is_empty()
+                        {
                             runtime.chunks.push("\n\n".to_owned());
                         }
                     }
