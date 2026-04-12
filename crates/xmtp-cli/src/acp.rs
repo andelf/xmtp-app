@@ -926,10 +926,12 @@ async fn run_sse_intake(
                                     emit_feedback(
                                         reactions,
                                         fmp_ref,
-                                        &base_url,
-                                        &data_dir,
-                                        &conversation_id,
-                                        &item.message_id,
+                                        FeedbackTarget {
+                                            base_url: &base_url,
+                                            data_dir: &data_dir,
+                                            conversation_id: &conversation_id,
+                                            message_id: &item.message_id,
+                                        },
                                         ReactionEmoji::Eyes,
                                         Some("received message"),
                                     );
@@ -1069,10 +1071,12 @@ async fn run_sse_intake(
                             emit_feedback(
                                 reactions,
                                 fmp_ref,
-                                &base_url,
-                                &data_dir,
-                                &conversation_id,
-                                &item.message_id,
+                                FeedbackTarget {
+                                    base_url: &base_url,
+                                    data_dir: &data_dir,
+                                    conversation_id: &conversation_id,
+                                    message_id: &item.message_id,
+                                },
                                 ReactionEmoji::Eyes,
                                 Some("received message"),
                             );
@@ -1314,10 +1318,12 @@ async fn bridge_history_to_acp(
                 emit_feedback(
                     reactions,
                     full_message_progress,
-                    &base_url,
-                    data_dir,
-                    conversation_id,
-                    &current_item.message_id,
+                    FeedbackTarget {
+                        base_url: &base_url,
+                        data_dir,
+                        conversation_id,
+                        message_id: &current_item.message_id,
+                    },
                     ReactionEmoji::Done,
                     Some("done"),
                 );
@@ -2174,13 +2180,17 @@ fn full_message_description(emoji: ReactionEmoji, description: Option<&str>) -> 
     format!("{} {}", emoji.as_str(), label)
 }
 
+struct FeedbackTarget<'a> {
+    base_url: &'a str,
+    data_dir: &'a Path,
+    conversation_id: &'a str,
+    message_id: &'a str,
+}
+
 fn emit_feedback(
     reaction_mode: ReactionLevel,
     full_message_progress: Option<&FullMessageProgressSender>,
-    base_url: &str,
-    data_dir: &Path,
-    conversation_id: &str,
-    message_id: &str,
+    target: FeedbackTarget<'_>,
     emoji: ReactionEmoji,
     description: Option<&str>,
 ) {
@@ -2191,7 +2201,13 @@ fn emit_feedback(
         }
         return;
     }
-    send_reaction(base_url, data_dir, conversation_id, message_id, emoji);
+    send_reaction(
+        target.base_url,
+        target.data_dir,
+        target.conversation_id,
+        target.message_id,
+        emoji,
+    );
 }
 
 async fn send_reply_part(
@@ -2429,10 +2445,12 @@ impl BridgeClient {
                 emit_feedback(
                     self.reactions,
                     self.full_message_progress.as_ref(),
-                    &self.base_url,
-                    &self.data_dir,
-                    &self.conversation_id,
-                    &message_id,
+                    FeedbackTarget {
+                        base_url: &self.base_url,
+                        data_dir: &self.data_dir,
+                        conversation_id: &self.conversation_id,
+                        message_id: &message_id,
+                    },
                     emoji,
                     snapshot.title.as_deref(),
                 );
@@ -2463,16 +2481,14 @@ impl BridgeClient {
 
                 let mut reply_message_id = None;
                 let mut should_emit_start = false;
-                if !ignored {
-                    if let Some(active_turn) = runtime.active_turn.as_mut() {
-                        reply_message_id = Some(reaction_target_message_id(active_turn).to_owned());
-                        if matches!(
-                            update.fields.status,
-                            Some(acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress)
-                        ) && active_turn.started_tool_calls.insert(tool_call_id)
-                        {
-                            should_emit_start = true;
-                        }
+                if !ignored && let Some(active_turn) = runtime.active_turn.as_mut() {
+                    reply_message_id = Some(reaction_target_message_id(active_turn).to_owned());
+                    if matches!(
+                        update.fields.status,
+                        Some(acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress)
+                    ) && active_turn.started_tool_calls.insert(tool_call_id)
+                    {
+                        should_emit_start = true;
                     }
                 }
 
@@ -2523,19 +2539,21 @@ impl BridgeClient {
         );
 
         if let Some(message_id) = reply_message_id {
-            if let Some(emoji) = start_reaction {
-                if self.reactions.allows_verbose() || self.reactions.uses_full_messages() {
-                    emit_feedback(
-                        self.reactions,
-                        self.full_message_progress.as_ref(),
-                        &self.base_url,
-                        &self.data_dir,
-                        &self.conversation_id,
-                        &message_id,
-                        emoji,
-                        snapshot.title.as_deref(),
-                    );
-                }
+            if let Some(emoji) = start_reaction
+                && (self.reactions.allows_verbose() || self.reactions.uses_full_messages())
+            {
+                emit_feedback(
+                    self.reactions,
+                    self.full_message_progress.as_ref(),
+                    FeedbackTarget {
+                        base_url: &self.base_url,
+                        data_dir: &self.data_dir,
+                        conversation_id: &self.conversation_id,
+                        message_id: &message_id,
+                    },
+                    emoji,
+                    snapshot.title.as_deref(),
+                );
             }
             // Emit deferred progress when the title transitions from generic
             // to specific (e.g. "Terminal" → "git status").  Skipped when
@@ -2552,10 +2570,12 @@ impl BridgeClient {
                 emit_feedback(
                     self.reactions,
                     self.full_message_progress.as_ref(),
-                    &self.base_url,
-                    &self.data_dir,
-                    &self.conversation_id,
-                    &message_id,
+                    FeedbackTarget {
+                        base_url: &self.base_url,
+                        data_dir: &self.data_dir,
+                        conversation_id: &self.conversation_id,
+                        message_id: &message_id,
+                    },
                     emoji,
                     snapshot.title.as_deref(),
                 );
@@ -2564,10 +2584,12 @@ impl BridgeClient {
                 emit_feedback(
                     self.reactions,
                     self.full_message_progress.as_ref(),
-                    &self.base_url,
-                    &self.data_dir,
-                    &self.conversation_id,
-                    &message_id,
+                    FeedbackTarget {
+                        base_url: &self.base_url,
+                        data_dir: &self.data_dir,
+                        conversation_id: &self.conversation_id,
+                        message_id: &message_id,
+                    },
                     ReactionEmoji::Warning,
                     snapshot.title.as_deref(),
                 );
