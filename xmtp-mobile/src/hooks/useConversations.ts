@@ -125,7 +125,7 @@ export function useConversations() {
               let text: string | undefined;
               if (isMarkdown) {
                 const preview = extractMarkdownPreview(raw);
-                text = preview ? `[md] ${preview}` : "[md]";
+                text = preview;
               } else {
                 text = raw;
               }

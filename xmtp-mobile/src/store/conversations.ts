@@ -114,11 +114,10 @@ export async function conversationToItem(
 
       const raw = extractNativeText(msg);
       if (raw) {
-        // Add [md] prefix for markdown content
         const isMarkdown = (msg as any).contentTypeId?.includes("markdown");
         if (isMarkdown) {
           const preview = extractMarkdownPreview(raw);
-          lastMessageText = preview ? `[md] ${preview}` : "[md]";
+          lastMessageText = preview;
         } else {
           lastMessageText = raw;
         }
