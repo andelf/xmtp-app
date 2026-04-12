@@ -16,6 +16,7 @@ import {
   TouchableWithoutFeedback,
   Linking,
   Share,
+  Platform,
 } from "react-native";
 import { Text, Icon } from "react-native-paper";
 import { EnrichedMarkdownText, type MarkdownStyle } from "react-native-enriched-markdown";
@@ -37,6 +38,8 @@ const MD_TABLE_COMMON = {
   borderRadius: 4,
 };
 
+const MONOSPACE_FONT = Platform.OS === "ios" ? "Menlo" : "monospace";
+
 const MD_STYLE_OWN: MarkdownStyle = {
   paragraph: { color: "#FFFFFF", fontSize: 14, marginBottom: 0, marginTop: 0 },
   h1: { color: "#FFFFFF", fontSize: 20, fontWeight: "700", marginBottom: 4, marginTop: 4 },
@@ -49,12 +52,14 @@ const MD_STYLE_OWN: MarkdownStyle = {
   em: { color: "#FFFFFF" },
   link: { color: "#D0BCFF", underline: true },
   code: {
+    fontFamily: MONOSPACE_FONT,
     color: "#D0BCFF",
     backgroundColor: "rgba(0,0,0,0.2)",
     fontSize: 13,
     borderColor: "transparent",
   },
   codeBlock: {
+    fontFamily: MONOSPACE_FONT,
     color: "#E6E1E5",
     backgroundColor: "rgba(0,0,0,0.25)",
     borderRadius: 6,
@@ -91,12 +96,14 @@ const MD_STYLE_OTHER: MarkdownStyle = {
   em: { color: "#E6E1E5" },
   link: { color: "#D0BCFF", underline: true },
   code: {
+    fontFamily: MONOSPACE_FONT,
     color: "#D0BCFF",
     backgroundColor: "rgba(255,255,255,0.08)",
     fontSize: 13,
     borderColor: "transparent",
   },
   codeBlock: {
+    fontFamily: MONOSPACE_FONT,
     color: "#E6E1E5",
     backgroundColor: "rgba(255,255,255,0.06)",
     borderRadius: 6,
