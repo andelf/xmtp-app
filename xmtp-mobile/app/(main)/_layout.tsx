@@ -22,7 +22,7 @@ export default function MainLayout() {
     useSettingsStore.getState().load();
   }, []);
   return (
-      <Stack
+    <Stack
       screenOptions={{
         headerStyle: { backgroundColor: "#1a1a2e" },
         headerTintColor: "#ffffff",

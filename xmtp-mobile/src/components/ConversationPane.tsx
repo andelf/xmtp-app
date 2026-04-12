@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, StyleSheet, Pressable, Animated, useWindowDimensions } from "react-native";
+import { View, StyleSheet, Pressable, Animated } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   KeyboardAwareScrollView,
@@ -44,7 +44,6 @@ export function ConversationPane({
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const keyboardHeight = useKeyboardState((state) => state.height);
-  const window = useWindowDimensions();
 
   const xmtpConversationId = conversationId ? (conversationId as unknown as ConversationId) : null;
   const readReceiptsEnabled = useSettingsStore((s) => s.readReceipts);
@@ -55,33 +54,7 @@ export function ConversationPane({
   const conversationTitle =
     conversation?.title ?? (conversationId ? shortenAddress(conversationId) : "Chat");
   const isGroup = conversation?.kind === "group";
-  const [composerHeight, setComposerHeight] = useState(0);
   const keyboardLift = isKeyboardVisible ? Math.max(keyboardHeight - insets.bottom, 0) : 0;
-
-  useEffect(() => {
-    console.log("[FoldDebug][Conversation]", {
-      screen: "conversation",
-      id: conversationId,
-      windowWidth: window.width,
-      windowHeight: window.height,
-      insetTop: insets.top,
-      insetBottom: insets.bottom,
-      keyboardVisible: isKeyboardVisible,
-      keyboardHeight,
-      keyboardLift,
-      composerHeight,
-    });
-  }, [
-    composerHeight,
-    conversationId,
-    insets.bottom,
-    insets.top,
-    isKeyboardVisible,
-    keyboardHeight,
-    keyboardLift,
-    window.height,
-    window.width,
-  ]);
 
   useEffect(() => {
     if (conversationId && !conversationsLoading && !conversation) {
@@ -368,15 +341,7 @@ export function ConversationPane({
       </View>
 
       <KeyboardStickyView offset={{ opened: insets.bottom }}>
-        <View
-          onLayout={(e) => {
-            const nextHeight = Math.ceil(e.nativeEvent.layout.height);
-            if (nextHeight !== composerHeight) {
-              setComposerHeight(nextHeight);
-            }
-          }}
-          style={[styles.composerShell, { paddingBottom: insets.bottom }]}
-        >
+        <View style={[styles.composerShell, { paddingBottom: insets.bottom }]}>
           <MessageInput
             value={draftText}
             onChangeText={handleDraftChange}
