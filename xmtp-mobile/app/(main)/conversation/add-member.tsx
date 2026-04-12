@@ -74,75 +74,75 @@ export default function AddMemberScreen() {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
         >
-        <Text variant="bodyMedium" style={styles.hint}>
-          Enter ETH addresses to add to the group.
-        </Text>
+          <Text variant="bodyMedium" style={styles.hint}>
+            Enter ETH addresses to add to the group.
+          </Text>
 
-        {/* Input row */}
-        <View style={styles.inputRow}>
-          <TextInput
-            mode="outlined"
-            value={input}
-            onChangeText={setInput}
-            placeholder="0x..."
-            placeholderTextColor="#938F99"
-            style={styles.input}
-            textColor="#E6E1E5"
-            outlineColor="#49454F"
-            activeOutlineColor="#6750A4"
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="done"
-            onSubmitEditing={handleAdd}
-          />
+          {/* Input row */}
+          <View style={styles.inputRow}>
+            <TextInput
+              mode="outlined"
+              value={input}
+              onChangeText={setInput}
+              placeholder="0x..."
+              placeholderTextColor="#938F99"
+              style={styles.input}
+              textColor="#E6E1E5"
+              outlineColor="#49454F"
+              activeOutlineColor="#6750A4"
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="done"
+              onSubmitEditing={handleAdd}
+            />
+            <Button
+              mode="contained"
+              onPress={handleAdd}
+              style={styles.addBtn}
+              labelStyle={styles.addBtnLabel}
+              disabled={!input.trim()}
+            >
+              Add
+            </Button>
+          </View>
+
+          {error && (
+            <Text variant="bodySmall" style={styles.errorText}>
+              {error}
+            </Text>
+          )}
+
+          {/* Pending addresses */}
+          {addresses.length > 0 && (
+            <View style={styles.chipContainer}>
+              {addresses.map((addr) => (
+                <Chip
+                  key={addr}
+                  onClose={() => handleRemoveAddress(addr)}
+                  closeIconAccessibilityLabel="Remove"
+                  style={styles.chip}
+                  textStyle={styles.chipText}
+                >
+                  {shortenAddress(addr)}
+                </Chip>
+              ))}
+            </View>
+          )}
+
+          {/* Confirm button */}
           <Button
             mode="contained"
-            onPress={handleAdd}
-            style={styles.addBtn}
-            labelStyle={styles.addBtnLabel}
-            disabled={!input.trim()}
+            onPress={handleConfirm}
+            disabled={addresses.length === 0 || saving}
+            style={styles.confirmBtn}
+            icon={saving ? undefined : "account-multiple-plus"}
           >
-            Add
+            {saving ? (
+              <ActivityIndicator size={16} color="#E6E1E5" />
+            ) : (
+              `Add ${addresses.length} Member${addresses.length !== 1 ? "s" : ""}`
+            )}
           </Button>
-        </View>
-
-        {error && (
-          <Text variant="bodySmall" style={styles.errorText}>
-            {error}
-          </Text>
-        )}
-
-        {/* Pending addresses */}
-        {addresses.length > 0 && (
-          <View style={styles.chipContainer}>
-            {addresses.map((addr) => (
-              <Chip
-                key={addr}
-                onClose={() => handleRemoveAddress(addr)}
-                closeIconAccessibilityLabel="Remove"
-                style={styles.chip}
-                textStyle={styles.chipText}
-              >
-                {shortenAddress(addr)}
-              </Chip>
-            ))}
-          </View>
-        )}
-
-        {/* Confirm button */}
-        <Button
-          mode="contained"
-          onPress={handleConfirm}
-          disabled={addresses.length === 0 || saving}
-          style={styles.confirmBtn}
-          icon={saving ? undefined : "account-multiple-plus"}
-        >
-          {saving ? (
-            <ActivityIndicator size={16} color="#E6E1E5" />
-          ) : (
-            `Add ${addresses.length} Member${addresses.length !== 1 ? "s" : ""}`
-          )}
-        </Button>
         </ScrollView>
       </View>
     </>

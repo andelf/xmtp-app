@@ -107,81 +107,81 @@ export default function SettingsScreen() {
       <View style={styles.container}>
         <ScreenHeader title="Settings" />
         <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        {/* Quick Reactions */}
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Quick Reactions
-        </Text>
-        <Text variant="bodySmall" style={styles.sectionHint}>
-          Customize the reactions shown on long-press. Supports emoji or short text (max{" "}
-          {MAX_REACTION_CHARS} chars).
-        </Text>
+          {/* Quick Reactions */}
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Quick Reactions
+          </Text>
+          <Text variant="bodySmall" style={styles.sectionHint}>
+            Customize the reactions shown on long-press. Supports emoji or short text (max{" "}
+            {MAX_REACTION_CHARS} chars).
+          </Text>
 
-        <View style={styles.reactionsGrid}>
-          {reactions.map((r, i) => (
-            <View key={i} style={styles.reactionItem}>
-              {editingIndex === i ? (
-                <TextInput
-                  value={editValue}
-                  onChangeText={(t) => {
-                    if (t.length <= MAX_REACTION_CHARS) setEditValue(t);
-                  }}
-                  onBlur={handleFinishEdit}
-                  onSubmitEditing={handleFinishEdit}
-                  autoFocus
-                  style={styles.reactionInput}
-                  contentStyle={styles.reactionInputContent}
-                  mode="outlined"
-                  outlineColor="#49454F"
-                  activeOutlineColor="#D0BCFF"
-                  textColor="#E6E1E5"
-                  maxLength={MAX_REACTION_CHARS}
-                  dense
+          <View style={styles.reactionsGrid}>
+            {reactions.map((r, i) => (
+              <View key={i} style={styles.reactionItem}>
+                {editingIndex === i ? (
+                  <TextInput
+                    value={editValue}
+                    onChangeText={(t) => {
+                      if (t.length <= MAX_REACTION_CHARS) setEditValue(t);
+                    }}
+                    onBlur={handleFinishEdit}
+                    onSubmitEditing={handleFinishEdit}
+                    autoFocus
+                    style={styles.reactionInput}
+                    contentStyle={styles.reactionInputContent}
+                    mode="outlined"
+                    outlineColor="#49454F"
+                    activeOutlineColor="#D0BCFF"
+                    textColor="#E6E1E5"
+                    maxLength={MAX_REACTION_CHARS}
+                    dense
+                  />
+                ) : (
+                  <Pressable style={styles.reactionBubble} onPress={() => handleStartEdit(i)}>
+                    <Text style={styles.reactionText}>{r}</Text>
+                  </Pressable>
+                )}
+                <IconButton
+                  icon="close-circle"
+                  size={16}
+                  iconColor="#938F99"
+                  style={styles.removeBtn}
+                  onPress={() => handleRemove(i)}
+                  disabled={reactions.length <= 1}
                 />
-              ) : (
-                <Pressable style={styles.reactionBubble} onPress={() => handleStartEdit(i)}>
-                  <Text style={styles.reactionText}>{r}</Text>
-                </Pressable>
-              )}
-              <IconButton
-                icon="close-circle"
-                size={16}
-                iconColor="#938F99"
-                style={styles.removeBtn}
-                onPress={() => handleRemove(i)}
-                disabled={reactions.length <= 1}
-              />
-            </View>
-          ))}
+              </View>
+            ))}
 
-          {reactions.length < MAX_REACTION_SLOTS && (
-            <Pressable style={styles.addBubble} onPress={handleAdd}>
-              <Text style={styles.addText}>+</Text>
-            </Pressable>
-          )}
-        </View>
+            {reactions.length < MAX_REACTION_SLOTS && (
+              <Pressable style={styles.addBubble} onPress={handleAdd}>
+                <Text style={styles.addText}>+</Text>
+              </Pressable>
+            )}
+          </View>
 
-        <Button
-          mode="text"
-          onPress={handleReset}
-          textColor="#938F99"
-          compact
-          style={styles.resetBtn}
-        >
-          Reset to defaults
-        </Button>
+          <Button
+            mode="text"
+            onPress={handleReset}
+            textColor="#938F99"
+            compact
+            style={styles.resetBtn}
+          >
+            Reset to defaults
+          </Button>
 
-        <Divider style={styles.divider} />
+          <Divider style={styles.divider} />
 
-        {/* Logout */}
-        <Button
-          mode="outlined"
-          onPress={handleLogout}
-          textColor="#F2B8B5"
-          style={styles.logoutBtn}
-          icon="logout"
-        >
-          Logout
-        </Button>
+          {/* Logout */}
+          <Button
+            mode="outlined"
+            onPress={handleLogout}
+            textColor="#F2B8B5"
+            style={styles.logoutBtn}
+            icon="logout"
+          >
+            Logout
+          </Button>
         </ScrollView>
       </View>
     </>

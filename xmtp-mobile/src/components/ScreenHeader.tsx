@@ -8,11 +8,7 @@ type ScreenHeaderProps = {
   onBackPress?: () => void;
 };
 
-export function ScreenHeader({
-  title,
-  canGoBack = true,
-  onBackPress,
-}: ScreenHeaderProps) {
+export function ScreenHeader({ title, canGoBack = true, onBackPress }: ScreenHeaderProps) {
   const router = useRouter();
 
   const handleBack = useCallback(() => {

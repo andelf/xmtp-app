@@ -28,49 +28,49 @@ export default function AboutScreen() {
       <View style={styles.container}>
         <ScreenHeader title="About" />
         <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        {/* App identity */}
-        <View style={styles.logoSection}>
-          <Text variant="headlineMedium" style={styles.appName}>
-            XMTP Messenger
+          {/* App identity */}
+          <View style={styles.logoSection}>
+            <Text variant="headlineMedium" style={styles.appName}>
+              XMTP Messenger
+            </Text>
+            <Text variant="bodySmall" style={styles.version}>
+              v0.1.0 ({gitCommit})
+            </Text>
+          </View>
+
+          <Divider style={styles.divider} />
+
+          {/* Account info */}
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Account
           </Text>
-          <Text variant="bodySmall" style={styles.version}>
-            v0.1.0 ({gitCommit})
+          <InfoRow label="Wallet Address" value={address} />
+          <InfoRow label="Inbox ID" value={inboxId} />
+
+          <Divider style={styles.divider} />
+
+          {/* Network */}
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Network
           </Text>
-        </View>
+          <InfoRow label="Environment" value={env} />
+          <InfoRow label="Protocol" value="XMTP v3 (MLS)" />
 
-        <Divider style={styles.divider} />
+          <Divider style={styles.divider} />
 
-        {/* Account info */}
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Account
-        </Text>
-        <InfoRow label="Wallet Address" value={address} />
-        <InfoRow label="Inbox ID" value={inboxId} />
+          {/* Build */}
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Build
+          </Text>
+          <InfoRow label="Commit" value={gitCommit} />
+          {buildTime ? <InfoRow label="Build Time" value={buildTime} /> : null}
 
-        <Divider style={styles.divider} />
+          <Divider style={styles.divider} />
 
-        {/* Network */}
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Network
-        </Text>
-        <InfoRow label="Environment" value={env} />
-        <InfoRow label="Protocol" value="XMTP v3 (MLS)" />
-
-        <Divider style={styles.divider} />
-
-        {/* Build */}
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Build
-        </Text>
-        <InfoRow label="Commit" value={gitCommit} />
-        {buildTime ? <InfoRow label="Build Time" value={buildTime} /> : null}
-
-        <Divider style={styles.divider} />
-
-        {/* Credits */}
-        <Text variant="bodySmall" style={styles.credits}>
-          Built with XMTP React Native SDK
-        </Text>
+          {/* Credits */}
+          <Text variant="bodySmall" style={styles.credits}>
+            Built with XMTP React Native SDK
+          </Text>
         </ScrollView>
       </View>
     </>

@@ -63,44 +63,48 @@ export default function DmDetailScreen() {
       <View style={styles.container}>
         <ScreenHeader title="DM Details" />
         <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        {/* Peer info */}
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Peer
-        </Text>
-
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color="#6750A4" />
-            <Text variant="bodySmall" style={styles.loadingText}>
-              Loading member info...
-            </Text>
-          </View>
-        ) : error ? (
-          <Text variant="bodySmall" style={styles.errorText}>
-            {error}
+          {/* Peer info */}
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Peer
           </Text>
-        ) : (
-          <InfoRow label="Peer Address" value={peerAddress} numberOfLines={3} />
-        )}
 
-        <InfoRow
-          label="Peer Inbox ID"
-          value={conversation?.peerInboxId ?? null}
-          numberOfLines={3}
-        />
+          {loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color="#6750A4" />
+              <Text variant="bodySmall" style={styles.loadingText}>
+                Loading member info...
+              </Text>
+            </View>
+          ) : error ? (
+            <Text variant="bodySmall" style={styles.errorText}>
+              {error}
+            </Text>
+          ) : (
+            <InfoRow label="Peer Address" value={peerAddress} numberOfLines={3} />
+          )}
 
-        <Divider style={styles.divider} />
+          <InfoRow
+            label="Peer Inbox ID"
+            value={conversation?.peerInboxId ?? null}
+            numberOfLines={3}
+          />
 
-        {/* Conversation metadata */}
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Conversation
-        </Text>
-        <InfoRow label="Conversation ID" value={id ?? null} numberOfLines={3} />
-        <InfoRow label="Topic" value={(conversation?.topic as string) ?? null} numberOfLines={3} />
-        <InfoRow
-          label="Created At"
-          value={conversation ? formatDateTime(conversation.createdAt) : null}
-        />
+          <Divider style={styles.divider} />
+
+          {/* Conversation metadata */}
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Conversation
+          </Text>
+          <InfoRow label="Conversation ID" value={id ?? null} numberOfLines={3} />
+          <InfoRow
+            label="Topic"
+            value={(conversation?.topic as string) ?? null}
+            numberOfLines={3}
+          />
+          <InfoRow
+            label="Created At"
+            value={conversation ? formatDateTime(conversation.createdAt) : null}
+          />
         </ScrollView>
       </View>
     </>

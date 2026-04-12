@@ -292,10 +292,7 @@ export function ConversationPane({
     <View style={styles.container}>
       <Appbar.Header style={styles.appbar} elevated>
         {showBackButton ? (
-          <Appbar.BackAction
-            onPress={onBackPress ?? (() => router.back())}
-            color="#E6E1E5"
-          />
+          <Appbar.BackAction onPress={onBackPress ?? (() => router.back())} color="#E6E1E5" />
         ) : null}
         <Appbar.Content title={conversationTitle} titleStyle={styles.appbarTitle} />
         <Appbar.Action

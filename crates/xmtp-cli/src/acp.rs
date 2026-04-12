@@ -1332,12 +1332,7 @@ async fn bridge_history_to_acp(
                 }),
             );
             warn!("agent returned empty reply");
-            send_bridge_error_message(
-                data_dir,
-                conversation_id,
-                "(no reply)".to_owned(),
-            )
-            .await;
+            send_bridge_error_message(data_dir, conversation_id, "(no reply)".to_owned()).await;
         }
     }
     Ok(())
@@ -2481,7 +2476,13 @@ impl BridgeClient {
                     }
                 }
 
-                (snapshot, reply_message_id, should_emit_start, ignored, title_became_specific)
+                (
+                    snapshot,
+                    reply_message_id,
+                    should_emit_start,
+                    ignored,
+                    title_became_specific,
+                )
             } else {
                 (ToolCallSnapshot::default(), None, false, false, false)
             };
@@ -2547,8 +2548,7 @@ impl BridgeClient {
                     || (matches!(update.fields.status, Some(acp::ToolCallStatus::Completed))
                         && is_generic_tool_title(snapshot.title.as_deref())));
             if deferred_emit {
-                let emoji = reaction_for_tool_start(&snapshot)
-                    .unwrap_or(ReactionEmoji::Tool);
+                let emoji = reaction_for_tool_start(&snapshot).unwrap_or(ReactionEmoji::Tool);
                 emit_feedback(
                     self.reactions,
                     self.full_message_progress.as_ref(),

@@ -253,93 +253,93 @@ export default function GroupDetailScreen() {
       <View style={styles.container}>
         <ScreenHeader title="Group Details" />
         <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        {/* Header: Avatar + Name + Description */}
-        <View style={styles.header}>
-          <Avatar.Text
-            size={64}
-            label={(info?.name || "G").slice(0, 2).toUpperCase()}
-            style={styles.avatar}
-            labelStyle={styles.avatarLabel}
+          {/* Header: Avatar + Name + Description */}
+          <View style={styles.header}>
+            <Avatar.Text
+              size={64}
+              label={(info?.name || "G").slice(0, 2).toUpperCase()}
+              style={styles.avatar}
+              labelStyle={styles.avatarLabel}
+            />
+          </View>
+
+          <EditableField
+            label="Group Name"
+            value={info?.name || "Unnamed Group"}
+            placeholder="Enter group name"
+            editable={canEditName}
+            onSave={handleSaveName}
           />
-        </View>
 
-        <EditableField
-          label="Group Name"
-          value={info?.name || "Unnamed Group"}
-          placeholder="Enter group name"
-          editable={canEditName}
-          onSave={handleSaveName}
-        />
-
-        <EditableField
-          label="Description"
-          value={info?.description || ""}
-          placeholder="Add a description"
-          editable={canEditDescription}
-          multiline
-          onSave={handleSaveDescription}
-        />
-
-        <Text variant="bodySmall" style={styles.memberCount}>
-          {members.length} member{members.length !== 1 ? "s" : ""}
-        </Text>
-
-        <Divider style={styles.divider} />
-
-        {/* Members */}
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Members
-        </Text>
-
-        {canAddMember && (
-          <List.Item
-            title="Add Member"
-            titleStyle={styles.addMemberTitle}
-            left={(props) => <List.Icon {...props} icon="account-plus" color="#6750A4" />}
-            onPress={handleAddMember}
-            style={styles.addMemberRow}
+          <EditableField
+            label="Description"
+            value={info?.description || ""}
+            placeholder="Add a description"
+            editable={canEditDescription}
+            multiline
+            onSave={handleSaveDescription}
           />
-        )}
 
-        {sortedMembers.map((member) => (
-          <MemberRow
-            key={member.inboxId}
-            member={member}
-            isCreator={member.inboxId === creatorInboxId}
-            isMe={member.inboxId === myInboxId}
-            onPress={() => handleCopyAddress(member.address)}
-            onLongPress={() => handleMemberLongPress(member)}
+          <Text variant="bodySmall" style={styles.memberCount}>
+            {members.length} member{members.length !== 1 ? "s" : ""}
+          </Text>
+
+          <Divider style={styles.divider} />
+
+          {/* Members */}
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Members
+          </Text>
+
+          {canAddMember && (
+            <List.Item
+              title="Add Member"
+              titleStyle={styles.addMemberTitle}
+              left={(props) => <List.Icon {...props} icon="account-plus" color="#6750A4" />}
+              onPress={handleAddMember}
+              style={styles.addMemberRow}
+            />
+          )}
+
+          {sortedMembers.map((member) => (
+            <MemberRow
+              key={member.inboxId}
+              member={member}
+              isCreator={member.inboxId === creatorInboxId}
+              isMe={member.inboxId === myInboxId}
+              onPress={() => handleCopyAddress(member.address)}
+              onLongPress={() => handleMemberLongPress(member)}
+            />
+          ))}
+
+          <Divider style={styles.divider} />
+
+          {/* Group Info */}
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            Group Info
+          </Text>
+
+          {creatorMember && <InfoRow label="Created by" value={creatorMember.address} />}
+          <InfoRow
+            label="Created At"
+            value={conversation ? formatDateTime(conversation.createdAt) : null}
           />
-        ))}
+          <InfoRow label="Conversation ID" value={id ?? null} numberOfLines={3} />
 
-        <Divider style={styles.divider} />
+          <Divider style={styles.divider} />
 
-        {/* Group Info */}
-        <Text variant="titleMedium" style={styles.sectionTitle}>
-          Group Info
-        </Text>
+          {/* Leave Group */}
+          <Button
+            mode="outlined"
+            textColor="#F2B8B5"
+            style={styles.leaveButton}
+            icon="logout"
+            onPress={handleLeaveGroup}
+          >
+            Leave Group
+          </Button>
 
-        {creatorMember && <InfoRow label="Created by" value={creatorMember.address} />}
-        <InfoRow
-          label="Created At"
-          value={conversation ? formatDateTime(conversation.createdAt) : null}
-        />
-        <InfoRow label="Conversation ID" value={id ?? null} numberOfLines={3} />
-
-        <Divider style={styles.divider} />
-
-        {/* Leave Group */}
-        <Button
-          mode="outlined"
-          textColor="#F2B8B5"
-          style={styles.leaveButton}
-          icon="logout"
-          onPress={handleLeaveGroup}
-        >
-          Leave Group
-        </Button>
-
-        <View style={styles.bottomSpacer} />
+          <View style={styles.bottomSpacer} />
         </ScrollView>
       </View>
 
