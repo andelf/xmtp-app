@@ -2,7 +2,7 @@
  * Conversations list page -- displays all DM and Group conversations.
  */
 import React, { useCallback, useMemo, useState } from "react";
-import { View, StyleSheet, RefreshControl, ActivityIndicator } from "react-native";
+import { View, StyleSheet, RefreshControl, ActivityIndicator, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Appbar, Menu, Text, Button, Divider } from "react-native-paper";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
@@ -96,8 +96,19 @@ export default function ConversationsScreen() {
   const storeError = useConversationStore((s) => s.error);
 
   const insets = useSafeAreaInsets();
+  const window = useWindowDimensions();
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
+
+  React.useEffect(() => {
+    console.log("[FoldDebug][Conversations]", {
+      screen: "conversations",
+      windowWidth: window.width,
+      windowHeight: window.height,
+      insetTop: insets.top,
+      insetBottom: insets.bottom,
+    });
+  }, [insets.bottom, insets.top, window.height, window.width]);
 
   // Pull-to-refresh handler
   const handleRefresh = useCallback(async () => {

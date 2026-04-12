@@ -6,13 +6,16 @@
  * behavior="translate-with-padding" (purpose-built for chat screens).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, StyleSheet, Keyboard, Pressable, Animated } from "react-native";
+import { View, StyleSheet, Pressable, Animated, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { ActivityIndicator, IconButton, Text } from "react-native-paper";
+import {
+  KeyboardAwareScrollView,
+  KeyboardStickyView,
+  useKeyboardState,
+} from "react-native-keyboard-controller";
+import { ActivityIndicator, Appbar, Text } from "react-native-paper";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
-import { useHeaderHeight } from "@react-navigation/elements";
 import type { ConversationId } from "@xmtp/react-native-sdk";
 
 import { useConversationStore } from "../../../src/store/conversations";
@@ -30,12 +33,13 @@ import { shortenAddress } from "../../../src/utils/address";
 import { resolveAddresses } from "../../../src/utils/addressLookup";
 
 const EMPTY_MESSAGES: MessageItem[] = [];
-
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const headerHeight = useHeaderHeight();
   const insets = useSafeAreaInsets();
+  const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardHeight = useKeyboardState((state) => state.height);
+  const window = useWindowDimensions();
 
   const conversationId = id ? (id as unknown as ConversationId) : null;
 
@@ -46,6 +50,33 @@ export default function ConversationScreen() {
   const conversation = useConversationStore((s) => (id ? (s.items.get(id) ?? null) : null));
   const conversationTitle = conversation?.title ?? (id ? shortenAddress(id) : "Chat");
   const isGroup = conversation?.kind === "group";
+  const [composerHeight, setComposerHeight] = useState(0);
+  const keyboardLift = isKeyboardVisible ? Math.max(keyboardHeight - insets.bottom, 0) : 0;
+
+  useEffect(() => {
+    console.log("[FoldDebug][Conversation]", {
+      screen: "conversation",
+      id,
+      windowWidth: window.width,
+      windowHeight: window.height,
+      insetTop: insets.top,
+      insetBottom: insets.bottom,
+      keyboardVisible: isKeyboardVisible,
+      keyboardHeight,
+      keyboardLift,
+      composerHeight,
+    });
+  }, [
+    composerHeight,
+    id,
+    insets.bottom,
+    insets.top,
+    isKeyboardVisible,
+    keyboardHeight,
+    keyboardLift,
+    window.height,
+    window.width,
+  ]);
 
   // Guard: redirect to list if conversation was removed (e.g. left group)
   // Skip while store is still loading to avoid false redirect on cold start.
@@ -85,7 +116,6 @@ export default function ConversationScreen() {
   }, [id]);
 
   const listRef = useRef<any>(null);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const isAtBottomRef = useRef(true);
 
   // "New messages" floating chip
@@ -114,18 +144,10 @@ export default function ConversationScreen() {
 
   // Scroll to bottom when keyboard appears (only if already at bottom)
   useEffect(() => {
-    const showSub = Keyboard.addListener("keyboardDidShow", () => {
-      setKeyboardVisible(true);
-      if (isAtBottomRef.current) scrollToBottom();
-    });
-    const hideSub = Keyboard.addListener("keyboardDidHide", () => {
-      setKeyboardVisible(false);
-    });
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
+    if (isKeyboardVisible && isAtBottomRef.current) {
+      scrollToBottom();
+    }
+  }, [isKeyboardVisible, scrollToBottom]);
 
   // Track scroll position — inverted list: offset near 0 means at bottom
   const handleScroll = useCallback(
@@ -264,6 +286,20 @@ export default function ConversationScreen() {
     [isGroup, messages, handleReply, handleRetry]
   );
 
+  const renderScrollComponent = useCallback(
+    (props: any) => (
+      <KeyboardAwareScrollView
+        {...props}
+        bottomOffset={0}
+        extraKeyboardSpace={0}
+        keyboardDismissMode="interactive"
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustContentInsets={false}
+      />
+    ),
+    []
+  );
+
   const renderFooter = useCallback(() => {
     if (!loadingMore) return null;
     return (
@@ -273,52 +309,48 @@ export default function ConversationScreen() {
     );
   }, [loadingMore]);
 
-  const headerRight = useCallback(
-    () => (
-      <IconButton
-        icon="information-outline"
-        iconColor="#E6E1E5"
-        size={22}
-        onPress={() => {
-          if (!id) return;
-          const route = isGroup ? "conversation/group-detail" : "conversation/dm-detail";
-          router.push({ pathname: `/(main)/${route}`, params: { id } });
-        }}
-      />
-    ),
-    [id, isGroup, router]
+  const renderListHeader = useCallback(
+    () => <View style={{ height: keyboardLift }} />,
+    [keyboardLift]
   );
 
   return (
     <>
       <Stack.Screen
         options={{
-          headerShown: true,
-          title: conversationTitle,
-          headerStyle: { backgroundColor: "#1a1a2e" },
-          headerTintColor: "#E6E1E5",
-          headerTitleStyle: { fontWeight: "600", fontSize: 18 },
-          headerRight,
+          headerShown: false,
         }}
       />
 
-      <KeyboardAvoidingView
-        behavior="translate-with-padding"
-        keyboardVerticalOffset={headerHeight}
-        style={styles.container}
-      >
+      <View style={styles.container}>
+        <Appbar.Header style={styles.appbar} elevated>
+          <Appbar.BackAction onPress={() => router.back()} color="#E6E1E5" />
+          <Appbar.Content title={conversationTitle} titleStyle={styles.appbarTitle} />
+          <Appbar.Action
+            icon="information-outline"
+            iconColor="#E6E1E5"
+            onPress={() => {
+              if (!id) return;
+              const route = isGroup ? "conversation/group-detail" : "conversation/dm-detail";
+              router.push({ pathname: `/(main)/${route}`, params: { id } });
+            }}
+          />
+        </Appbar.Header>
+
         {/* Message list — flex:1 so it shrinks when input bar grows */}
         <View style={{ flex: 1 }}>
           <FlashList
             ref={listRef}
             data={messages}
             renderItem={renderItem}
+            renderScrollComponent={renderScrollComponent}
             keyExtractor={(item) => item.id as string}
             inverted
             onScroll={handleScroll}
             scrollEventThrottle={100}
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.3}
+            ListHeaderComponent={renderListHeader}
             ListFooterComponent={renderFooter}
             contentContainerStyle={styles.listContent}
           />
@@ -338,19 +370,29 @@ export default function ConversationScreen() {
           )}
         </View>
 
-        {/* Input bar — only pad for nav bar when keyboard is closed */}
-        <View
-          style={{ paddingBottom: keyboardVisible ? 0 : insets.bottom, backgroundColor: "#1a1a2e" }}
-        >
-          <MessageInput
-            value={draftText}
-            onChangeText={handleDraftChange}
-            onSend={handleSend}
-            replyTo={replyTo}
-            onCancelReply={handleCancelReply}
-          />
-        </View>
-      </KeyboardAvoidingView>
+        <KeyboardStickyView offset={{ opened: insets.bottom }}>
+          <View
+            onLayout={(e) => {
+              const nextHeight = Math.ceil(e.nativeEvent.layout.height);
+              if (nextHeight !== composerHeight) {
+                setComposerHeight(nextHeight);
+              }
+            }}
+            style={{
+              paddingBottom: insets.bottom,
+              backgroundColor: "#1a1a2e",
+            }}
+          >
+            <MessageInput
+              value={draftText}
+              onChangeText={handleDraftChange}
+              onSend={handleSend}
+              replyTo={replyTo}
+              onCancelReply={handleCancelReply}
+            />
+          </View>
+        </KeyboardStickyView>
+      </View>
     </>
   );
 }
@@ -359,6 +401,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#1a1a2e",
+  },
+  appbar: {
+    backgroundColor: "#1a1a2e",
+  },
+  appbarTitle: {
+    color: "#E6E1E5",
+    fontWeight: "600",
+    fontSize: 18,
   },
   listContent: {
     paddingVertical: 8,

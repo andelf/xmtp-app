@@ -145,6 +145,49 @@ const isKeyboardVisible = useKeyboardState((s) => s.isVisible);
 
 Without this, the input bar floats 44dp above the keyboard when it's open.
 
+## Foldable Debugging Notes
+
+Two extra pitfalls showed up while debugging the Samsung foldable layout:
+
+- `react-native-paper` `Appbar.Header` already applies `safeAreaInsets.top` internally on Android. Wrapping it in another container with `paddingTop: insets.top` causes the exact "large blank strip above the header" regression we saw on the unfolded screen.
+- If the composer already sits in normal flex layout and is then animated with `KeyboardStickyView`, do not also reserve an extra spacer in the message list for the composer height. That double-counts the composer and makes the newest message float above the bottom even when the keyboard is hidden.
+- `KeyboardStickyView` only moves the composer. It does not automatically create extra scroll range for an inverted `FlashList`, so the bottom chat bubbles can still remain hidden behind the lifted composer when the keyboard is open.
+
+Those two issues are independent:
+- top blank area = double top inset
+- newest message not at bottom = double composer reservation
+- bottom bubbles still hidden when keyboard opens = composer moved, list did not gain keyboard-height scroll range
+
+## Foldable Chat Screen: Stable Working Pattern
+
+The final working shape for the conversation screen on the Samsung foldable was:
+
+- let `Appbar.Header` own the top safe area by itself
+- keep the message list in normal flex layout
+- keep the composer in normal flex layout and lift it with `KeyboardStickyView`
+- when the keyboard is visible, add a `ListHeaderComponent` spacer to the inverted `FlashList` with height:
+
+```tsx
+const keyboardLift = isKeyboardVisible ? Math.max(keyboardHeight - insets.bottom, 0) : 0;
+
+<FlashList
+  inverted
+  ListHeaderComponent={<View style={{ height: keyboardLift }} />}
+/>
+```
+
+Why `ListHeaderComponent`?
+
+- for an inverted list, this is the bottom-side reserve space the newest messages need
+- it only appears while the keyboard is open
+- it does not disturb the hidden-keyboard resting layout
+
+In short:
+
+- top ownership: `Appbar.Header`
+- keyboard motion ownership: `KeyboardStickyView`
+- extra chat scroll range ownership: inverted-list `ListHeaderComponent`
+
 ## Critical Configuration
 
 ### KeyboardProvider Props
