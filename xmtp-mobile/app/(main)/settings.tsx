@@ -11,6 +11,7 @@ import { Text, TextInput, Button, IconButton, Divider } from "react-native-paper
 import { Stack, useRouter } from "expo-router";
 import { useSettingsStore, DEFAULT_REACTIONS } from "../../src/store/settings";
 import { useAuthStore } from "../../src/store/auth";
+import { ScreenHeader } from "../../src/components/ScreenHeader";
 
 const MAX_REACTION_CHARS = 4;
 const MAX_REACTION_SLOTS = 6;
@@ -99,15 +100,13 @@ export default function SettingsScreen() {
     <>
       <Stack.Screen
         options={{
-          headerShown: true,
-          title: "Settings",
-          headerStyle: { backgroundColor: "#1a1a2e" },
-          headerTintColor: "#E6E1E5",
-          headerTitleStyle: { fontWeight: "600", fontSize: 18 },
+          headerShown: false,
         }}
       />
 
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.container}>
+        <ScreenHeader title="Settings" />
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
         {/* Quick Reactions */}
         <Text variant="titleMedium" style={styles.sectionTitle}>
           Quick Reactions
@@ -183,13 +182,18 @@ export default function SettingsScreen() {
         >
           Logout
         </Button>
-      </ScrollView>
+        </ScrollView>
+      </View>
     </>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: "#1a1a2e",
+  },
+  scrollView: {
     flex: 1,
     backgroundColor: "#1a1a2e",
   },

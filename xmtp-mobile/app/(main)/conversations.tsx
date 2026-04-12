@@ -11,8 +11,10 @@ import { useRouter } from "expo-router";
 import { useAuthStore } from "../../src/store/auth";
 import { useConversationStore } from "../../src/store/conversations";
 import type { ConversationItem } from "../../src/store/conversations";
+import { ConversationPane } from "../../src/components/ConversationPane";
 import { ConversationListItem } from "../../src/components/ConversationListItem";
 import { ConversationListSkeleton } from "../../src/components/ConversationListSkeleton";
+import { useWindowClass } from "../../src/hooks/useWindowClass";
 import { shortenAddress } from "../../src/utils/address";
 
 // ---------------------------------------------------------------------------
@@ -97,8 +99,11 @@ export default function ConversationsScreen() {
 
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
+  const windowClass = useWindowClass();
+  const isTwoPane = windowClass !== "compact";
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
 
   React.useEffect(() => {
     console.log("[FoldDebug][Conversations]", {
@@ -109,6 +114,21 @@ export default function ConversationsScreen() {
       insetBottom: insets.bottom,
     });
   }, [insets.bottom, insets.top, window.height, window.width]);
+
+  React.useEffect(() => {
+    if (!isTwoPane) return;
+    if (conversations.length === 0) {
+      setSelectedConversationId(null);
+      return;
+    }
+
+    if (
+      !selectedConversationId ||
+      !conversations.some((conversation) => conversation.id === selectedConversationId)
+    ) {
+      setSelectedConversationId(conversations[0]?.id ?? null);
+    }
+  }, [conversations, isTwoPane, selectedConversationId]);
 
   // Pull-to-refresh handler
   const handleRefresh = useCallback(async () => {
@@ -123,9 +143,13 @@ export default function ConversationsScreen() {
   // Navigation handlers
   const handleConversationPress = useCallback(
     (item: ConversationItem) => {
+      if (isTwoPane) {
+        setSelectedConversationId(item.id);
+        return;
+      }
       router.push(`/conversation/${item.id}` as any);
     },
-    [router]
+    [isTwoPane, router]
   );
 
   const handleNewConversation = useCallback(() => {
@@ -137,8 +161,14 @@ export default function ConversationsScreen() {
 
   // Renderers
   const renderItem: ListRenderItem<ConversationItem> = useCallback(
-    ({ item }) => <ConversationListItem item={item} onPress={handleConversationPress} />,
-    [handleConversationPress]
+    ({ item }) => (
+      <ConversationListItem
+        item={item}
+        onPress={handleConversationPress}
+        selected={isTwoPane && item.id === selectedConversationId}
+      />
+    ),
+    [handleConversationPress, isTwoPane, selectedConversationId]
   );
 
   const renderSeparator = useCallback(() => <Divider style={styles.divider} />, []);
@@ -176,8 +206,8 @@ export default function ConversationsScreen() {
     [handleNewConversation]
   );
 
-  return (
-    <View style={styles.container}>
+  const listContent = (
+    <>
       {/* AppBar */}
       <Appbar.Header style={styles.appbar} elevated>
         <Appbar.Content title="Messages" titleStyle={styles.appbarTitle} />
@@ -251,8 +281,23 @@ export default function ConversationsScreen() {
           }
         />
       )}
-    </View>
+    </>
   );
+
+  if (isTwoPane) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.splitLayout}>
+          <View style={styles.listColumn}>{listContent}</View>
+          <View style={styles.detailColumn}>
+            <ConversationPane conversationId={selectedConversationId} />
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  return <View style={styles.container}>{listContent}</View>;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +308,23 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#1a1a2e",
+  },
+  splitLayout: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  listColumn: {
+    flexBasis: 280,
+    flexGrow: 0,
+    flexShrink: 0,
+    minWidth: 260,
+    maxWidth: 320,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: "#49454F",
+  },
+  detailColumn: {
+    flex: 1,
+    minWidth: 0,
   },
   appbar: {
     backgroundColor: "#1a1a2e",

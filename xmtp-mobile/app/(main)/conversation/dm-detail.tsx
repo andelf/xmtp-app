@@ -12,6 +12,7 @@ import { useConversationStore } from "../../../src/store/conversations";
 import { useAuthStore } from "../../../src/store/auth";
 import { findConversation } from "../../../src/xmtp/messages";
 import { InfoRow } from "../../../src/components/InfoRow";
+import { ScreenHeader } from "../../../src/components/ScreenHeader";
 import { formatDateTime } from "../../../src/utils/time";
 
 export default function DmDetailScreen() {
@@ -55,15 +56,13 @@ export default function DmDetailScreen() {
     <>
       <Stack.Screen
         options={{
-          headerShown: true,
-          title: "DM Details",
-          headerStyle: { backgroundColor: "#1a1a2e" },
-          headerTintColor: "#E6E1E5",
-          headerTitleStyle: { fontWeight: "600", fontSize: 18 },
+          headerShown: false,
         }}
       />
 
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.container}>
+        <ScreenHeader title="DM Details" />
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
         {/* Peer info */}
         <Text variant="titleMedium" style={styles.sectionTitle}>
           Peer
@@ -102,13 +101,18 @@ export default function DmDetailScreen() {
           label="Created At"
           value={conversation ? formatDateTime(conversation.createdAt) : null}
         />
-      </ScrollView>
+        </ScrollView>
+      </View>
     </>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: "#1a1a2e",
+  },
+  scrollView: {
     flex: 1,
     backgroundColor: "#1a1a2e",
   },

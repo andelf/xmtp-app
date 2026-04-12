@@ -10,6 +10,7 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 
 import { addMembers } from "../../../src/xmtp/groups";
 import { isValidEthAddress, shortenAddress } from "../../../src/utils/address";
+import { ScreenHeader } from "../../../src/components/ScreenHeader";
 
 export default function AddMemberScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -62,19 +63,17 @@ export default function AddMemberScreen() {
     <>
       <Stack.Screen
         options={{
-          headerShown: true,
-          title: "Add Members",
-          headerStyle: { backgroundColor: "#1a1a2e" },
-          headerTintColor: "#E6E1E5",
-          headerTitleStyle: { fontWeight: "600", fontSize: 18 },
+          headerShown: false,
         }}
       />
 
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
+      <View style={styles.container}>
+        <ScreenHeader title="Add Members" />
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
         <Text variant="bodyMedium" style={styles.hint}>
           Enter ETH addresses to add to the group.
         </Text>
@@ -144,13 +143,18 @@ export default function AddMemberScreen() {
             `Add ${addresses.length} Member${addresses.length !== 1 ? "s" : ""}`
           )}
         </Button>
-      </ScrollView>
+        </ScrollView>
+      </View>
     </>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: "#1a1a2e",
+  },
+  scrollView: {
     flex: 1,
     backgroundColor: "#1a1a2e",
   },

@@ -8,6 +8,7 @@ import { Stack } from "expo-router";
 import Constants from "expo-constants";
 import { useAuthStore } from "../../src/store/auth";
 import { InfoRow } from "../../src/components/InfoRow";
+import { ScreenHeader } from "../../src/components/ScreenHeader";
 
 export default function AboutScreen() {
   const address = useAuthStore((s) => s.address);
@@ -20,15 +21,13 @@ export default function AboutScreen() {
     <>
       <Stack.Screen
         options={{
-          headerShown: true,
-          title: "About",
-          headerStyle: { backgroundColor: "#1a1a2e" },
-          headerTintColor: "#E6E1E5",
-          headerTitleStyle: { fontWeight: "600", fontSize: 18 },
+          headerShown: false,
         }}
       />
 
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.container}>
+        <ScreenHeader title="About" />
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
         {/* App identity */}
         <View style={styles.logoSection}>
           <Text variant="headlineMedium" style={styles.appName}>
@@ -72,13 +71,18 @@ export default function AboutScreen() {
         <Text variant="bodySmall" style={styles.credits}>
           Built with XMTP React Native SDK
         </Text>
-      </ScrollView>
+        </ScrollView>
+      </View>
     </>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: "#1a1a2e",
+  },
+  scrollView: {
     flex: 1,
     backgroundColor: "#1a1a2e",
   },

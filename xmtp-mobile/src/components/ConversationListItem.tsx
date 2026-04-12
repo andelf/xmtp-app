@@ -20,6 +20,8 @@ export interface ConversationListItemProps {
   item: ConversationItem;
   /** Called when the user taps the row. */
   onPress: (item: ConversationItem) => void;
+  /** Whether this row is selected in a split-view layout. */
+  selected?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,7 +65,7 @@ function colorForTitle(title: string): string {
 // Component
 // ---------------------------------------------------------------------------
 
-function ConversationListItemInner({ item, onPress }: ConversationListItemProps) {
+function ConversationListItemInner({ item, onPress, selected = false }: ConversationListItemProps) {
   const timestamp = item.lastMessageAt ?? item.createdAt;
   const timeLabel = formatRelativeTime(timestamp);
   const initials = getInitials(item.title);
@@ -71,7 +73,7 @@ function ConversationListItemInner({ item, onPress }: ConversationListItemProps)
 
   return (
     <TouchableRipple onPress={() => onPress(item)} rippleColor="rgba(103,80,164,0.12)">
-      <View style={styles.row}>
+      <View style={[styles.row, selected ? styles.rowSelected : null]}>
         {/* Avatar */}
         <Avatar.Text
           size={48}
@@ -120,6 +122,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 12,
+  },
+  rowSelected: {
+    backgroundColor: "#2B2930",
   },
   avatar: {
     marginRight: 16,

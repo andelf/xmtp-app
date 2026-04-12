@@ -22,11 +22,12 @@ export default function MainLayout() {
     useSettingsStore.getState().load();
   }, []);
   return (
-    <Stack
+      <Stack
       screenOptions={{
         headerStyle: { backgroundColor: "#1a1a2e" },
         headerTintColor: "#ffffff",
         contentStyle: { backgroundColor: "#1a1a2e" },
+        statusBarTranslucent: true,
       }}
     >
       <Stack.Screen name="conversations" options={{ title: "Conversations", headerShown: false }} />
@@ -35,10 +36,20 @@ export default function MainLayout() {
         name="new-conversation"
         options={{ title: "New Conversation", headerShown: false }}
       />
-      <Stack.Screen name="settings" options={{ title: "Settings" }} />
-      <Stack.Screen name="about" options={{ title: "About" }} />
-      <Stack.Screen name="conversation/dm-detail" options={{ title: "DM Details" }} />
-      <Stack.Screen name="conversation/group-detail" options={{ title: "Group Details" }} />
+      <Stack.Screen name="settings" options={{ title: "Settings", headerShown: false }} />
+      <Stack.Screen name="about" options={{ title: "About", headerShown: false }} />
+      <Stack.Screen
+        name="conversation/dm-detail"
+        options={{ title: "DM Details", headerShown: false }}
+      />
+      <Stack.Screen
+        name="conversation/group-detail"
+        options={{ title: "Group Details", headerShown: false }}
+      />
+      <Stack.Screen
+        name="conversation/add-member"
+        options={{ title: "Add Members", headerShown: false }}
+      />
     </Stack>
   );
 }

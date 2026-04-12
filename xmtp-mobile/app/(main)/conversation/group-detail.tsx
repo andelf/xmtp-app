@@ -28,14 +28,11 @@ import { EditableField } from "../../../src/components/EditableField";
 import { MemberRow } from "../../../src/components/MemberRow";
 import { MemberActionSheet } from "../../../src/components/MemberActionSheet";
 import { InfoRow } from "../../../src/components/InfoRow";
+import { ScreenHeader } from "../../../src/components/ScreenHeader";
 import { formatDateTime } from "../../../src/utils/time";
 
 const HEADER_OPTIONS = {
-  headerShown: true,
-  title: "Group Details",
-  headerStyle: { backgroundColor: "#1a1a2e" },
-  headerTintColor: "#E6E1E5",
-  headerTitleStyle: { fontWeight: "600", fontSize: 18 },
+  headerShown: false,
 } as const;
 
 export default function GroupDetailScreen() {
@@ -224,8 +221,11 @@ export default function GroupDetailScreen() {
     return (
       <>
         <Stack.Screen options={HEADER_OPTIONS} />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#6750A4" />
+        <View style={styles.container}>
+          <ScreenHeader title="Group Details" />
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#6750A4" />
+          </View>
         </View>
       </>
     );
@@ -235,10 +235,13 @@ export default function GroupDetailScreen() {
     return (
       <>
         <Stack.Screen options={HEADER_OPTIONS} />
-        <View style={styles.loadingContainer}>
-          <Text variant="bodyMedium" style={styles.errorText}>
-            {error}
-          </Text>
+        <View style={styles.container}>
+          <ScreenHeader title="Group Details" />
+          <View style={styles.loadingContainer}>
+            <Text variant="bodyMedium" style={styles.errorText}>
+              {error}
+            </Text>
+          </View>
         </View>
       </>
     );
@@ -247,8 +250,9 @@ export default function GroupDetailScreen() {
   return (
     <>
       <Stack.Screen options={HEADER_OPTIONS} />
-
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.container}>
+        <ScreenHeader title="Group Details" />
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
         {/* Header: Avatar + Name + Description */}
         <View style={styles.header}>
           <Avatar.Text
@@ -336,7 +340,8 @@ export default function GroupDetailScreen() {
         </Button>
 
         <View style={styles.bottomSpacer} />
-      </ScrollView>
+        </ScrollView>
+      </View>
 
       {/* Member action sheet */}
       <MemberActionSheet
@@ -358,12 +363,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#1a1a2e",
   },
+  scrollView: {
+    flex: 1,
+    backgroundColor: "#1a1a2e",
+  },
   content: {
     padding: 20,
   },
   loadingContainer: {
     flex: 1,
-    backgroundColor: "#1a1a2e",
     justifyContent: "center",
     alignItems: "center",
   },
