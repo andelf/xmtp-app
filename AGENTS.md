@@ -35,6 +35,7 @@ xmtp-core (shared types)
 1. Run `cargo build --workspace` to verify the build works
 2. Run `cargo test -p xmtp-tui --lib` for fast unit tests (no network needed)
 3. Read the specific file you're modifying — don't guess at patterns
+4. `gh` is available in this environment; use it for GitHub checks, workflow runs, and PR state instead of scraping the web UI
 
 ## TUI Architecture (most common edit target)
 

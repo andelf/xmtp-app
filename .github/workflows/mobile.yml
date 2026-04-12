@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "xmtp-mobile/**"
+      - "vendor/react-native-enriched-markdown"
       - ".github/workflows/mobile.yml"
   pull_request:
     branches: [main]
     paths:
       - "xmtp-mobile/**"
+      - "vendor/react-native-enriched-markdown"
       - ".github/workflows/mobile.yml"
 
 defaults:
@@ -22,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
@@ -47,6 +51,8 @@ jobs:
     needs: lint-and-test
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
