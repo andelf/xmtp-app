@@ -2363,7 +2363,14 @@ impl BridgeClient {
         );
 
         if let (Some(message_id), Some(emoji)) = (reply_message_id, reaction) {
-            if self.reactions.allows_verbose() || self.reactions.uses_full_messages() {
+            // For full-message mode: defer progress when the title is generic
+            // (e.g. "Terminal") — a ToolCallUpdate with the real title will
+            // arrive shortly and we emit the progress there instead.
+            let defer_for_full_message = self.reactions.uses_full_messages()
+                && is_generic_tool_title(snapshot.title.as_deref());
+            if !defer_for_full_message
+                && (self.reactions.allows_verbose() || self.reactions.uses_full_messages())
+            {
                 emit_feedback(
                     self.reactions,
                     self.full_message_progress.as_ref(),
@@ -2380,15 +2387,19 @@ impl BridgeClient {
 
     fn handle_tool_call_update(&self, session_id: &str, update: acp::ToolCallUpdate) {
         let tool_call_id = update.tool_call_id.0.to_string();
-        let (snapshot, reply_message_id, should_emit_start, ignored) =
+        let (snapshot, reply_message_id, should_emit_start, ignored, title_became_specific) =
             if let Ok(mut state) = self.state.lock() {
                 let runtime = state.sessions.entry(session_id.to_owned()).or_default();
                 let snapshot = runtime
                     .tool_calls
                     .entry(tool_call_id.clone())
                     .or_insert_with(ToolCallSnapshot::default);
+
+                let was_generic = is_generic_tool_title(snapshot.title.as_deref());
                 snapshot.apply_update(&update);
                 let snapshot = snapshot.clone();
+                let title_became_specific =
+                    was_generic && !is_generic_tool_title(snapshot.title.as_deref());
 
                 let ignored = should_ignore_tool_reaction(&snapshot);
                 if ignored {
@@ -2410,9 +2421,9 @@ impl BridgeClient {
                     }
                 }
 
-                (snapshot, reply_message_id, should_emit_start, ignored)
+                (snapshot, reply_message_id, should_emit_start, ignored, title_became_specific)
             } else {
-                (ToolCallSnapshot::default(), None, false, false)
+                (ToolCallSnapshot::default(), None, false, false, false)
             };
 
         if ignored {
@@ -2445,6 +2456,7 @@ impl BridgeClient {
                 "title": snapshot.title,
                 "status": update.fields.status.map(tool_status_label),
                 "start_reaction": start_reaction.map(ReactionEmoji::as_str),
+                "title_became_specific": title_became_specific,
                 "failure": failure,
             }),
         );
@@ -2463,6 +2475,23 @@ impl BridgeClient {
                         snapshot.title.as_deref(),
                     );
                 }
+            }
+            // Emit deferred progress when the title transitions from generic
+            // to specific (e.g. "Terminal" → "git status").  Skipped when
+            // start_reaction already emitted for this update (avoids double-emit).
+            if title_became_specific && !should_emit_start && self.reactions.uses_full_messages() {
+                let emoji = reaction_for_tool_start(&snapshot)
+                    .unwrap_or(ReactionEmoji::Tool);
+                emit_feedback(
+                    self.reactions,
+                    self.full_message_progress.as_ref(),
+                    &self.base_url,
+                    &self.data_dir,
+                    &self.conversation_id,
+                    &message_id,
+                    emoji,
+                    snapshot.title.as_deref(),
+                );
             }
             if (self.reactions.allows_basic() || self.reactions.uses_full_messages()) && failure {
                 emit_feedback(
@@ -2556,6 +2585,31 @@ fn infer_subagent_tool(snapshot: &ToolCallSnapshot) -> bool {
         return true;
     }
     false
+}
+
+/// Returns `true` when the tool-call title is a generic placeholder that carries
+/// no useful information for the user (e.g. "Terminal", "Read File").
+/// Some ACP agents (notably claude-agent-acp) send a generic title in the initial
+/// `ToolCall` event and only fill in the real description via a later
+/// `ToolCallUpdate`.  We use this to defer progress messages until the concrete
+/// title arrives.
+fn is_generic_tool_title(title: Option<&str>) -> bool {
+    matches!(
+        title.map(str::trim),
+        None | Some(
+            "Terminal"
+                | "Read File"
+                | "Edit"
+                | "Write"
+                | "grep"
+                | "Find"
+                | "Fetch"
+                | "Task"
+                | "ToolSearch"
+                | "Skill"
+                | "\"undefined\""
+        )
+    )
 }
 
 fn should_ignore_tool_reaction(snapshot: &ToolCallSnapshot) -> bool {
