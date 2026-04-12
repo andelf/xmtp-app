@@ -40,6 +40,14 @@ Result:
 - code blocks could still look proportional
 - changing nearby size or font settings in `MessageBubble.tsx` made it look random, even though the actual bug was in the block renderer
 
+There was a second bug mixed into the same debugging session:
+
+- long inline code and long link text on Android were not getting usable soft wrap opportunities
+- React Native text layout therefore treated them as effectively harder-to-break runs
+- in real message bubbles, that could interact with list/paragraph spacing and async measurement in a way that left the final rendered text one or two lines taller than the bubble that was first allocated
+
+This is why the visual symptom sometimes looked like "random extra blank lines" or "the last line is hanging outside the bubble" even after the monospace fix was correct.
+
 ## The Correct Fix
 
 `CodeBlockContainerView.kt` must treat `"monospace"` as a special case and route it to the asset-backed monospace fallback:
@@ -91,6 +99,13 @@ When touching mobile markdown code fonts:
 5. If you want smaller code blocks, prefer changing only one visual variable at a time.
 6. After every font-related change, rebuild a release APK and verify on-device.
 
+When touching wrapping / bubble height on Android:
+
+1. Check whether the problematic content is actually a long inline run such as inline code or a link.
+2. Remember that fixing `requestLayout()` alone may reduce symptoms without fixing the underlying wrapping problem.
+3. If the broken message becomes correct after adding soft wrap opportunities, the root cause was not "height math only".
+4. For long inline code and links, prefer inserting zero-width soft break opportunities in the rendered Android text path so measurement and display stay aligned.
+
 ## Verified Safe Setup
 
 Current safe setup is:
@@ -102,6 +117,10 @@ Current safe setup is:
   - inline code prefers bundled JetBrains Mono asset fonts
 - `vendor/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/CodeBlockContainerView.kt`
   - block code initializes asset fonts and maps `"monospace"` to `SpanStyleCache.getMonospaceTypeface(...)`
+- `vendor/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt`
+  - long inline code inserts zero-width break opportunities so Android can wrap instead of overflowing the bubble
+- `vendor/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt`
+  - long link text inserts zero-width break opportunities while preserving spans, so wrapped height matches rendered height more closely
 - `vendor/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt`
   - loads and caches JetBrains Mono assets from APK fonts
 
@@ -147,11 +166,21 @@ If code block monospace disappears again:
 6. Verify JetBrains Mono fonts are still bundled in the APK.
 7. Rebuild a release APK and test on device before drawing conclusions.
 
+If a markdown bubble still overflows after the font fix:
+
+1. Check whether the overflowing line is inside inline code or link text.
+2. Read `CodeRenderer.kt` and `LinkRenderer.kt`.
+3. Verify the rendered Android text still inserts soft wrap opportunities.
+4. Only then revisit `EnrichedMarkdownTextLayoutManager.kt` and `MeasurementStore`.
+5. Confirm on-device with the exact offending message instead of assuming a synthetic repro is equivalent.
+
 ## Files That Matter
 
 - `xmtp-mobile/src/components/MessageBubble.tsx`
 - `xmtp-mobile/metro.config.js`
 - `vendor/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/CodeSpan.kt`
 - `vendor/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/CodeBlockContainerView.kt`
+- `vendor/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt`
+- `vendor/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt`
 - `vendor/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt`
 - `.github/workflows/mobile.yml`

@@ -14,7 +14,7 @@ The daemon holds the XMTP client connection and exposes a REST API. TUI and CLI 
 
 ## High-Value Pitfalls
 
-- Mobile markdown / vendored renderer pitfalls: read [docs/pitfalls/react-native-markdown-code-font-and-vendoring.md](./docs/pitfalls/react-native-markdown-code-font-and-vendoring.md) before changing `MessageBubble.tsx`, Metro config, CI for mobile, or `vendor/react-native-enriched-markdown`. Critical rule: Android inline code and fenced code block do not share the same native renderer; always inspect both `CodeSpan.kt` and `CodeBlockContainerView.kt`.
+- Mobile markdown / vendored renderer pitfalls: read [docs/pitfalls/react-native-markdown-code-font-and-vendoring.md](./docs/pitfalls/react-native-markdown-code-font-and-vendoring.md) before changing `MessageBubble.tsx`, Metro config, CI for mobile, or `vendor/react-native-enriched-markdown`. Critical rules: Android inline code and fenced code block do not share the same native renderer; long inline code and links can also break bubble height if the native renderer loses soft wrap opportunities.
 
 ## Crate Dependency Graph
 

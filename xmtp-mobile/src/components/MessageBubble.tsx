@@ -72,7 +72,7 @@ const MD_STYLE_OWN: MarkdownStyle = {
     color: "#E6E1E5",
     fontSize: 14,
   },
-  list: { color: "#FFFFFF", bulletColor: "#D0BCFF", fontSize: 14 },
+  list: { color: "#FFFFFF", bulletColor: "#D0BCFF", fontSize: 14, marginTop: 0, marginBottom: 0 },
   table: {
     ...MD_TABLE_COMMON,
     color: "#FFFFFF",
@@ -116,7 +116,7 @@ const MD_STYLE_OTHER: MarkdownStyle = {
     color: "#CAC4D0",
     fontSize: 14,
   },
-  list: { color: "#E6E1E5", bulletColor: "#BB86FC", fontSize: 14 },
+  list: { color: "#E6E1E5", bulletColor: "#BB86FC", fontSize: 14, marginTop: 0, marginBottom: 0 },
   table: {
     ...MD_TABLE_COMMON,
     color: "#E6E1E5",
