@@ -2,7 +2,7 @@
  * Message input bar -- TextInput with send button.
  * Optionally shows a reply preview above the input when replying to a message.
  */
-import React, { memo, useCallback, useState, useEffect, useRef } from "react";
+import React, { memo, useCallback, useEffect, useRef } from "react";
 import { View, StyleSheet, Pressable } from "react-native";
 import { TextInput, IconButton, Text, Icon } from "react-native-paper";
 
@@ -13,6 +13,10 @@ import type { MessageItem } from "../store/messages";
 // ---------------------------------------------------------------------------
 
 export interface MessageInputProps {
+  /** Current draft text for the active conversation. */
+  value: string;
+  /** Update draft text for the active conversation. */
+  onChangeText: (text: string) => void;
   /** Called when the user taps the send button with non-empty text. */
   onSend: (text: string) => void;
   /** Disable the entire input (e.g. while reconnecting). */
@@ -28,15 +32,16 @@ export interface MessageInputProps {
 // ---------------------------------------------------------------------------
 
 function MessageInputInner({
+  value,
+  onChangeText,
   onSend,
   disabled = false,
   replyTo,
   onCancelReply,
 }: MessageInputProps) {
-  const [text, setText] = useState("");
   const inputRef = useRef<any>(null);
 
-  const trimmed = text.trim();
+  const trimmed = value.trim();
   const canSend = trimmed.length > 0 && !disabled;
 
   // Focus input when reply context is set
@@ -49,7 +54,6 @@ function MessageInputInner({
   const handleSend = useCallback(() => {
     if (!canSend) return;
     onSend(trimmed);
-    setText("");
   }, [canSend, onSend, trimmed]);
 
   return (
@@ -73,8 +77,8 @@ function MessageInputInner({
           mode="outlined"
           placeholder="Message"
           placeholderTextColor="#938F99"
-          value={text}
-          onChangeText={setText}
+          value={value}
+          onChangeText={onChangeText}
           multiline
           dense
           style={styles.input}

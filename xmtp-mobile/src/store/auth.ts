@@ -7,6 +7,7 @@ import type { Client } from "@xmtp/react-native-sdk";
 import { initClient, disconnectClient, generateDbEncryptionKey } from "../xmtp/client";
 import { clearConversationCache, clearMessageModuleState } from "../xmtp/messages";
 import { clearAppliedReactionIds } from "./messages";
+import { useDraftStore } from "./drafts";
 
 // ---------------------------------------------------------------------------
 // Secure storage keys
@@ -146,6 +147,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     clearConversationCache();
     clearMessageModuleState();
     clearAppliedReactionIds();
+    useDraftStore.getState().clearAllDrafts();
     await SecureStore.deleteItemAsync(PRIVATE_KEY_STORE);
     // Keep DB key so the user can re-login and access history
     // Keep env/customLocalHost settings so the user doesn't have to re-select

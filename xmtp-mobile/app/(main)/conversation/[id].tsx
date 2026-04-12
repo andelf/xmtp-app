@@ -25,6 +25,7 @@ import { useAppState } from "../../../src/hooks/useAppState";
 import { useNetworkState } from "../../../src/hooks/useNetworkState";
 import { MessageBubble } from "../../../src/components/MessageBubble";
 import { MessageInput } from "../../../src/components/MessageInput";
+import { useDraftStore } from "../../../src/store/drafts";
 import { shortenAddress } from "../../../src/utils/address";
 import { resolveAddresses } from "../../../src/utils/addressLookup";
 
@@ -142,6 +143,7 @@ export default function ConversationScreen() {
   // Messages from store
   const storeMessages = useMessageStore((s) => s.byConversation[id ?? ""] ?? EMPTY_MESSAGES);
   const historyLoading = useMessageStore((s) => s.isLoading);
+  const draftText = useDraftStore((s) => (id ? (s.byConversation[id]?.text ?? "") : ""));
 
   // All messages (including intents) — used for intentMap lookups
   const allMessages = useMemo(() => {
@@ -186,6 +188,7 @@ export default function ConversationScreen() {
       if (!id) return;
       isAtBottomRef.current = true;
       if (showNewMsgChip) hideChip();
+      useDraftStore.getState().clearDraft(id);
       const cid = id as unknown as ConversationId;
       if (replyTo) {
         sendReply(cid, replyTo.id as string, text);
@@ -196,6 +199,18 @@ export default function ConversationScreen() {
       setTimeout(scrollToBottom, 100);
     },
     [id, replyTo, scrollToBottom]
+  );
+
+  const handleDraftChange = useCallback(
+    (text: string) => {
+      if (!id) return;
+      if (text.length === 0) {
+        useDraftStore.getState().clearDraft(id);
+        return;
+      }
+      useDraftStore.getState().setDraft(id, text);
+    },
+    [id]
   );
 
   const handleReply = useCallback((item: MessageItem) => {
@@ -327,7 +342,13 @@ export default function ConversationScreen() {
         <View
           style={{ paddingBottom: keyboardVisible ? 0 : insets.bottom, backgroundColor: "#1a1a2e" }}
         >
-          <MessageInput onSend={handleSend} replyTo={replyTo} onCancelReply={handleCancelReply} />
+          <MessageInput
+            value={draftText}
+            onChangeText={handleDraftChange}
+            onSend={handleSend}
+            replyTo={replyTo}
+            onCancelReply={handleCancelReply}
+          />
         </View>
       </KeyboardAvoidingView>
     </>
