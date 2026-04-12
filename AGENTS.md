@@ -12,6 +12,10 @@ A production-grade XMTP messaging client with four interfaces:
 
 The daemon holds the XMTP client connection and exposes a REST API. TUI and CLI are thin clients that talk to the daemon over HTTP. The mobile app connects to XMTP independently.
 
+## High-Value Pitfalls
+
+- Mobile markdown / vendored renderer pitfalls: read [docs/pitfalls/react-native-markdown-code-font-and-vendoring.md](./docs/pitfalls/react-native-markdown-code-font-and-vendoring.md) before changing `MessageBubble.tsx`, Metro config, CI for mobile, or `vendor/react-native-enriched-markdown`. Critical rule: Android inline code and fenced code block do not share the same native renderer; always inspect both `CodeSpan.kt` and `CodeBlockContainerView.kt`.
+
 ## Crate Dependency Graph
 
 ```
@@ -107,6 +111,11 @@ Integration tests use `DaemonProcess::start()` helper that spawns a real daemon 
 GitHub Actions (`.github/workflows/`):
 - **rust.yml** — fmt + clippy + unit tests, triggered by `crates/**` changes
 - **mobile.yml** — tsc + eslint + jest + Android build, triggered by `xmtp-mobile/**` changes
+
+Relevant mobile pitfall docs:
+- `docs/pitfalls/react-native-debug-workflow.md`
+- `docs/pitfalls/react-native-keyboard-avoidance.md`
+- `docs/pitfalls/react-native-markdown-code-font-and-vendoring.md`
 
 ## Current Backlog
 
