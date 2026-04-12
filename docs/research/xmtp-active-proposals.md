@@ -1,69 +1,173 @@
-# XMTP 社区活跃提案调研
+# XMTP 生态状态与项目影响
 
-## 与本项目最相关的提案
+Date: 2026-04-06
+Last verified against repo: 2026-04-12
+Purpose: keep one project-facing status document for high-signal XMTP proposals and adjacent ecosystem features.
 
-### XIP-76/77: Delete / Edit Messages (Draft, 讨论热烈)
+## How to use this file
 
-用户呼声最高的功能。XIP-61 (合并版) 已 Withdrawn，拆分为独立的 Delete 和 Edit 提案。
+This file is the authoritative overview for:
 
-**对我们的启发**: 消息数据结构应预留 `edited` / `deleted` 状态字段，等定稿后实现成本低。
+- which protocol features matter most to this project
+- what the external ecosystem status looks like
+- what this repo already supports
+- what is still only worth tracking
 
-### XIP-51: Agent Messages (Draft, 战略核心)
+Detailed protocol schemas for payment-related content types live in `xmtp-payment-content-types.md`.
+Focused background on typing indicators is retained in `chat-action-typing-indicator.md`, but this document is the authoritative status summary.
 
-提出三种 agent 标识方案，均未定论：
-1. 专用 content type `agentMessage` — 向后兼容好，但只能标识文本
-2. per-message `isAgent: true` — 所有类型都能标，但可选择不标
-3. client 级 `isAgent` — 一次声明全部标识，但无法混合模式
+## Status legend
 
-**实际状态**: 参考实现已 404，社区无后续讨论。XMTP 团队转向了 Actions/Intent 作为 agent 交互标准。
+- Implemented here: code exists in this repo today
+- Track next: not implemented, but directly relevant to current roadmap
+- Watch only: useful context, but not currently worth immediate implementation work
 
-### Actions / Intent (已在 libxmtp 实现，非 XIP-51 内容)
+## Project-facing summary
 
-Agent 交互的实际标准：
+| Topic | External status | Repo status | Priority |
+| --- | --- | --- | --- |
+| Delete / Edit messages | Draft proposals (XIP-76/77) | Not implemented | Track next |
+| Actions / Intent | Implemented in libxmtp ecosystem and production variants exist | Implemented end-to-end in daemon / CLI / TUI / mobile | Maintain |
+| XIP-51 Agent Messages | Draft, momentum unclear | Not used as primary path | Watch only |
+| Wallet Send Calls | Draft | Not implemented in product flow | Track next |
+| Transaction Reference | Final | Not implemented as first-class Rust/mobile UX in this repo | Track next |
+| Typing notifications / ephemeral UX | Draft direction exists (XIP-65) | Not implemented; Rust public API still the gating factor in our design notes | Track next |
+| Atomic Membership | Draft | Not implemented | Watch only |
+| Passkey identity | Draft | Not implemented | Watch only |
+| Disappearing messages | Draft | Not implemented | Watch only |
+| Messaging fees | Final at protocol level, rollout details evolving | No payer-flow implementation here | Watch only |
 
-```
-Actions { id, description, actions: [{ id, label, style: Primary|Secondary|Danger, expires_at_ns }] }
-Intent  { id, action_id, metadata: { key: string|number|boolean } }
-```
+## Topics most relevant to this project
 
-流程: Agent 发 Actions (结构化按钮) → 用户点击 → 客户端发 Intent → Agent 处理。
+### 1. XIP-76 / XIP-77: Delete / Edit Messages
 
-**对我们的启发**: ACP bridge 可用 Actions 发送结构化选项卡而非纯文本交互，UX 远优于文字选项。
+Current read:
 
-### XIP-59: Wallet Send Calls (Draft)
+- user demand is high
+- the previous merged proposal path was withdrawn and split into separate delete and edit proposals
+- final wire and client behavior are still not stable enough to hard-implement in this repo without churn
 
-在消息中通过 EIP-5792 `wallet_sendCalls` 触发链上交易。npm 包 `@xmtp/content-type-wallet-send-calls` 已发布。
+Project implication:
 
-**对我们的启发**: ACP bridge 涉及支付场景时可直接利用此内容类型。
+- keep message-domain models ready for `edited` and `deleted` style state
+- avoid baking assumptions that every message is immutable forever
 
-### XIP-80: Atomic Membership (Draft)
+Recommended next step:
 
-允许同一个 inboxId 在群组中有多个 installation 同时在线，解锁 agent 多实例架构。
+- reserve state in shared message/history types before feature work starts elsewhere
 
-### XIP-65: Typing Notifications (Draft)
+### 2. Actions / Intent
 
-基于 ephemeral message 实现。详见 [chat-action-typing-indicator.md](./chat-action-typing-indicator.md)。
+This is no longer just a research topic for this repo.
 
-## 值得关注但非紧急
+Current read:
 
-| 提案 | 状态 | 说明 |
-|------|------|------|
-| XIP-55 Passkey Identity | Draft | 无需钱包即可用 XMTP，降低用户门槛 |
-| XIP-58 Disappearing Messages | Draft | 阅后即焚 |
-| XIP-63 MIMI | Draft | IETF 互操作标准，欧盟 DMA 驱动 |
-| XIP-49 Decentralized Backend | Draft | 主网去中心化架构 |
-| XIP-57 Messaging Fee | Final | 主网消息收费 ~$5/10万条 |
-| Coinbase `actions:1.0` | 生产中 | 非标准但 Base App 生态广泛使用的交互式卡片 |
+- Actions / Intent has become the practical interaction pattern for structured agent choices
+- the older XIP-51 agent-labeling discussion is not the main path we should optimize for
 
-## 主网进展
+Current repo status:
 
-- Ephemera 完成 $20M Series B，估值 $750M
-- 去中心化主网三件套: XIP-49 (后端) + XIP-57 (收费) + XIP-54 (节点资质)
-- Phase 1: 7 个精选节点运营商
+- daemon decodes Actions / Intent payloads
+- CLI ACP bridge can emit and consume structured Actions / Intent flows
+- TUI renders Actions payloads
+- mobile has Actions buttons and Intent sending support
 
-## 我们的行动项
+Operational implication:
 
-- [ ] 消息结构预留 edit/delete 状态 (XIP-76/77)
-- [ ] 研究 Actions/Intent 在 ACP bridge 中的应用
-- [ ] 跟踪 Rust SDK 对 ephemeral API 的支持 (XIP-65)
-- [ ] 评估 Wallet Send Calls 在支付场景的集成 (XIP-59)
+- future agent UX work should assume Actions / Intent is the structured-choice baseline
+- research follow-up should focus on interoperability, rendering parity, and UX polish, not on proving basic feasibility again
+
+### 3. XIP-51: Agent Messages
+
+Current read:
+
+- the draft explored multiple ways to label agent-originated messages
+- momentum appears weak relative to the practical adoption of Actions / Intent
+- it may still matter later for metadata or mixed human/agent identity presentation, but it is not the current implementation center of gravity
+
+Project implication:
+
+- do not block agent UX or bridge work on XIP-51 becoming final
+- treat it as a future metadata enhancement, not a prerequisite
+
+### 4. XIP-59: Wallet Send Calls
+
+Current read:
+
+- strategically important for payments and agent-triggered transaction UX
+- still draft, so wire details and ecosystem ergonomics may continue to move
+
+Project implication:
+
+- relevant to agent payment flows and the wallet-connect plan
+- should be evaluated together with `TransactionReference`, not as an isolated content type
+- detailed schema and current SDK caveats live in `xmtp-payment-content-types.md`
+
+Recommended next step:
+
+- keep this feature in the roadmap, but ground implementation planning in actual SDK behavior, not just XIP text
+
+### 5. TransactionReference
+
+Current read:
+
+- finalized content type for sharing a completed transaction reference in-chat
+- naturally pairs with Wallet Send Calls and wallet-signing UX
+
+Project implication:
+
+- likely the cleaner first-class receipt/result artifact once a transaction is executed
+- should be considered part of the same product flow as wallet execution and explorer linking
+
+### 6. XIP-65: Typing Notifications / ephemeral chat action
+
+Current read:
+
+- ephemeral messaging is the right conceptual channel for typing / thinking / processing indicators
+- using normal persisted messages to simulate typing would pollute history and add migration pain
+
+Current repo guidance:
+
+- do not fake this with normal messages just to ship something quickly
+- wait until the Rust/public SDK surface needed for ephemeral send/stream is practical for this codebase
+
+Recommended next step:
+
+- keep tracking Rust SDK support for ephemeral send/stream APIs
+- once the SDK surface exists, design a small transient status model for typing / thinking / tool-running states
+
+### 7. XIP-80: Atomic Membership
+
+Current read:
+
+- conceptually important for multi-installation or multi-instance agent presence in a group
+- not urgent for current single-runtime work
+
+Project implication:
+
+- worth tracking for future multi-agent or horizontally scaled agent runtimes
+- not a near-term dependency for current bridge or mobile tasks
+
+## Other ecosystem items worth watching
+
+| Topic | Why it matters | Recommended stance |
+| --- | --- | --- |
+| XIP-55 Passkey Identity | lowers wallet-friction for onboarding | Watch only |
+| XIP-58 Disappearing Messages | product-level messaging UX feature | Watch only |
+| XIP-63 MIMI | interoperability and regulatory relevance | Watch only |
+| XIP-49 Decentralized Backend | protocol architecture and ops implications | Watch only |
+| XIP-57 Messaging Fees | direct app/agent operating-cost implications | Watch only |
+| Coinbase `actions:1.0` | production precedent for interactive message cards | Relevant reference implementation |
+
+## What changed relative to older notes
+
+- Actions / Intent in this repo is now implemented, so it should no longer appear as a mere research TODO.
+- Typing-indicator guidance has been folded into this document's project status summary.
+- Payment content types are summarized here, but their schemas and SDK caveats live in `xmtp-payment-content-types.md` to avoid duplication.
+
+## Current action list
+
+- [ ] Reserve edit/delete state in shared message structures before implementation pressure rises
+- [ ] Track Rust/public SDK support for ephemeral send/stream APIs
+- [ ] Evaluate Wallet Send Calls + TransactionReference as one product flow, not two isolated content types
+- [ ] Keep Actions / Intent behavior consistent across daemon, CLI, TUI, and mobile

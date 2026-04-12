@@ -8,49 +8,24 @@ Enable mobile-to-mobile crypto payments within XMTP chat conversations. An agent
 
 ## XMTP Transaction Content Types
 
-| Content Type | typeId | Direction | Role | XIP |
-|---|---|---|---|---|
-| `WalletSendCalls` | `walletSendCalls` | Agent → User | "Please execute this transaction" | XIP-59 (Draft) |
-| `TransactionReference` | `transactionReference` | User → Agent | "Here is the tx hash" | XIP-21 (Final) |
+This implementation plan intentionally does not duplicate protocol schemas in full.
 
-### WalletSendCalls Schema (EIP-5792 based)
+Authoritative background now lives in:
 
-```typescript
-interface WalletSendCalls {
-  version: string;
-  chainId: `0x${string}`;        // hex chain ID (e.g. "0x1" for mainnet)
-  from: `0x${string}`;
-  calls: {
-    to?: `0x${string}`;
-    data?: `0x${string}`;
-    value?: `0x${string}`;        // hex wei value
-    gas?: `0x${string}`;
-    metadata?: {
-      description: string;        // human-readable, MUST NOT be trusted blindly
-      transactionType: string;    // e.g. "transfer", "swap", "approve"
-    };
-  }[];
-  capabilities?: Record<string, any>;
-}
-```
+- `docs/research/xmtp-payment-content-types.md`
 
-### TransactionReference Schema
+For this plan, the only required product-level mapping is:
 
-```typescript
-interface TransactionReference {
-  chainId: number;                // EIP-155 chain ID
-  networkId?: number;
-  reference: string;              // transaction hash
-  metadata?: {
-    transactionType: string;      // e.g. "payment"
-    currency: string;             // e.g. "ETH", "USDC"
-    amount: number;
-    decimals: number;
-    fromAddress: string;
-    toAddress: string;
-  };
-}
-```
+| Content Type | Direction in the intended UX | Role in the flow |
+| --- | --- | --- |
+| `WalletSendCalls` | Agent → User | Ask the recipient wallet to execute one or more calls |
+| `TransactionReference` | User → Agent | Send back the resulting transaction reference / receipt |
+
+Working assumptions for this repo:
+
+- `WalletSendCalls` and `TransactionReference` should be treated as one product flow, not two unrelated message renderers
+- this repo's mobile path should assume encoded or unknown-content fallback handling unless current SDK behavior has been re-verified
+- protocol details may evolve independently of this implementation plan, so schema-level edits should happen in the research document above
 
 ## Wallet Integration: Reown AppKit
 

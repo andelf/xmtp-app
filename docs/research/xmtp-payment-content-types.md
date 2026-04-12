@@ -1,73 +1,171 @@
 # XMTP 支付相关内容类型调研
 
-## 状态总览
+Date: 2026-04-06
+Last verified against repo: 2026-04-12
+Purpose: keep one authoritative note for XMTP payment-adjacent content types and their practical implications for this repo.
 
-| XIP | 状态 | JS SDK | Rust SDK | 实际可用 |
-|-----|------|--------|----------|----------|
-| XIP-21 TransactionReference | Final | v2.0.2 | 不支持 (Content::Unknown) | JS 端可用 |
-| XIP-59 WalletSendCalls | Draft | v2.0.0 | 不支持 (Content::Unknown) | JS 端可用 |
-| XIP-57 Messaging Fees | Final | N/A (协议层) | N/A | 未执行，等审计 |
-| x402 | 非 XIP | npm 生态 | 无 | 100M+ 交易 |
+## How to use this file
 
-## XIP-21: Transaction Reference (Final)
+Use this document for:
 
-链上交易引用，用于在聊天中分享/展示一笔已完成的交易。
+- payment-related XMTP content-type schemas
+- current support caveats in this repo
+- protocol-vs-project distinctions that are easy to get wrong
 
-```
-Content Type: xmtp.org/transactionReference:1.0
+If you are planning mobile wallet UX work, pair this file with `../wallet-connect-integration-plan.md`.
 
+## Important correction
+
+Earlier notes in this area mixed broad ecosystem support with this repo's actual implementation status. This version separates them explicitly:
+
+- a content type being available somewhere in the XMTP JS ecosystem does not mean `@xmtp/react-native-sdk` v5 gives this repo native codec support
+- a content type being unsupported in the Rust crate's typed decode path does not mean the app cannot add an application-layer fallback
+- this repo does not currently use an `xmtp-fork/` path; implementation guidance must be expressed against the actual workspace and dependency layout
+
+## Status overview
+
+| Item | Protocol status | Broader ecosystem note | Current repo status |
+| --- | --- | --- | --- |
+| XIP-21 TransactionReference | Final | ecosystem support exists, but integration details vary by SDK | not implemented as a first-class UX flow in this repo |
+| XIP-59 WalletSendCalls | Draft | ecosystem experimentation exists, but SDK ergonomics vary | not implemented as a first-class UX flow in this repo |
+| XIP-57 Messaging Fees | Final at protocol level | rollout and enforcement details still matter operationally | no payer-flow implementation here |
+| x402 | Not an XMTP XIP | independent payment protocol with possible app-layer composition | separate research area, not an XMTP-native content type |
+
+## Project reality by runtime
+
+### Rust daemon / TUI / CLI
+
+Current repo reality:
+
+- workspace dependency is `xmtp = 0.8.1`
+- unsupported or not-yet-handled content types may surface through `Content::Unknown` or equivalent fallback handling paths
+- adding product support in this repo is an application-layer integration problem first, not a matter of editing a nonexistent local `xmtp-fork/` path
+
+Implication:
+
+- when implementing a new payment content type, first verify what the current dependency already exposes
+- then decide whether the repo should decode at the application layer, wait for upstream support, or both
+
+### Mobile / React Native
+
+Current repo reality:
+
+- this repo's mobile app uses `@xmtp/react-native-sdk` v5 directly
+- the companion `wallet-connect-integration-plan.md` already notes that WalletSendCalls and TransactionReference do not arrive with convenient native JS codec support in this project today
+- in practice, mobile work here should assume encoded/unknown/native-content fallback paths until proven otherwise
+
+Implication:
+
+- do not write project docs that say simply “JS 端可用” without qualifying which SDK and integration path is meant
+
+## XIP-21: TransactionReference
+
+用途：在聊天中分享或回传一笔已经完成的链上交易。
+
+### Canonical shape
+
+Content type: `xmtp.org/transactionReference:1.0`
+
+```json
 {
-  chainId: number          // EIP-155 chain ID (必填)
-  reference: string        // transaction hash (必填)
-  networkId?: number
-  metadata?: {
-    transactionType: string  // e.g. "payment"
-    currency: string         // e.g. "ETH", "USDC"
-    amount: bigint
-    decimals: number
-    fromAddress: string
-    toAddress: string
+  "chainId": 1,
+  "reference": "0x...",
+  "networkId": 1,
+  "metadata": {
+    "transactionType": "payment",
+    "currency": "USDC",
+    "amount": "1000000",
+    "decimals": 6,
+    "fromAddress": "0x...",
+    "toAddress": "0x..."
   }
 }
 ```
 
-## XIP-59: Wallet Send Calls (Draft)
+### Why it matters here
 
-在消息中触发链上交易，对齐 EIP-5792 `wallet_sendCalls`。
+- best fit for “transaction completed” receipts inside a chat flow
+- natural companion to WalletSendCalls-initiated execution flows
+- likely the user-visible result object once a wallet signs and broadcasts
 
-```
-Content Type: xmtp.org/walletSendCalls:1.0
+### Current repo guidance
 
+- evaluate this together with WalletSendCalls and wallet deep-link UX
+- if implemented on mobile first, the renderer should show explorer-friendly information and a safe summary, not just raw JSON
+
+## XIP-59: WalletSendCalls
+
+用途：在消息中请求对方钱包执行链上交易，对齐 EIP-5792 `wallet_sendCalls`。
+
+### Canonical shape
+
+Content type: `xmtp.org/walletSendCalls:1.0`
+
+```json
 {
-  version: string
-  chainId: "0x..." (hex)
-  from: "0x..." (hex)
-  calls: [{
-    to?: "0x..."
-    data?: "0x..."
-    value?: "0x..." (hex wei)
-    gas?: "0x..."
-    metadata?: { description, transactionType, ... }
-  }]
-  capabilities?: { paymasters, bundling, ... }
+  "version": "1",
+  "chainId": "0x1",
+  "from": "0x...",
+  "calls": [
+    {
+      "to": "0x...",
+      "data": "0x...",
+      "value": "0x...",
+      "gas": "0x...",
+      "metadata": {
+        "description": "Transfer 1 USDC",
+        "transactionType": "transfer"
+      }
+    }
+  ],
+  "capabilities": {
+    "paymasters": {},
+    "bundling": {}
+  }
 }
 ```
 
-## XIP-57: Messaging Fees (Final, 未执行)
+### Why it matters here
 
-- 付费方: App/Agent (Payer)，非终端用户
-- 三部分费用: 每条消息固定费 + 每字节天存储费 + 拥塞费
-- 支付: USDC on Base，最低 $10 存入 Payer Registry 合约
-- 现状: 主网已上线但费用未强制执行，等 Trail of Bits + Octane 审计完成
+- this is the most direct bridge between agent UX and wallet execution UX
+- if the repo grows payment-oriented agent flows, this content type becomes strategically important
 
-## x402 (Coinbase 支付协议)
+### Current repo guidance
 
-非 XMTP 原生，是独立的 HTTP 402 支付协议。与 XMTP 为应用层集成：Agent 收到聊天请求 → HTTP 402 → EIP-3009 签名授权 → 返回结果。
+- treat it as a product flow with TransactionReference, not a standalone renderer task
+- the first implementation should prioritize safe rendering, clear user intent, and wallet handoff reliability over supporting every schema edge case
 
-- V2 已发布 (2025-12)，支持可重用 session、多链、服务发现
-- x402 Foundation 由 Coinbase + Cloudflare 共同创立，Google/Visa 加入
-- 研究计划见 `.cache/research/x402-xmtp-integration-research.md`
+## XIP-57: Messaging Fees
 
-## Rust 实现路径
+- payer is the app / agent, not the end user
+- fee model affects operating cost and production economics more than day-one UI
+- implementation work here should wait for concrete business or infra need, not be bundled into wallet UX by default
 
-要在 daemon/TUI 中支持这些内容类型，需在 `xmtp-fork/xmtp/src/content.rs` 的 `Content` enum 中添加对应 variant 并实现 protobuf content bytes 的反序列化。当前均落入 `Content::Unknown { content_type, raw }`。
+## x402
+
+x402 is not an XMTP-native content type. It is a separate HTTP 402 payment protocol that can be composed with chat-driven agent flows at the application layer.
+
+Why keep it in this note at all:
+
+- it is adjacent to agent payment design
+- people may otherwise confuse it with an XMTP content type
+
+But operationally:
+
+- do not mix x402 assumptions into XMTP content-type implementation docs
+- treat x402 as adjacent architecture research, not protocol decoding work
+
+## Recommended implementation posture for this repo
+
+1. Keep protocol schema knowledge here.
+2. Keep mobile execution and wallet UX steps in `../wallet-connect-integration-plan.md`.
+3. Verify actual SDK behavior before claiming support at the project level.
+4. Prefer explicit wording such as:
+   - “supported by some XMTP JS tooling”
+   - “not natively ergonomic in this repo's React Native path today”
+   - “requires application-layer decoding in this repo”
+
+## What was intentionally removed from older notes
+
+- the incorrect `xmtp-fork/xmtp/src/content.rs` implementation path
+- overly broad “JS 端可用” wording that blurred ecosystem support with this repo's actual SDK situation

@@ -1,10 +1,25 @@
 # XMTP Research Notes
 
+Date: 2026-04-06
+Last verified against repo: 2026-04-12
+Applies to:
+- workspace dependency `xmtp = 0.8.1`
+- source scope limited to docs.rs public API pages
+
 ## Scope
 
 - Source only: https://docs.rs/xmtp/latest/xmtp/
 - Crate version: `xmtp 0.8.1`
 - Evidence used: crate root, module pages, and selected struct/enum pages from docs.rs
+- This document is a public-API snapshot, not a claim about every internal libxmtp capability
+
+## Current status in this repo
+
+This document is still aligned with the current workspace dependency:
+
+- `Cargo.toml` pins `xmtp = 0.8.1`
+- the notes below should be treated as SDK-shape guidance for Rust-side design work
+- if the workspace upgrades `xmtp`, this document should be re-verified before being used as an authority
 
 ## Team-Lead Summary
 
@@ -69,6 +84,12 @@
 - The crate does not state performance numbers, so any performance comments above are based on API shape, not benchmarks.
 - `MessageEvent` carrying only IDs strongly suggests consumers must fetch or reconstruct full message data separately if they need content. This is an inference from the public fields, not an explicit statement in the docs.
 - `Client` and `Conversation` being `Send` but not `Sync` implies the SDK expects ownership transfer rather than shared concurrent access.
+
+## Known limits of this note
+
+- This is intentionally limited to docs.rs, so it does not replace source-level verification when a feature matters operationally.
+- It should not be used to infer mobile SDK behavior; React Native support and JS codec support need separate verification.
+- It does not attempt to summarize active XIPs; see `xmtp-active-proposals.md` for project-facing ecosystem status.
 
 ## Sources
 
