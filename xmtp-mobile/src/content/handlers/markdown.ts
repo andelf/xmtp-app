@@ -1,6 +1,6 @@
 import { extractMarkdownPreview } from "../../utils/markdown";
 import type { ContentTypeHandler, DecodeResult, DecodedMessageLike } from "../types";
-import { extractRawContent, truncate } from "../decode-utils";
+import { extractRawContent } from "../decode-utils";
 
 export const markdownHandler: ContentTypeHandler = {
   typeId: "xmtp.org/markdown:1.0",
@@ -8,12 +8,12 @@ export const markdownHandler: ContentTypeHandler = {
   decode(msg: DecodedMessageLike): DecodeResult {
     const text = extractRawContent(msg);
     if (!text) return { kind: "skip" };
-    return { kind: "message", text: truncate(text), format: "markdown" };
+    return { kind: "message", text, format: "markdown" };
   },
 
   preview(msg: DecodedMessageLike): string | null {
     const text = extractRawContent(msg);
     if (!text) return null;
-    return extractMarkdownPreview(text) ?? truncate(text);
+    return extractMarkdownPreview(text) ?? text;
   },
 };

@@ -4,14 +4,6 @@
 import { getNativeContent } from "../utils/nativeContent";
 import type { DecodedMessageLike } from "./types";
 
-const MAX_CONTENT_LENGTH = 2000;
-
-/** Truncate text to MAX_CONTENT_LENGTH, appending "…" if trimmed. */
-export function truncate(text: string): string {
-  if (text.length <= MAX_CONTENT_LENGTH) return text;
-  return text.slice(0, MAX_CONTENT_LENGTH) + "…";
-}
-
 /**
  * Extract raw text content from a message's nativeContent.
  * Tries nc.unknown.content first, then nc.encoded (base64).

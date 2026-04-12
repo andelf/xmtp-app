@@ -146,6 +146,49 @@ Evidence:
 
 This is sufficient for a bridge path, but it is not a drop-in replacement for `agent-client-protocol`.
 
+### Startup/configuration parameter support
+
+`cc-sdk` does support startup/configuration parameters, but primarily as **structured SDK options**, not as an unrestricted raw argv passthrough layer.
+
+Evidence:
+
+- `README.md:75-81`
+  - `ClaudeCodeOptions::builder()` supports `.model(...)`, `.max_turns(...)`, `.max_output_tokens(...)`, `.allowed_tools(...)`, `.permission_mode(...)`
+- `README.md:410-419`
+  - builder supports `.system_prompt(...)`, `.model(...)`, `.permission_mode(...)`, `.max_turns(...)`, `.max_thinking_tokens(...)`, `.allowed_tools(...)`, `.cwd(...)`, `.settings(...)`
+- `README.md:431-433`
+  - supports `Query::set_permission_mode(...)`, `Query::set_model(...)`, and `include_partial_messages(true)`
+- `README.md:472-497`
+  - documents `allowed_tools`, `disallowed_tools`, runtime approval hooks, and permission settings
+- `src/transport/subprocess.rs:68-72`
+  - `SubprocessTransport` stores `ClaudeCodeOptions`
+- `src/transport/subprocess.rs:301-314`
+  - `build_command()` converts options into concrete Claude Code CLI arguments, including `--include-partial-messages`
+- `src/transport/subprocess.rs:138-225`
+  - `settings` and `sandbox` are merged and passed through as startup configuration
+- `src/transport/subprocess.rs:262-264`
+  - `with_cli_path(...)` allows selecting a specific Claude CLI executable path
+
+Operationally, this means `cc-bridge` should assume it can configure most bridge-relevant startup behavior through typed fields such as:
+
+- model
+- permission mode
+- system prompt
+- working directory
+- allowed/disallowed tools
+- settings file / settings JSON
+- sandbox config
+- partial-message streaming
+- auto-download and CLI path selection
+
+However, this is **not yet evidence of a generic `extra_args: Vec<String>` or arbitrary raw-flag passthrough API**. If `cc-bridge` needs fully open-ended CLI flag forwarding in the future, we should assume one of these will be necessary:
+
+1. patch `cc-sdk`
+2. add a thin custom subprocess launcher below the adapter
+3. keep the initial `cc-bridge` scope limited to the structured options already supported by `ClaudeCodeOptions`
+
+For the first implementation, the existing structured option surface appears sufficient.
+
 ---
 
 ## Feasibility judgment

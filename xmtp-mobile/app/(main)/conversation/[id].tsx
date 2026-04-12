@@ -21,6 +21,8 @@ import type { MessageItem } from "../../../src/store/messages";
 import { sendMessage, sendReply, sendReadReceipt } from "../../../src/xmtp/messages";
 import { useSettingsStore } from "../../../src/store/settings";
 import { useMessages } from "../../../src/hooks/useMessages";
+import { useAppState } from "../../../src/hooks/useAppState";
+import { useNetworkState } from "../../../src/hooks/useNetworkState";
 import { MessageBubble } from "../../../src/components/MessageBubble";
 import { MessageInput } from "../../../src/components/MessageInput";
 import { shortenAddress } from "../../../src/utils/address";
@@ -57,6 +59,11 @@ export default function ConversationScreen() {
     sendReadReceipts: readReceiptsEnabled,
     isDm: !isGroup,
   });
+
+  // Conversation-scoped lifecycle recovery: when returning from background or
+  // regaining network, make sure the current chat refetches and resumes.
+  useAppState({ currentConversationId: conversationId });
+  useNetworkState({ currentConversationId: conversationId });
 
   // Mark conversation as read and set active
   useEffect(() => {

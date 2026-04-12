@@ -1,6 +1,6 @@
 # XMTP Mobile App — Backlog & Roadmap
 
-> Last updated: 2026-04-10
+> Last updated: 2026-04-12
 
 ## Current State (MVP Complete)
 
@@ -57,15 +57,18 @@ Implemented: long-press → 5-emoji quick-react row, send/receive reactions, bad
 Implemented: long-press context menu with emoji quick-react row, Copy, Reply, Share actions.
 - [x] Share via system share sheet (2026-04-10)
 
-### P1.5 Unread Count + New Message Indicator (partial ✅)
+### ~~P1.5 Unread Count + New Message Indicator~~ ✅ DONE
 **Why**: Users can't tell which conversations have new messages.
+
+Implemented: unread count badges on conversation list items, mark-as-read on conversation open, and a floating "New messages" chip while scrolled up in chat. Follow-up fix prevents the chip from appearing on self-send. (2026-03-30~04-12)
 
 Tasks:
 - [x] Track unreadCount per conversation in store (2026-03-30)
 - [x] Calculate unread count on conversation list items (2026-03-30)
 - [x] Badge display on ConversationListItem (2026-03-30)
 - [x] Mark as read when entering conversation (2026-03-30)
-- [ ] "New messages" floating chip when scrolled up in chat
+- [x] "New messages" floating chip when scrolled up in chat (2026-04-11)
+- [x] Prevent chip from appearing on self-send (2026-04-12)
 
 ---
 

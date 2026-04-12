@@ -64,7 +64,7 @@ const MD_STYLE_OWN: MarkdownStyle = {
     backgroundColor: "rgba(0,0,0,0.25)",
     borderRadius: 6,
     padding: 8,
-    fontSize: 13,
+    fontSize: 12,
   },
   blockquote: {
     borderColor: "#D0BCFF",
@@ -108,7 +108,7 @@ const MD_STYLE_OTHER: MarkdownStyle = {
     backgroundColor: "rgba(255,255,255,0.06)",
     borderRadius: 6,
     padding: 8,
-    fontSize: 13,
+    fontSize: 12,
   },
   blockquote: {
     borderColor: "#BB86FC",

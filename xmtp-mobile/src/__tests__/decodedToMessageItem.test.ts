@@ -120,6 +120,21 @@ describe("decodedToMessageItem", () => {
     expect(item!.text).toBe("# Hello");
   });
 
+  it("preserves long markdown content without truncating", () => {
+    const longMarkdown = "# Heading\n\n" + "a".repeat(2600);
+    const content = globalThis.Buffer.from(longMarkdown).toString("base64");
+    const msg = fakeMsg(
+      { encoded: JSON.stringify({ content }) },
+      { contentTypeId: "xmtp.org/markdown:1.0" }
+    );
+
+    const item = decodedToMessageItem(msg, CONV_ID, MY_INBOX);
+
+    expect(item).not.toBeNull();
+    expect(item!.text).toBe(longMarkdown);
+    expect(item!.text.endsWith("…")).toBe(false);
+  });
+
   it("shows unsupported message for unknown type without content", () => {
     const msg = fakeMsg(
       { unknown: { contentTypeId: "xmtp.org/transaction:1.0" } },
@@ -139,6 +154,20 @@ describe("decodedToMessageItem", () => {
     const item = decodedToMessageItem(msg, CONV_ID, MY_INBOX);
 
     expect(item!.text).toBe("This is a fallback");
+  });
+
+  it("preserves long fallback text for unknown content", () => {
+    const longFallback = "fallback-" + "b".repeat(2600);
+    const msg = fakeMsg(
+      { unknown: { contentTypeId: "xmtp.org/actions:1.0" } },
+      { fallback: longFallback }
+    );
+
+    const item = decodedToMessageItem(msg, CONV_ID, MY_INBOX);
+
+    expect(item).not.toBeNull();
+    expect(item!.text).toBe(longFallback);
+    expect(item!.text.endsWith("…")).toBe(false);
   });
 
   // ---- Encoded payload ----

@@ -4,7 +4,7 @@
  */
 import { getNativeContent } from "../utils/nativeContent";
 import type { DecodeResult, DecodedMessageLike } from "./types";
-import { extractRawContent, truncate } from "./decode-utils";
+import { extractRawContent } from "./decode-utils";
 
 /**
  * Attempt to decode an unknown/unregistered content type.
@@ -17,13 +17,13 @@ export function decodeUnknown(msg: DecodedMessageLike): DecodeResult {
 
   // Try shared extraction (nc.unknown.content, nc.encoded base64)
   const raw = extractRawContent(msg);
-  if (raw) return { kind: "message", text: truncate(raw) };
+  if (raw) return { kind: "message", text: raw };
 
   // Try nc.unknown with fallback text
   if (nc.unknown) {
     const unk = nc.unknown as { contentTypeId?: string };
     if ((msg as any).fallback) {
-      return { kind: "message", text: truncate((msg as any).fallback) };
+      return { kind: "message", text: (msg as any).fallback };
     }
     const typeId = unk.contentTypeId ?? msg.contentTypeId ?? "unknown";
     return { kind: "message", text: `Unsupported content type: ${typeId}` };
@@ -34,7 +34,7 @@ export function decodeUnknown(msg: DecodedMessageLike): DecodeResult {
     try {
       const encoded = JSON.parse(nc.encoded);
       if (encoded.fallback) {
-        return { kind: "message", text: truncate(encoded.fallback) };
+        return { kind: "message", text: encoded.fallback };
       }
     } catch {
       // fall through
@@ -45,7 +45,7 @@ export function decodeUnknown(msg: DecodedMessageLike): DecodeResult {
   const typeId = msg.contentTypeId ?? "unknown";
   const fallback = (msg as any).fallback;
   const text = fallback
-    ? `Unsupported content type: ${typeId}\n${truncate(fallback)}`
+    ? `Unsupported content type: ${typeId}\n${fallback}`
     : `Unsupported content type: ${typeId}`;
   return { kind: "message", text };
 }
@@ -59,14 +59,14 @@ export function previewUnknown(msg: DecodedMessageLike): string | null {
 
   // Try shared extraction first
   const raw = extractRawContent(msg);
-  if (raw) return truncate(raw);
+  if (raw) return raw;
 
   // Fallback text from message or encoded payload
-  if ((msg as any).fallback) return truncate((msg as any).fallback);
+  if ((msg as any).fallback) return (msg as any).fallback;
   if (nc.encoded) {
     try {
       const encoded = JSON.parse(nc.encoded);
-      if (encoded.fallback) return truncate(encoded.fallback);
+      if (encoded.fallback) return encoded.fallback;
     } catch {
       // fall through
     }
