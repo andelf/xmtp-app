@@ -2456,7 +2456,7 @@ impl BridgeClient {
                 "title": snapshot.title,
                 "status": update.fields.status.map(tool_status_label),
                 "start_reaction": start_reaction.map(ReactionEmoji::as_str),
-                "title_became_specific": title_became_specific,
+                "title_became_specific": title_became_specific.then_some(true),
                 "failure": failure,
             }),
         );
@@ -2479,7 +2479,14 @@ impl BridgeClient {
             // Emit deferred progress when the title transitions from generic
             // to specific (e.g. "Terminal" → "git status").  Skipped when
             // start_reaction already emitted for this update (avoids double-emit).
-            if title_became_specific && !should_emit_start && self.reactions.uses_full_messages() {
+            // Also emits on completion if the title never became specific (fallback
+            // so the progress is not silently lost).
+            let deferred_emit = !should_emit_start
+                && self.reactions.uses_full_messages()
+                && (title_became_specific
+                    || (matches!(update.fields.status, Some(acp::ToolCallStatus::Completed))
+                        && is_generic_tool_title(snapshot.title.as_deref())));
+            if deferred_emit {
                 let emoji = reaction_for_tool_start(&snapshot)
                     .unwrap_or(ReactionEmoji::Tool);
                 emit_feedback(
