@@ -1798,6 +1798,7 @@ fn active_turn_snapshot(
     let mut tool_call_titles = runtime
         .tool_calls
         .values()
+        .filter(|snapshot| !should_ignore_tool_reaction(snapshot))
         .filter_map(|snapshot| snapshot.title.clone())
         .collect::<Vec<_>>();
     tool_call_titles.sort();
@@ -2305,6 +2306,26 @@ impl BridgeClient {
     fn handle_tool_call(&self, session_id: &str, tool_call: acp::ToolCall) {
         let tool_call_id = tool_call.tool_call_id.0.to_string();
         let snapshot = ToolCallSnapshot::from_tool_call(&tool_call);
+        if should_ignore_tool_reaction(&snapshot) {
+            info!(
+                kind = snapshot.kind.as_deref().unwrap_or("Unknown"),
+                title = snapshot.title.as_deref().unwrap_or("(untitled)"),
+                "ignoring tool call for reactions"
+            );
+            log_acp_event(
+                &self.data_dir,
+                &self.conversation_id,
+                serde_json::json!({
+                    "event": "acp_tool_call",
+                    "session_id": session_id,
+                    "kind": snapshot.kind,
+                    "title": snapshot.title,
+                    "ignored": true,
+                    "ignored_reason": "hermes_todo_tool",
+                }),
+            );
+            return;
+        }
         let reaction = reaction_for_tool_start(&snapshot);
         let mut reply_message_id = None;
         let mut is_live = false;
@@ -2359,7 +2380,7 @@ impl BridgeClient {
 
     fn handle_tool_call_update(&self, session_id: &str, update: acp::ToolCallUpdate) {
         let tool_call_id = update.tool_call_id.0.to_string();
-        let (snapshot, reply_message_id, should_emit_start) =
+        let (snapshot, reply_message_id, should_emit_start, ignored) =
             if let Ok(mut state) = self.state.lock() {
                 let runtime = state.sessions.entry(session_id.to_owned()).or_default();
                 let snapshot = runtime
@@ -2367,24 +2388,48 @@ impl BridgeClient {
                     .entry(tool_call_id.clone())
                     .or_insert_with(ToolCallSnapshot::default);
                 snapshot.apply_update(&update);
+                let snapshot = snapshot.clone();
+
+                let ignored = should_ignore_tool_reaction(&snapshot);
+                if ignored {
+                    runtime.tool_calls.remove(&tool_call_id);
+                }
 
                 let mut reply_message_id = None;
                 let mut should_emit_start = false;
-                if let Some(active_turn) = runtime.active_turn.as_mut() {
-                    reply_message_id = Some(reaction_target_message_id(active_turn).to_owned());
-                    if matches!(
-                        update.fields.status,
-                        Some(acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress)
-                    ) && active_turn.started_tool_calls.insert(tool_call_id)
-                    {
-                        should_emit_start = true;
+                if !ignored {
+                    if let Some(active_turn) = runtime.active_turn.as_mut() {
+                        reply_message_id = Some(reaction_target_message_id(active_turn).to_owned());
+                        if matches!(
+                            update.fields.status,
+                            Some(acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress)
+                        ) && active_turn.started_tool_calls.insert(tool_call_id)
+                        {
+                            should_emit_start = true;
+                        }
                     }
                 }
 
-                (snapshot.clone(), reply_message_id, should_emit_start)
+                (snapshot, reply_message_id, should_emit_start, ignored)
             } else {
-                (ToolCallSnapshot::default(), None, false)
+                (ToolCallSnapshot::default(), None, false, false)
             };
+
+        if ignored {
+            log_acp_event(
+                &self.data_dir,
+                &self.conversation_id,
+                serde_json::json!({
+                    "event": "acp_tool_call_update",
+                    "session_id": session_id,
+                    "title": snapshot.title,
+                    "status": update.fields.status.map(tool_status_label),
+                    "ignored": true,
+                    "ignored_reason": "hermes_todo_tool",
+                }),
+            );
+            return;
+        }
 
         let failure = matches!(update.fields.status, Some(acp::ToolCallStatus::Failed));
         let start_reaction = should_emit_start
@@ -2466,6 +2511,9 @@ impl ToolCallSnapshot {
 }
 
 fn reaction_for_tool_start(snapshot: &ToolCallSnapshot) -> Option<ReactionEmoji> {
+    if should_ignore_tool_reaction(snapshot) {
+        return None;
+    }
     if infer_subagent_tool(snapshot) {
         return Some(ReactionEmoji::Subagent);
     }
@@ -2508,6 +2556,14 @@ fn infer_subagent_tool(snapshot: &ToolCallSnapshot) -> bool {
         return true;
     }
     false
+}
+
+fn should_ignore_tool_reaction(snapshot: &ToolCallSnapshot) -> bool {
+    matches!(snapshot.kind.as_deref(), Some("Other"))
+        && snapshot
+            .title
+            .as_deref()
+            .is_some_and(|title| title.trim().eq_ignore_ascii_case("todo"))
 }
 
 fn meta_contains_subagent_tool_name(meta: &serde_json::Map<String, serde_json::Value>) -> bool {
@@ -2736,7 +2792,8 @@ mod tests {
         ToolCallSnapshot, active_turn_snapshot, begin_session_turn, format_agent_error_message,
         full_message_description, infer_subagent_tool, reaction_for_tool_start,
         reaction_target_message_id, remember_processed_message, resolve_resume_session_selector,
-        set_last_reply_message_id, split_markdown_reply, split_reply_for_mode, truncate_display,
+        set_last_reply_message_id, should_ignore_tool_reaction, split_markdown_reply,
+        split_reply_for_mode, truncate_display,
     };
 
     #[test]
@@ -2852,6 +2909,17 @@ mod tests {
             reaction_for_tool_start(&snapshot),
             Some(ReactionEmoji::Tool)
         );
+    }
+
+    #[test]
+    fn reaction_mapping_ignores_hermes_todo_tool() {
+        let snapshot = ToolCallSnapshot {
+            kind: Some("Other".to_owned()),
+            title: Some("todo".to_owned()),
+            ..ToolCallSnapshot::default()
+        };
+        assert!(should_ignore_tool_reaction(&snapshot));
+        assert_eq!(reaction_for_tool_start(&snapshot), None);
     }
 
     #[test]
